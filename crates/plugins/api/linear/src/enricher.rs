@@ -270,4 +270,67 @@ mod tests {
                 .contains("Available: Backlog, In Review")
         );
     }
+
+    #[test]
+    fn linear_enricher_reports_supported_category_and_preserves_unknown_tools() {
+        let enricher = LinearSchemaEnricher;
+        assert_eq!(enricher.supported_categories(), &[ToolCategory::IssueTracker]);
+
+        let original = json!({
+            "type": "object",
+            "properties": {
+                "custom": { "type": "string" }
+            }
+        });
+        let mut schema = ToolSchema::from_json(&original);
+        enricher.enrich_schema("get_merge_requests", &mut schema);
+
+        let mut args = json!({ "custom": "value" });
+        enricher.transform_args("get_merge_requests", &mut args);
+
+        assert!(schema.properties.contains_key("custom"));
+        assert_eq!(args["custom"], "value");
+    }
+
+    #[test]
+    fn dynamic_linear_enricher_updates_get_issues_state_description() {
+        let enricher = DynamicLinearSchemaEnricher::new(LinearMetadata {
+            statuses: vec![
+                crate::metadata::LinearStatus {
+                    id: "1".into(),
+                    name: "Backlog".into(),
+                    category: Some("backlog".into()),
+                },
+                crate::metadata::LinearStatus {
+                    id: "2".into(),
+                    name: "Canceled".into(),
+                    category: Some("cancelled".into()),
+                },
+            ],
+        });
+        let mut get_issues = ToolSchema::from_json(&json!({
+            "type": "object",
+            "properties": {
+                "state": { "type": "string" },
+                "assignee": { "type": "string" }
+            }
+        }));
+
+        enricher.enrich_schema("get_issues", &mut get_issues);
+
+        assert!(
+            get_issues.properties["state"]
+                .description
+                .as_deref()
+                .unwrap()
+                .contains("Known team states: Backlog, Canceled")
+        );
+        assert!(
+            get_issues.properties["assignee"]
+                .description
+                .as_deref()
+                .unwrap()
+                .contains("display name")
+        );
+    }
 }

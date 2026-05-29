@@ -63,4 +63,70 @@ mod tests {
         assert_eq!(result.status, LivenessStatus::Live);
         mock.assert();
     }
+
+    #[tokio::test]
+    async fn probe_returns_revoked_for_unauthorized_token() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(401).header("content-type", "application/json");
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_revoked".to_owned()),
+        );
+
+        let result = client
+            .test(&SecretString::from("lin_api_revoked".to_owned()))
+            .await
+            .unwrap();
+        assert_eq!(result.status, LivenessStatus::Revoked);
+        assert_eq!(client.provider_name(), "linear");
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn probe_returns_throttled_and_error_states() {
+        let rate_limited = MockServer::start();
+        let rate_limited_mock = rate_limited.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(429).header("content-type", "application/json");
+        });
+        let throttled_client = LinearClient::with_base_url(
+            format!("{}/graphql", rate_limited.base_url()),
+            "team-1",
+            SecretString::from("lin_api_throttled".to_owned()),
+        );
+
+        let throttled = throttled_client
+            .test(&SecretString::from("lin_api_throttled".to_owned()))
+            .await
+            .unwrap();
+        assert_eq!(throttled.status, LivenessStatus::Throttled);
+        assert_eq!(throttled.detail.as_deref(), Some("retry_after=0"));
+        rate_limited_mock.assert();
+
+        let error_server = MockServer::start();
+        let error_mock = error_server.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(500)
+                .header("content-type", "application/json")
+                .body("boom");
+        });
+        let error_client = LinearClient::with_base_url(
+            format!("{}/graphql", error_server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_error".to_owned()),
+        );
+
+        let error = error_client
+            .test(&SecretString::from("lin_api_error".to_owned()))
+            .await
+            .unwrap();
+        assert_eq!(error.status, LivenessStatus::Error);
+        assert!(error.detail.as_deref().unwrap().contains("boom"));
+        error_mock.assert();
+    }
 }

@@ -2066,4 +2066,239 @@ mod tests {
 
         states.assert();
     }
+
+    #[tokio::test]
+    async fn get_issues_rejects_native_query_and_supports_closed_state_category() {
+        let client = LinearClient::with_base_url(
+            "https://api.linear.app/graphql",
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let unsupported = client
+            .get_issues(IssueFilter {
+                native_query: Some("project = ENG".to_string()),
+                ..Default::default()
+            })
+            .await;
+        assert!(matches!(
+            unsupported,
+            Err(Error::ProviderUnsupported { provider, operation })
+                if provider == "linear" && operation == "get_issues(native_query)"
+        ));
+
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes(r#""state":{"type":{"in":["completed","canceled"]}}"#)
+                .body_includes(r#""state":{"type":{"eq":"completed"}}"#)
+                .body_includes(r#""labels":{"name":{"in":["ops","api"]}}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issues": {
+                            "nodes": [],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let result = client
+            .get_issues(IssueFilter {
+                state: Some("closed".to_string()),
+                state_category: Some("done".to_string()),
+                labels: Some(vec!["ops".to_string(), "api".to_string()]),
+                labels_operator: Some("or".to_string()),
+                limit: Some(5),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert!(result.items.is_empty());
+        assert_eq!(result.pagination.unwrap().has_more, false);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_current_user_surfaces_graphql_transport_errors() {
+        let unauthorized = MockServer::start();
+        let unauthorized_mock = unauthorized.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(401).header("content-type", "application/json");
+        });
+        let unauthorized_client = LinearClient::with_base_url(
+            format!("{}/graphql", unauthorized.base_url()),
+            "team-1",
+            SecretString::from("lin_api_bad".to_owned()),
+        );
+        let unauthorized_err = unauthorized_client.get_current_user().await.unwrap_err();
+        assert!(matches!(unauthorized_err, Error::Unauthorized(_)));
+        unauthorized_mock.assert();
+
+        let throttled = MockServer::start();
+        let throttled_mock = throttled.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(429).header("content-type", "application/json");
+        });
+        let throttled_client = LinearClient::with_base_url(
+            format!("{}/graphql", throttled.base_url()),
+            "team-1",
+            SecretString::from("lin_api_throttled".to_owned()),
+        );
+        let throttled_err = throttled_client.get_current_user().await.unwrap_err();
+        assert!(matches!(throttled_err, Error::RateLimited { retry_after: None }));
+        throttled_mock.assert();
+
+        let gql_error = MockServer::start();
+        let gql_error_mock = gql_error.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "errors": [
+                        {
+                            "message": "viewer is unavailable"
+                        }
+                    ]
+                }));
+        });
+        let gql_error_client = LinearClient::with_base_url(
+            format!("{}/graphql", gql_error.base_url()),
+            "team-1",
+            SecretString::from("lin_api_gql_error".to_owned()),
+        );
+        let gql_error_result = gql_error_client.get_current_user().await.unwrap_err();
+        assert!(matches!(
+            gql_error_result,
+            Error::Api { status: 200, message } if message.contains("viewer is unavailable")
+        ));
+        gql_error_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_current_user_maps_graphql_rate_limit_and_missing_data() {
+        let rate_limited = MockServer::start();
+        let rate_limited_mock = rate_limited.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "errors": [
+                        {
+                            "message": "Too many requests",
+                            "extensions": {
+                                "code": "RATELIMITED"
+                            }
+                        }
+                    ]
+                }));
+        });
+        let rate_limited_client = LinearClient::with_base_url(
+            format!("{}/graphql", rate_limited.base_url()),
+            "team-1",
+            SecretString::from("lin_api_rate_limited".to_owned()),
+        );
+        let rate_limited_err = rate_limited_client.get_current_user().await.unwrap_err();
+        assert!(matches!(
+            rate_limited_err,
+            Error::RateLimited { retry_after: None }
+        ));
+        rate_limited_mock.assert();
+
+        let missing_data = MockServer::start();
+        let missing_data_mock = missing_data.mock(|when, then| {
+            when.method(POST).path("/graphql");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": null
+                }));
+        });
+        let missing_data_client = LinearClient::with_base_url(
+            format!("{}/graphql", missing_data.base_url()),
+            "team-1",
+            SecretString::from("lin_api_missing_data".to_owned()),
+        );
+        let missing_data_err = missing_data_client.get_current_user().await.unwrap_err();
+        assert!(matches!(
+            missing_data_err,
+            Error::InvalidData(message) if message.contains("no data")
+        ));
+        missing_data_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn create_and_update_issue_cover_validation_and_noop_paths() {
+        let client = LinearClient::with_base_url(
+            "https://api.linear.app/graphql",
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        let invalid_priority = client
+            .create_issue(CreateIssueInput {
+                title: "Broken".to_string(),
+                priority: Some("critical".to_string()),
+                ..Default::default()
+            })
+            .await;
+        assert!(matches!(
+            invalid_priority,
+            Err(Error::InvalidData(message)) if message.contains("Unsupported Linear priority")
+        ));
+
+        let invalid_identifier = client.update_issue("ENG", UpdateIssueInput::default()).await;
+        assert!(matches!(
+            invalid_identifier,
+            Err(Error::InvalidData(message)) if message.contains("must be a UUID or team-key identifier")
+        ));
+
+        let server = MockServer::start();
+        let issue_lookup = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query Issues")
+                .body_includes(r#""number":{"eq":77}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issues": {
+                            "nodes": [
+                                linear_issue("ENG-77", "No-op issue", "Backlog")
+                            ],
+                            "pageInfo": {
+                                "hasNextPage": false,
+                                "endCursor": null
+                            }
+                        }
+                    }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+        let issue = client
+            .update_issue("ENG-77", UpdateIssueInput::default())
+            .await
+            .unwrap();
+        assert_eq!(issue.key, "ENG-77");
+        assert_eq!(issue_lookup.calls(), 2);
+    }
 }
