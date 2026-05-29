@@ -75,12 +75,12 @@ impl ToolEnricher for LinearSchemaEnricher {
             schema.add_enum_param(
                 "stateCategory",
                 STATE_CATEGORY_VALUES,
-                "Filter by semantic Linear workflow category: backlog, todo, in_progress, done, cancelled.",
+                "Filter by semantic Linear workflow category: backlog, todo, in_progress, done, cancelled",
             );
             schema.add_enum_param(
                 "labelsOperator",
                 LABELS_OPERATOR_VALUES,
-                "Label matching logic: `and` requires all labels, `or` requires any label (default: `or`).",
+                "Label matching logic: `and` requires all labels, `or` requires any label (default: `or`)",
             );
             schema.set_description(
                 "state",
@@ -115,7 +115,7 @@ impl ToolEnricher for DynamicLinearSchemaEnricher {
             schema.set_description(
                 "status",
                 &format!(
-                    "Exact Linear workflow state name for this team. Available: {}. Takes precedence over `state`.",
+                    "Exact Linear workflow state name for this team. Available: {}. Takes precedence over `state`",
                     names.join(", ")
                 ),
             );
