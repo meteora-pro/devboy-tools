@@ -273,18 +273,17 @@ fn parse_inline(line: &str) -> Vec<CommentBlock> {
             }
         }
 
-        // Bold: **...**.
+        // Bold: **...**. The inner content may itself contain inline code, so
+        // parse it recursively and mark every resulting run bold (a run can
+        // carry both `bold` and `code` where they overlap, e.g. **`x`**).
         if c == '*' && i + 1 < chars.len() && chars[i + 1] == '*' {
             if let Some(close) = find_double_star(&chars, i + 2) {
                 flush_plain(&mut plain, &mut runs);
-                let text: String = chars[i + 2..close].iter().collect();
-                runs.push(CommentBlock {
-                    text,
-                    attributes: CommentAttributes {
-                        bold: true,
-                        ..Default::default()
-                    },
-                });
+                let inner: String = chars[i + 2..close].iter().collect();
+                for mut run in parse_inline(&inner) {
+                    run.attributes.bold = true;
+                    runs.push(run);
+                }
                 i = close + 2;
                 continue;
             }
@@ -368,6 +367,28 @@ mod tests {
         let blocks = markdown_to_comment_blocks("a **bold** b");
         assert_eq!(blocks[1].text, "bold");
         assert!(blocks[1].attributes.bold);
+    }
+
+    #[test]
+    fn bold_with_nested_inline_code() {
+        // **`SecretBackend`** must yield a single run that is BOTH bold and
+        // code, with the backticks consumed — not a bold run with literal
+        // backticks in the text.
+        let blocks = markdown_to_comment_blocks("**`SecretBackend`**");
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].text, "SecretBackend");
+        assert!(blocks[0].attributes.bold);
+        assert!(blocks[0].attributes.code);
+    }
+
+    #[test]
+    fn bold_with_mixed_inner_content() {
+        // **`backend.rs`** (new) — leading bold+code run, then plain tail.
+        let blocks = markdown_to_comment_blocks("**`backend.rs`** (new)");
+        assert_eq!(blocks[0].text, "backend.rs");
+        assert!(blocks[0].attributes.bold && blocks[0].attributes.code);
+        assert_eq!(blocks[1].text, " (new)");
+        assert!(blocks[1].attributes.is_empty());
     }
 
     #[test]
