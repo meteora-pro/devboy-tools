@@ -158,12 +158,17 @@ pub fn markdown_to_comment_blocks(body: &str) -> Vec<CommentBlock> {
         blocks.push(newline(CommentAttributes::default()));
     }
 
-    // `split('\n')` yields a trailing empty segment when the body ends in a
-    // newline, producing a redundant trailing separator. Trim a single
-    // trailing plain newline so we don't emit a dangling blank line.
-    if let Some(last) = blocks.last() {
-        if last.text == "\n" && last.attributes.is_empty() && blocks.len() > 1 {
+    // `split('\n')` yields a trailing empty segment for every trailing newline
+    // in the body, each producing a redundant plain separator. Trim all
+    // trailing *plain* newlines (never the last remaining block, and never a
+    // separator carrying a block attribute like code-block/list — those are
+    // structurally significant) so we don't emit dangling blank lines.
+    while blocks.len() > 1 {
+        let last = &blocks[blocks.len() - 1];
+        if last.text == "\n" && last.attributes.is_empty() {
             blocks.pop();
+        } else {
+            break;
         }
     }
 
@@ -476,6 +481,30 @@ mod tests {
         assert!(json.contains(r#""code":true"#));
         // Plain runs omit the attributes object entirely.
         assert!(json.contains(r#"{"text":"item"}"#));
+    }
+
+    #[test]
+    fn trailing_blank_lines_are_trimmed() {
+        // A body ending in one or more blank lines must not leave dangling
+        // plain newline separators (regression for PR #294 review feedback).
+        // All trailing plain newlines are trimmed, leaving just the content.
+        for body in ["a", "a\n", "a\n\n", "a\n\n\n"] {
+            let blocks = markdown_to_comment_blocks(body);
+            assert_eq!(
+                blocks,
+                vec![plain("a")],
+                "body {body:?} should trim every trailing plain newline"
+            );
+        }
+    }
+
+    #[test]
+    fn trailing_block_separator_is_preserved() {
+        // A trailing newline that carries a block attribute (list/code-block)
+        // is structurally significant and must NOT be trimmed.
+        let blocks = markdown_to_comment_blocks("- item\n");
+        let last = blocks.last().unwrap();
+        assert!(last.attributes.list.is_some());
     }
 
     #[test]
