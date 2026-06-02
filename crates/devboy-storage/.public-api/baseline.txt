@@ -1766,6 +1766,7 @@ pub const fn devboy_storage::source::Capabilities::iter_names(&self) -> bitflags
 impl bitflags::traits::Flags for devboy_storage::source::Capabilities
 pub type devboy_storage::source::Capabilities::Bits = u32
 pub const devboy_storage::source::Capabilities::FLAGS: &'static [bitflags::traits::Flag<devboy_storage::source::Capabilities>]
+pub fn devboy_storage::source::Capabilities::all_named() -> devboy_storage::source::Capabilities
 pub fn devboy_storage::source::Capabilities::bits(&self) -> u32
 pub fn devboy_storage::source::Capabilities::from_bits_retain(bits: u32) -> devboy_storage::source::Capabilities
 impl bitflags::traits::PublicFlags for devboy_storage::source::Capabilities
@@ -2592,6 +2593,7 @@ pub const fn devboy_storage::source::Capabilities::iter_names(&self) -> bitflags
 impl bitflags::traits::Flags for devboy_storage::source::Capabilities
 pub type devboy_storage::source::Capabilities::Bits = u32
 pub const devboy_storage::source::Capabilities::FLAGS: &'static [bitflags::traits::Flag<devboy_storage::source::Capabilities>]
+pub fn devboy_storage::source::Capabilities::all_named() -> devboy_storage::source::Capabilities
 pub fn devboy_storage::source::Capabilities::bits(&self) -> u32
 pub fn devboy_storage::source::Capabilities::from_bits_retain(bits: u32) -> devboy_storage::source::Capabilities
 impl bitflags::traits::PublicFlags for devboy_storage::source::Capabilities

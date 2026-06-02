@@ -1,4 +1,84 @@
 pub mod devboy_clickup
+pub mod devboy_clickup::comment_format
+pub struct devboy_clickup::comment_format::CodeBlockAttr
+pub devboy_clickup::comment_format::CodeBlockAttr::code_block: alloc::string::String
+impl core::clone::Clone for devboy_clickup::comment_format::CodeBlockAttr
+pub fn devboy_clickup::comment_format::CodeBlockAttr::clone(&self) -> devboy_clickup::comment_format::CodeBlockAttr
+impl core::cmp::PartialEq for devboy_clickup::comment_format::CodeBlockAttr
+pub fn devboy_clickup::comment_format::CodeBlockAttr::eq(&self, other: &devboy_clickup::comment_format::CodeBlockAttr) -> bool
+impl core::fmt::Debug for devboy_clickup::comment_format::CodeBlockAttr
+pub fn devboy_clickup::comment_format::CodeBlockAttr::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_clickup::comment_format::CodeBlockAttr
+impl serde_core::ser::Serialize for devboy_clickup::comment_format::CodeBlockAttr
+pub fn devboy_clickup::comment_format::CodeBlockAttr::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_clickup::comment_format::CodeBlockAttr
+impl core::marker::Send for devboy_clickup::comment_format::CodeBlockAttr
+impl core::marker::Sync for devboy_clickup::comment_format::CodeBlockAttr
+impl core::marker::Unpin for devboy_clickup::comment_format::CodeBlockAttr
+impl core::marker::UnsafeUnpin for devboy_clickup::comment_format::CodeBlockAttr
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::comment_format::CodeBlockAttr
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::comment_format::CodeBlockAttr
+pub struct devboy_clickup::comment_format::CommentAttributes
+pub devboy_clickup::comment_format::CommentAttributes::bold: bool
+pub devboy_clickup::comment_format::CommentAttributes::code: bool
+pub devboy_clickup::comment_format::CommentAttributes::code_block: core::option::Option<devboy_clickup::comment_format::CodeBlockAttr>
+pub devboy_clickup::comment_format::CommentAttributes::list: core::option::Option<devboy_clickup::comment_format::ListAttr>
+impl core::clone::Clone for devboy_clickup::comment_format::CommentAttributes
+pub fn devboy_clickup::comment_format::CommentAttributes::clone(&self) -> devboy_clickup::comment_format::CommentAttributes
+impl core::cmp::PartialEq for devboy_clickup::comment_format::CommentAttributes
+pub fn devboy_clickup::comment_format::CommentAttributes::eq(&self, other: &devboy_clickup::comment_format::CommentAttributes) -> bool
+impl core::default::Default for devboy_clickup::comment_format::CommentAttributes
+pub fn devboy_clickup::comment_format::CommentAttributes::default() -> devboy_clickup::comment_format::CommentAttributes
+impl core::fmt::Debug for devboy_clickup::comment_format::CommentAttributes
+pub fn devboy_clickup::comment_format::CommentAttributes::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_clickup::comment_format::CommentAttributes
+impl serde_core::ser::Serialize for devboy_clickup::comment_format::CommentAttributes
+pub fn devboy_clickup::comment_format::CommentAttributes::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_clickup::comment_format::CommentAttributes
+impl core::marker::Send for devboy_clickup::comment_format::CommentAttributes
+impl core::marker::Sync for devboy_clickup::comment_format::CommentAttributes
+impl core::marker::Unpin for devboy_clickup::comment_format::CommentAttributes
+impl core::marker::UnsafeUnpin for devboy_clickup::comment_format::CommentAttributes
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::comment_format::CommentAttributes
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::comment_format::CommentAttributes
+pub struct devboy_clickup::comment_format::CommentBlock
+pub devboy_clickup::comment_format::CommentBlock::attributes: devboy_clickup::comment_format::CommentAttributes
+pub devboy_clickup::comment_format::CommentBlock::text: alloc::string::String
+impl core::clone::Clone for devboy_clickup::comment_format::CommentBlock
+pub fn devboy_clickup::comment_format::CommentBlock::clone(&self) -> devboy_clickup::comment_format::CommentBlock
+impl core::cmp::PartialEq for devboy_clickup::comment_format::CommentBlock
+pub fn devboy_clickup::comment_format::CommentBlock::eq(&self, other: &devboy_clickup::comment_format::CommentBlock) -> bool
+impl core::fmt::Debug for devboy_clickup::comment_format::CommentBlock
+pub fn devboy_clickup::comment_format::CommentBlock::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_clickup::comment_format::CommentBlock
+impl serde_core::ser::Serialize for devboy_clickup::comment_format::CommentBlock
+pub fn devboy_clickup::comment_format::CommentBlock::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_clickup::comment_format::CommentBlock
+impl core::marker::Send for devboy_clickup::comment_format::CommentBlock
+impl core::marker::Sync for devboy_clickup::comment_format::CommentBlock
+impl core::marker::Unpin for devboy_clickup::comment_format::CommentBlock
+impl core::marker::UnsafeUnpin for devboy_clickup::comment_format::CommentBlock
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::comment_format::CommentBlock
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::comment_format::CommentBlock
+pub struct devboy_clickup::comment_format::ListAttr
+pub devboy_clickup::comment_format::ListAttr::list: alloc::string::String
+impl core::clone::Clone for devboy_clickup::comment_format::ListAttr
+pub fn devboy_clickup::comment_format::ListAttr::clone(&self) -> devboy_clickup::comment_format::ListAttr
+impl core::cmp::PartialEq for devboy_clickup::comment_format::ListAttr
+pub fn devboy_clickup::comment_format::ListAttr::eq(&self, other: &devboy_clickup::comment_format::ListAttr) -> bool
+impl core::fmt::Debug for devboy_clickup::comment_format::ListAttr
+pub fn devboy_clickup::comment_format::ListAttr::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_clickup::comment_format::ListAttr
+impl serde_core::ser::Serialize for devboy_clickup::comment_format::ListAttr
+pub fn devboy_clickup::comment_format::ListAttr::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_clickup::comment_format::ListAttr
+impl core::marker::Send for devboy_clickup::comment_format::ListAttr
+impl core::marker::Sync for devboy_clickup::comment_format::ListAttr
+impl core::marker::Unpin for devboy_clickup::comment_format::ListAttr
+impl core::marker::UnsafeUnpin for devboy_clickup::comment_format::ListAttr
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::comment_format::ListAttr
+impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::comment_format::ListAttr
+pub fn devboy_clickup::comment_format::markdown_to_comment_blocks(body: &str) -> alloc::vec::Vec<devboy_clickup::comment_format::CommentBlock>
 pub mod devboy_clickup::enricher
 pub struct devboy_clickup::enricher::ClickUpSchemaEnricher
 impl devboy_clickup::enricher::ClickUpSchemaEnricher
@@ -551,6 +631,7 @@ impl core::marker::UnsafeUnpin for devboy_clickup::ClickUpUser
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_clickup::ClickUpUser
 impl core::panic::unwind_safe::UnwindSafe for devboy_clickup::ClickUpUser
 pub struct devboy_clickup::CreateCommentRequest
+pub devboy_clickup::CreateCommentRequest::comment: alloc::vec::Vec<devboy_clickup::comment_format::CommentBlock>
 pub devboy_clickup::CreateCommentRequest::comment_text: alloc::string::String
 impl core::clone::Clone for devboy_clickup::CreateCommentRequest
 pub fn devboy_clickup::CreateCommentRequest::clone(&self) -> devboy_clickup::CreateCommentRequest

@@ -1327,8 +1327,25 @@ impl IssueProvider for ClickUpClient {
         } else {
             format!("{}/comment", base_url)
         };
+        // ClickUp's Comments API does not render markdown: `comment_text` is
+        // run through a lossy auto-formatter that fragments backtick spans into
+        // isolated inline-code chips. Send the structured `comment` array
+        // (rich-text runs) so code, lists and prose render cleanly.
+        //
+        // ClickUp renders BOTH fields when present, appending the raw
+        // `comment_text` as a trailing block — so the body must be sent in
+        // exactly one of them. When we have structured blocks, leave
+        // `comment_text` empty (the field is required, but empty avoids the
+        // duplicate); otherwise fall back to plain `comment_text`.
+        let comment = crate::comment_format::markdown_to_comment_blocks(body);
+        let comment_text = if comment.is_empty() {
+            body.to_string()
+        } else {
+            String::new()
+        };
         let request = CreateCommentRequest {
-            comment_text: body.to_string(),
+            comment_text,
+            comment,
         };
 
         // ClickUp POST returns minimal response (id + date), not full comment
@@ -3199,7 +3216,11 @@ mod tests {
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/task/abc123/comment")
-                    .body_includes("\"comment_text\":\"My comment\"");
+                    // Structured rich-text array drives clean rendering;
+                    // comment_text is emptied so ClickUp doesn't append a
+                    // duplicate raw-text block. See add_comment / comment_format.
+                    .body_includes("\"comment_text\":\"\"")
+                    .body_includes("\"comment\":[{\"text\":\"My comment\"}]");
                 then.status(200).json_body(serde_json::json!({
                     "id": 458315,
                     "hist_id": "26b2d7f1-test",
