@@ -295,7 +295,18 @@ pub struct AssigneeDiff {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateCommentRequest {
+    /// Plain-text body. ClickUp requires this field and uses it as the
+    /// fallback / notification text. It is run through a lossy auto-formatter
+    /// for rendering, so the structured `comment` array below is what actually
+    /// drives clean rich-text display.
     pub comment_text: String,
+    /// Structured rich-text runs (Quill Delta shape). When present, ClickUp
+    /// renders these instead of auto-formatting `comment_text`, so inline
+    /// code, code blocks and lists display correctly without fragmenting
+    /// prose. Built from the markdown body by
+    /// [`crate::comment_format::markdown_to_comment_blocks`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub comment: Vec<crate::comment_format::CommentBlock>,
 }
 
 /// Response from POST /task/{task_id}/comment.
