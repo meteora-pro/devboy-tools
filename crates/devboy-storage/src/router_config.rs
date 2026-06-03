@@ -118,7 +118,7 @@ pub enum RouterConfigError {
         path: PathBuf,
         /// Underlying parse error.
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 
     /// Source name failed the identifier regex (kebab-case allowed).
@@ -374,7 +374,7 @@ impl RouterConfig {
     pub fn parse(toml_body: &str) -> Result<Self, RouterConfigError> {
         let raw: RawConfig = toml::from_str(toml_body).map_err(|e| RouterConfigError::Parse {
             path: PathBuf::from("<inline>"),
-            source: e,
+            source: Box::new(e),
         })?;
         raw.into_validated()
     }
