@@ -167,7 +167,7 @@ pub enum LoadError {
         path: PathBuf,
         /// Underlying TOML deserialisation error.
         #[source]
-        source: Box<toml::de::Error>,
+        source: toml::de::Error,
     },
 
     /// A pattern's `format_regex` is malformed.
@@ -290,7 +290,7 @@ impl Catalogue {
             })?;
             let parsed: UserPatternFile = toml::from_str(&body).map_err(|e| LoadError::Parse {
                 path: path.clone(),
-                source: Box::new(e),
+                source: e,
             })?;
 
             for entry in parsed.patterns {
