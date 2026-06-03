@@ -620,6 +620,16 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             },
         },
         ToolDefinition {
+            name: "get_chat_topics".into(),
+            description: "List forum topics (threads) known for a chat. Pass a topic's thread_id to get_chat_messages or send_message to read or post within that topic.".into(),
+            category: ToolCategory::Messenger,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property("chat_id", PropertySchema::string("Messenger chat ID (defaults to the first linked chat)"));
+                s
+            },
+        },
+        ToolDefinition {
             name: "delete_asset".into(),
             description: "Delete a file attachment from an issue. Not all providers support this — check asset_capabilities first.".into(),
             category: ToolCategory::IssueTracker,
@@ -1161,7 +1171,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 54);
+        assert_eq!(tools.len(), 55);
     }
 
     #[test]
@@ -1228,6 +1238,7 @@ mod tests {
             "get_chat_messages",
             "search_chat_messages",
             "send_message",
+            "get_chat_topics",
         ];
         let jira_structure_tools = [
             "get_structures",
