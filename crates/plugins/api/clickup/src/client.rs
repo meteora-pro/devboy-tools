@@ -616,6 +616,14 @@ fn map_task(task: &ClickUpTask) -> Issue {
             .clone()
             .or_else(|| task.description.clone()),
         state: map_state(task),
+        // DEV-1578: surface the rich ClickUp display status (e.g. "in
+        // progress" / "ready to release" / "complete") + unified category,
+        // alongside the binary `state`.
+        status: Some(task.status.status.clone()),
+        status_category: Some(map_status_category(
+            task.status.status_type.as_deref(),
+            &task.status.status,
+        )),
         source: "clickup".to_string(),
         priority: map_priority(task.priority.as_ref()),
         labels: map_tags(&task.tags),
@@ -1864,6 +1872,58 @@ mod tests {
         // Timestamps are now ISO 8601
         assert_eq!(issue.created_at, Some("2024-01-01T00:00:00Z".to_string()));
         assert_eq!(issue.updated_at, Some("2024-01-02T00:00:00Z".to_string()));
+        // DEV-1578: the rich display status + unified category surface alongside `state`.
+        assert_eq!(issue.status, Some("open".to_string()));
+        assert_eq!(issue.status_category, Some("todo".to_string()));
+    }
+
+    /// DEV-1578: custom ClickUp statuses (the ones that drive the team's
+    /// "what's deployed where" board — e.g. "in progress", "review",
+    /// "complete") must surface verbatim in `status`, with a normalized
+    /// `status_category` for cross-provider grouping. The binary `state`
+    /// alone collapses these and loses the promotion stage.
+    #[test]
+    fn test_map_task_surfaces_display_status() {
+        let make = |name: &str, ty: &str| ClickUpTask {
+            id: "t1".to_string(),
+            custom_id: None,
+            name: "Task".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: name.to_string(),
+                status_type: Some(ty.to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/t1".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: Vec::new(),
+        };
+
+        // Display name is preserved verbatim (not collapsed to open/closed).
+        let in_progress = map_task(&make("in progress", "custom"));
+        assert_eq!(in_progress.status, Some("in progress".to_string()));
+        assert_eq!(in_progress.status_category, Some("in_progress".to_string()));
+        assert_eq!(in_progress.state, "open"); // `state` still binary
+
+        let review = map_task(&make("review", "custom"));
+        assert_eq!(review.status, Some("review".to_string()));
+        assert_eq!(review.status_category, Some("in_progress".to_string()));
+
+        // A "done"-typed status maps to the done category and closed state.
+        let complete = map_task(&make("complete", "closed"));
+        assert_eq!(complete.status, Some("complete".to_string()));
+        assert_eq!(complete.status_category, Some("done".to_string()));
+        assert_eq!(complete.state, "closed");
     }
 
     #[test]

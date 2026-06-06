@@ -463,6 +463,8 @@ fn map_issue(gl_issue: &GitLabIssue, base_url: &str) -> Issue {
         title: gl_issue.title.clone(),
         description: gl_issue.description.clone(),
         state: gl_issue.state.clone(),
+        status: None, // GitLab status is binary (open/closed) → `state` covers it (DEV-1578)
+        status_category: None,
         source: "gitlab".to_string(),
         priority: None, // GitLab doesn't have built-in priority
         labels: gl_issue.labels.clone(),

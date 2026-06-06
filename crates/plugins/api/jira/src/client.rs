@@ -1670,6 +1670,8 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
         title: issue.fields.summary.clone().unwrap_or_default(),
         description: read_description(&issue.fields.description, flavor),
         state: map_state(issue.fields.status.as_ref()),
+        status: None, // TODO(DEV-1578): parity — surface fields.status.name + statusCategory
+        status_category: None,
         source: "jira".to_string(),
         priority: map_priority(issue.fields.priority.as_ref()),
         labels: issue.fields.labels.clone(),

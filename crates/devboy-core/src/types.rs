@@ -37,6 +37,19 @@ pub struct Issue {
     pub description: Option<String>,
     /// State (e.g., "opened", "closed")
     pub state: String,
+    /// Provider display status name — the rich, human-facing status
+    /// (ClickUp "in progress"/"review"/"ready to release"/"complete",
+    /// Jira status name). `None` for providers whose status is just
+    /// open/closed (GitLab/GitHub), which keep using `state`. Distinct
+    /// from `state` (binary open/closed, preserved for backward-compat
+    /// and filters). (DEV-1578)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Unified status category derived from the provider's status type +
+    /// name: `backlog` / `todo` / `in_progress` / `done` / `cancelled`.
+    /// `None` when the provider doesn't expose a richer status. (DEV-1578)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_category: Option<String>,
     /// Source provider name (e.g., "gitlab", "github", "clickup", "jira")
     pub source: String,
     /// Priority (e.g., "urgent", "high", "normal", "low")

@@ -213,6 +213,8 @@ fn map_issue(gh_issue: &GitHubIssue) -> Issue {
         title: gh_issue.title.clone(),
         description: gh_issue.body.clone(),
         state: gh_issue.state.clone(),
+        status: None, // GitHub status is binary (open/closed) → `state` covers it (DEV-1578)
+        status_category: None,
         source: "github".to_string(),
         priority: None, // GitHub doesn't have built-in priority
         labels: map_labels(&gh_issue.labels),
