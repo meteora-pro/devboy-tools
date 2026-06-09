@@ -603,8 +603,10 @@ fn resolve_custom_field_display(cf: &crate::types::ClickUpCustomField) -> Option
         Some("drop_down") => {
             let chosen = match value {
                 // ClickUp returns the selected option's order index (e.g. 0).
+                // Fail cleanly (→ None, raw value kept) rather than truncate
+                // an out-of-range index to a wrong option.
                 serde_json::Value::Number(n) => {
-                    let idx = n.as_u64()? as u32;
+                    let idx = u32::try_from(n.as_u64()?).ok()?;
                     tc.options.iter().find(|o| o.orderindex == Some(idx))
                 }
                 // …or, in some configs, the option id directly.
@@ -2795,6 +2797,87 @@ mod tests {
                 issues[0].created_at,
                 Some("2024-01-01T00:00:00Z".to_string())
             );
+        }
+
+        /// DEV-1578b end-to-end: a task whose drop_down/labels custom fields
+        /// arrive in ClickUp's real wire shape (drop_down `value` = the option
+        /// order index, labels `value` = array of option ids, option defs in
+        /// `type_config.options`) must deserialize and resolve to human labels
+        /// through the full get_issues path. Proves the serde wiring (incl. the
+        /// drop_down `name` / labels `label` option-key alias) matches ClickUp
+        /// — not just the in-memory mapper — and that the agent-facing JSON
+        /// carries the resolved label.
+        #[tokio::test]
+        async fn test_get_issues_resolves_select_field_display() {
+            let server = MockServer::start();
+            let task = serde_json::json!({
+                "id": "t1",
+                "name": "Tracked task",
+                "status": {"status": "in progress", "type": "custom"},
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/t1",
+                "date_created": "1704067200000",
+                "date_updated": "1704153600000",
+                "custom_fields": [
+                    {
+                        "id": "8b31f785-shipped",
+                        "name": "Shipped Version",
+                        "type": "drop_down",
+                        "type_config": { "options": [
+                            {"id": "o-dev",  "name": "dev",  "orderindex": 0},
+                            {"id": "o-test", "name": "test", "orderindex": 1},
+                            {"id": "o-prod", "name": "prod", "orderindex": 2}
+                        ]},
+                        "value": 0
+                    },
+                    {
+                        "id": "areas",
+                        "name": "Areas",
+                        "type": "labels",
+                        // ClickUp `labels` options use the `label` key, not `name`.
+                        "type_config": { "options": [
+                            {"id": "a", "label": "backend"},
+                            {"id": "b", "label": "infra"}
+                        ]},
+                        "value": ["a", "b"]
+                    }
+                ]
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345/task");
+                then.status(200)
+                    .json_body(serde_json::json!({"tasks": [task]}));
+            });
+
+            let client = create_test_client(&server);
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
+            let issue = issues.into_iter().next().expect("one issue");
+
+            // Rich display status surfaces (DEV-1578).
+            assert_eq!(issue.status.as_deref(), Some("in progress"));
+            assert_eq!(issue.status_category.as_deref(), Some("in_progress"));
+
+            // drop_down order index 0 → "dev"; raw value preserved for writes.
+            let shipped = issue
+                .custom_fields
+                .get("8b31f785-shipped")
+                .expect("shipped field present");
+            assert_eq!(shipped.value, serde_json::json!(0));
+            assert_eq!(shipped.display.as_deref(), Some("dev"));
+
+            // labels ids → joined labels (validates the `label` serde alias).
+            let areas = issue.custom_fields.get("areas").expect("areas present");
+            assert_eq!(areas.display.as_deref(), Some("backend, infra"));
+
+            // Agent-facing JSON output carries the resolved label.
+            let json = serde_json::to_string(&issue).unwrap();
+            assert!(json.contains("\"display\":\"dev\""), "json = {json}");
         }
 
         #[tokio::test]
