@@ -1960,6 +1960,101 @@ mod tests {
         assert_eq!(areas.display.as_deref(), Some("backend, infra"));
     }
 
+    /// DEV-1578b: every non-resolving branch must degrade to `display =
+    /// None` with the raw `value` preserved — never a wrong label, never a
+    /// panic. Covers the u32 out-of-range guard, unmatched order index,
+    /// unmatched option id, empty options, and unmatched labels.
+    #[test]
+    fn test_resolve_custom_field_display_degrades_gracefully() {
+        use crate::types::{ClickUpCustomField, ClickUpFieldOptionInline, ClickUpFieldTypeConfig};
+        let opt = |id: &str, name: &str, idx: u32| ClickUpFieldOptionInline {
+            id: Some(id.to_string()),
+            name: Some(name.to_string()),
+            orderindex: Some(idx),
+        };
+        let field =
+            |id: &str, ty: &str, value: serde_json::Value, opts: Vec<ClickUpFieldOptionInline>| {
+                ClickUpCustomField {
+                    id: id.to_string(),
+                    name: Some(id.to_string()),
+                    field_type: Some(ty.to_string()),
+                    value: Some(value),
+                    type_config: Some(ClickUpFieldTypeConfig { options: opts }),
+                }
+            };
+        let dd_opts = || vec![opt("o-dev", "dev", 0), opt("o-test", "test", 1)];
+        let task = ClickUpTask {
+            id: "t".to_string(),
+            custom_id: None,
+            name: "T".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/t".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: vec![
+                // drop_down order index out of u32 range → None (clean, not truncated)
+                field(
+                    "dd_overflow",
+                    "drop_down",
+                    serde_json::json!(4_294_967_296u64),
+                    dd_opts(),
+                ),
+                // drop_down order index with no matching option → None
+                field("dd_no_index", "drop_down", serde_json::json!(99), dd_opts()),
+                // drop_down option id that doesn't exist → None
+                field(
+                    "dd_bad_id",
+                    "drop_down",
+                    serde_json::json!("nope"),
+                    dd_opts(),
+                ),
+                // type_config present but options empty → None
+                field("dd_empty", "drop_down", serde_json::json!(0), vec![]),
+                // labels ids with no matching option → None
+                field(
+                    "lbl_nomatch",
+                    "labels",
+                    serde_json::json!(["zzz"]),
+                    vec![opt("a", "backend", 0)],
+                ),
+            ],
+        };
+
+        let issue = map_task(&task);
+        for key in [
+            "dd_overflow",
+            "dd_no_index",
+            "dd_bad_id",
+            "dd_empty",
+            "lbl_nomatch",
+        ] {
+            let f = issue
+                .custom_fields
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} present"));
+            assert!(
+                f.display.is_none(),
+                "{key} must not resolve, got {:?}",
+                f.display
+            );
+            assert!(!f.value.is_null(), "{key} raw value preserved");
+        }
+    }
+
     #[test]
     fn test_map_task() {
         let task = ClickUpTask {
