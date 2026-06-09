@@ -608,9 +608,10 @@ fn resolve_custom_field_display(cf: &crate::types::ClickUpCustomField) -> Option
                     tc.options.iter().find(|o| o.orderindex == Some(idx))
                 }
                 // …or, in some configs, the option id directly.
-                serde_json::Value::String(s) => {
-                    tc.options.iter().find(|o| o.id.as_deref() == Some(s.as_str()))
-                }
+                serde_json::Value::String(s) => tc
+                    .options
+                    .iter()
+                    .find(|o| o.id.as_deref() == Some(s.as_str())),
                 _ => None,
             }?;
             chosen.name.clone()
@@ -1879,7 +1880,11 @@ mod tests {
         };
         let shipped_opts = || {
             Some(crate::types::ClickUpFieldTypeConfig {
-                options: vec![opt("o-dev", "dev", 0), opt("o-test", "test", 1), opt("o-prod", "prod", 2)],
+                options: vec![
+                    opt("o-dev", "dev", 0),
+                    opt("o-test", "test", 1),
+                    opt("o-prod", "prod", 2),
+                ],
             })
         };
         let task = ClickUpTask {
@@ -1928,7 +1933,11 @@ mod tests {
                     field_type: Some("labels".to_string()),
                     value: Some(serde_json::json!(["a", "b"])),
                     type_config: Some(crate::types::ClickUpFieldTypeConfig {
-                        options: vec![opt("a", "backend", 0), opt("b", "infra", 1), opt("c", "frontend", 2)],
+                        options: vec![
+                            opt("a", "backend", 0),
+                            opt("b", "infra", 1),
+                            opt("c", "frontend", 2),
+                        ],
                     }),
                 },
             ],
@@ -1939,7 +1948,10 @@ mod tests {
         assert_eq!(shipped.value, serde_json::json!(0)); // raw preserved for writes
         assert_eq!(shipped.display.as_deref(), Some("dev"));
 
-        let shipped2 = issue.custom_fields.get("shipped2").expect("shipped2 present");
+        let shipped2 = issue
+            .custom_fields
+            .get("shipped2")
+            .expect("shipped2 present");
         assert_eq!(shipped2.display.as_deref(), Some("prod"));
 
         let areas = issue.custom_fields.get("areas").expect("areas present");
