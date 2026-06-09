@@ -103,6 +103,15 @@ pub struct CustomFieldValue {
     /// Raw provider value. Shape varies — string for text, number
     /// for numeric, object/array for selects and multi-selects.
     pub value: Value,
+    /// Human-readable resolved value for select-like fields whose raw
+    /// `value` is an opaque id/index — e.g. a ClickUp `drop_down` whose
+    /// `value` is the option's order index `0` resolves to `"dev"`, or a
+    /// `labels` multi-select to `"backend, infra"`. `None` when the raw
+    /// `value` is already human-readable (text/number/url) or the option
+    /// couldn't be resolved. Kept alongside (not replacing) `value` so the
+    /// raw form is still available for write round-trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
 }
 
 /// A link between two issues.

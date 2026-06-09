@@ -87,6 +87,34 @@ pub struct ClickUpCustomField {
     /// Absent when the user hasn't set the field.
     #[serde(default)]
     pub value: Option<serde_json::Value>,
+    /// Field configuration embedded in the task payload. For
+    /// `drop_down` / `labels` fields this carries the `options` list,
+    /// which lets us resolve the opaque `value` (an order index or
+    /// option id) back to its human-readable label inline — no extra
+    /// metadata fetch required.
+    #[serde(default)]
+    pub type_config: Option<ClickUpFieldTypeConfig>,
+}
+
+/// `type_config` block embedded per custom field on a ClickUp task.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClickUpFieldTypeConfig {
+    /// Selectable options for `drop_down` / `labels` fields.
+    #[serde(default)]
+    pub options: Vec<ClickUpFieldOptionInline>,
+}
+
+/// A single `drop_down`/`labels` option as embedded in a task payload.
+/// `drop_down` options carry `name`; `labels` options carry `label` —
+/// both are accepted so either field type resolves.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClickUpFieldOptionInline {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default, alias = "label")]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub orderindex: Option<u32>,
 }
 
 /// ClickUp task attachment entry as returned on the task payload.

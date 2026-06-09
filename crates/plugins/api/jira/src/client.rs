@@ -1660,6 +1660,7 @@ fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue
                 devboy_core::CustomFieldValue {
                     name: None,
                     value: v.clone(),
+                    display: None, // TODO(DEV-1578b): resolve Jira option/array values to labels
                 },
             )
         })

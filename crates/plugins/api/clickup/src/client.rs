@@ -586,6 +586,54 @@ fn map_timestamp(ts: &Option<String>) -> Option<String> {
     ts.as_ref().and_then(|s| epoch_ms_to_iso8601(s))
 }
 
+/// Resolve a select-like custom field's opaque value to its human label
+/// using the `type_config.options` embedded in the task payload.
+/// `drop_down` → the chosen option's name (matched by order index, or by
+/// id when ClickUp returns the option id); `labels` → comma-joined option
+/// names for the selected ids. Returns `None` for non-select fields, empty
+/// option lists, or values that don't resolve (the raw `value` still rides
+/// along on `CustomFieldValue`).
+fn resolve_custom_field_display(cf: &crate::types::ClickUpCustomField) -> Option<String> {
+    let tc = cf.type_config.as_ref()?;
+    if tc.options.is_empty() {
+        return None;
+    }
+    let value = cf.value.as_ref()?;
+    match cf.field_type.as_deref() {
+        Some("drop_down") => {
+            let chosen = match value {
+                // ClickUp returns the selected option's order index (e.g. 0).
+                serde_json::Value::Number(n) => {
+                    let idx = n.as_u64()? as u32;
+                    tc.options.iter().find(|o| o.orderindex == Some(idx))
+                }
+                // …or, in some configs, the option id directly.
+                serde_json::Value::String(s) => {
+                    tc.options.iter().find(|o| o.id.as_deref() == Some(s.as_str()))
+                }
+                _ => None,
+            }?;
+            chosen.name.clone()
+        }
+        Some("labels") => {
+            // `labels` value is an array of selected option ids.
+            let names: Vec<String> = value
+                .as_array()?
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|id| {
+                    tc.options
+                        .iter()
+                        .find(|o| o.id.as_deref() == Some(id))
+                        .and_then(|o| o.name.clone())
+                })
+                .collect();
+            (!names.is_empty()).then(|| names.join(", "))
+        }
+        _ => None,
+    }
+}
+
 fn map_task(task: &ClickUpTask) -> Issue {
     // Surface set custom fields keyed by ClickUp's stable field id
     // (matches `get_custom_fields` output across providers). Display
@@ -602,6 +650,10 @@ fn map_task(task: &ClickUpTask) -> Issue {
                     devboy_core::CustomFieldValue {
                         name: cf.name.clone(),
                         value: v.clone(),
+                        // Resolve drop_down/labels indices → human label
+                        // (e.g. 0 → "dev") so agents read the meaning, not
+                        // the opaque id. Raw `value` is kept for writes.
+                        display: resolve_custom_field_display(cf),
                     },
                 )
             })
@@ -1780,18 +1832,21 @@ mod tests {
                     name: Some("Severity".to_string()),
                     field_type: Some("drop_down".to_string()),
                     value: Some(serde_json::json!("High")),
+                    type_config: None,
                 },
                 crate::types::ClickUpCustomField {
                     id: "cf-2".to_string(),
                     name: Some("Sprint".to_string()),
                     field_type: Some("text".to_string()),
                     value: None, // unset → must be skipped
+                    type_config: None,
                 },
                 crate::types::ClickUpCustomField {
                     id: "cf-3".to_string(),
                     name: None, // anonymous → falls back to id
                     field_type: Some("number".to_string()),
                     value: Some(serde_json::json!(42)),
+                    type_config: None,
                 },
             ],
         };
@@ -1802,12 +1857,93 @@ mod tests {
         let severity = issue.custom_fields.get("cf-1").expect("cf-1 present");
         assert_eq!(severity.name.as_deref(), Some("Severity"));
         assert_eq!(severity.value, serde_json::json!("High"));
+        // No `type_config` options on the payload → nothing to resolve.
+        assert!(severity.display.is_none());
         // Unset value (`cf-2`) is filtered out entirely.
         assert!(!issue.custom_fields.contains_key("cf-2"));
         // Anonymous field (no name) keeps `name: None`.
         let anon = issue.custom_fields.get("cf-3").expect("cf-3 present");
         assert!(anon.name.is_none());
         assert_eq!(anon.value, serde_json::json!(42));
+    }
+
+    /// DEV-1578b: drop_down / labels custom fields must resolve their
+    /// opaque value (order index or option id) to the human label, so the
+    /// agent reads "dev" not `0`. Raw `value` is preserved for writes.
+    #[test]
+    fn test_map_task_resolves_select_custom_fields_to_labels() {
+        let opt = |id: &str, name: &str, idx: u32| crate::types::ClickUpFieldOptionInline {
+            id: Some(id.to_string()),
+            name: Some(name.to_string()),
+            orderindex: Some(idx),
+        };
+        let shipped_opts = || {
+            Some(crate::types::ClickUpFieldTypeConfig {
+                options: vec![opt("o-dev", "dev", 0), opt("o-test", "test", 1), opt("o-prod", "prod", 2)],
+            })
+        };
+        let task = ClickUpTask {
+            id: "t".to_string(),
+            custom_id: None,
+            name: "T".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/t".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: vec![
+                // drop_down selected by order index 0 → "dev"
+                crate::types::ClickUpCustomField {
+                    id: "shipped".to_string(),
+                    name: Some("Shipped Version".to_string()),
+                    field_type: Some("drop_down".to_string()),
+                    value: Some(serde_json::json!(0)),
+                    type_config: shipped_opts(),
+                },
+                // drop_down selected by option id → "prod"
+                crate::types::ClickUpCustomField {
+                    id: "shipped2".to_string(),
+                    name: Some("Shipped Version".to_string()),
+                    field_type: Some("drop_down".to_string()),
+                    value: Some(serde_json::json!("o-prod")),
+                    type_config: shipped_opts(),
+                },
+                // labels multi-select → joined "backend, infra"
+                crate::types::ClickUpCustomField {
+                    id: "areas".to_string(),
+                    name: Some("Areas".to_string()),
+                    field_type: Some("labels".to_string()),
+                    value: Some(serde_json::json!(["a", "b"])),
+                    type_config: Some(crate::types::ClickUpFieldTypeConfig {
+                        options: vec![opt("a", "backend", 0), opt("b", "infra", 1), opt("c", "frontend", 2)],
+                    }),
+                },
+            ],
+        };
+
+        let issue = map_task(&task);
+        let shipped = issue.custom_fields.get("shipped").expect("shipped present");
+        assert_eq!(shipped.value, serde_json::json!(0)); // raw preserved for writes
+        assert_eq!(shipped.display.as_deref(), Some("dev"));
+
+        let shipped2 = issue.custom_fields.get("shipped2").expect("shipped2 present");
+        assert_eq!(shipped2.display.as_deref(), Some("prod"));
+
+        let areas = issue.custom_fields.get("areas").expect("areas present");
+        assert_eq!(areas.display.as_deref(), Some("backend, infra"));
     }
 
     #[test]
