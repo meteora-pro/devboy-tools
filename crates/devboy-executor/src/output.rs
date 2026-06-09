@@ -233,6 +233,7 @@ mod tests {
             parent: None,
             subtasks: vec![],
             custom_fields: std::collections::HashMap::new(),
+            ..Default::default()
         }
     }
 

@@ -37,6 +37,19 @@ pub struct Issue {
     pub description: Option<String>,
     /// State (e.g., "opened", "closed")
     pub state: String,
+    /// Provider display status name — the rich, human-facing status
+    /// (ClickUp "in progress"/"review"/"ready to release"/"complete",
+    /// Jira status name). `None` for providers whose status is just
+    /// open/closed (GitLab/GitHub), which keep using `state`. Distinct
+    /// from `state` (binary open/closed, preserved for backward-compat
+    /// and filters). (DEV-1578)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Unified status category derived from the provider's status type +
+    /// name: `backlog` / `todo` / `in_progress` / `done` / `cancelled`.
+    /// `None` when the provider doesn't expose a richer status. (DEV-1578)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_category: Option<String>,
     /// Source provider name (e.g., "gitlab", "github", "clickup", "jira")
     pub source: String,
     /// Priority (e.g., "urgent", "high", "normal", "low")
@@ -90,6 +103,15 @@ pub struct CustomFieldValue {
     /// Raw provider value. Shape varies — string for text, number
     /// for numeric, object/array for selects and multi-selects.
     pub value: Value,
+    /// Human-readable resolved value for select-like fields whose raw
+    /// `value` is an opaque id/index — e.g. a ClickUp `drop_down` whose
+    /// `value` is the option's order index `0` resolves to `"dev"`, or a
+    /// `labels` multi-select to `"backend, infra"`. `None` when the raw
+    /// `value` is already human-readable (text/number/url) or the option
+    /// couldn't be resolved. Kept alongside (not replacing) `value` so the
+    /// raw form is still available for write round-trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
 }
 
 /// A link between two issues.

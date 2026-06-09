@@ -57,6 +57,7 @@ fn generate_issues(n: usize) -> Vec<Issue> {
             parent: None,
             subtasks: vec![],
             custom_fields: std::collections::HashMap::new(),
+            ..Default::default()
         })
         .collect()
 }
