@@ -2004,6 +2004,7 @@ impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldDescriptor
 pub struct devboy_core::types::CustomFieldValue
+pub devboy_core::types::CustomFieldValue::display: core::option::Option<alloc::string::String>
 pub devboy_core::types::CustomFieldValue::name: core::option::Option<alloc::string::String>
 pub devboy_core::types::CustomFieldValue::value: serde_json::value::Value
 impl core::clone::Clone for devboy_core::types::CustomFieldValue
@@ -2262,6 +2263,8 @@ pub devboy_core::types::Issue::parent: core::option::Option<alloc::string::Strin
 pub devboy_core::types::Issue::priority: core::option::Option<alloc::string::String>
 pub devboy_core::types::Issue::source: alloc::string::String
 pub devboy_core::types::Issue::state: alloc::string::String
+pub devboy_core::types::Issue::status: core::option::Option<alloc::string::String>
+pub devboy_core::types::Issue::status_category: core::option::Option<alloc::string::String>
 pub devboy_core::types::Issue::subtasks: alloc::vec::Vec<devboy_core::types::Issue>
 pub devboy_core::types::Issue::title: alloc::string::String
 pub devboy_core::types::Issue::updated_at: core::option::Option<alloc::string::String>
@@ -4652,6 +4655,7 @@ impl core::marker::UnsafeUnpin for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::CustomFieldDescriptor
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::CustomFieldDescriptor
 pub struct devboy_core::CustomFieldValue
+pub devboy_core::CustomFieldValue::display: core::option::Option<alloc::string::String>
 pub devboy_core::CustomFieldValue::name: core::option::Option<alloc::string::String>
 pub devboy_core::CustomFieldValue::value: serde_json::value::Value
 impl core::clone::Clone for devboy_core::types::CustomFieldValue
@@ -5033,6 +5037,8 @@ pub devboy_core::Issue::parent: core::option::Option<alloc::string::String>
 pub devboy_core::Issue::priority: core::option::Option<alloc::string::String>
 pub devboy_core::Issue::source: alloc::string::String
 pub devboy_core::Issue::state: alloc::string::String
+pub devboy_core::Issue::status: core::option::Option<alloc::string::String>
+pub devboy_core::Issue::status_category: core::option::Option<alloc::string::String>
 pub devboy_core::Issue::subtasks: alloc::vec::Vec<devboy_core::types::Issue>
 pub devboy_core::Issue::title: alloc::string::String
 pub devboy_core::Issue::updated_at: core::option::Option<alloc::string::String>
