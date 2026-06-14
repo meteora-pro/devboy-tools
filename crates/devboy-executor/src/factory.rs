@@ -5,7 +5,7 @@ use devboy_core::{
 
 use crate::context::{
     ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
+    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope, YouGileScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -125,6 +125,13 @@ pub fn create_provider(
                     "multi-project scope ({}) not yet implemented",
                     keys.join(", ")
                 ),
+            }),
+        },
+
+        ProviderConfig::YouGile { scope, .. } => match scope {
+            YouGileScope::Board { id } => Err(Error::ProviderUnsupported {
+                provider: "yougile".into(),
+                operation: format!("board scope ({id}) not yet implemented"),
             }),
         },
 
@@ -277,6 +284,14 @@ pub fn create_enricher(
             let jira_meta: devboy_jira::JiraMetadata =
                 serde_json::from_value(meta.data.clone()).ok()?;
             Some(Box::new(devboy_jira::JiraSchemaEnricher::new(jira_meta)))
+        }
+        ProviderConfig::YouGile { .. } => {
+            let meta = metadata?;
+            let yougile_meta: devboy_yougile::YouGileMetadata =
+                serde_json::from_value(meta.data.clone()).ok()?;
+            Some(Box::new(devboy_yougile::YouGileSchemaEnricher::new(
+                yougile_meta,
+            )))
         }
         ProviderConfig::Confluence { .. } => None,
         ProviderConfig::Fireflies { .. } => {

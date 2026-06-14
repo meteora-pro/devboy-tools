@@ -1844,6 +1844,7 @@ fn build_config(options: &InitOptions) -> Config {
             gitlab: options.gitlab.clone(),
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
+            yougile: None,
             fireflies: None,
             confluence: None,
             slack: options.slack.clone(),
@@ -3858,6 +3859,7 @@ impl EnvContextBuilder {
             gitlab,
             clickup,
             jira,
+            yougile: None,
             fireflies: None,
             confluence: None,
             slack: if self.slack_team_id.is_some()
