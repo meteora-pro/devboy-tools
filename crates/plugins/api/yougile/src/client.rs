@@ -70,7 +70,11 @@ impl YouGileClient {
         &self.token
     }
 
-    async fn get_json<T: DeserializeOwned>(&self, path: &str, query: &[(&str, String)]) -> Result<T> {
+    async fn get_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<T> {
         let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
         let response = self
             .client
@@ -216,7 +220,8 @@ impl YouGileClient {
         }
 
         let tasks = self.list_board_tasks(&IssueFilter::default()).await?;
-        tasks.into_iter()
+        tasks
+            .into_iter()
             .find(|task| task_matches_key(task, key))
             .map(|task| task.id)
             .ok_or_else(|| Error::NotFound(format!("YouGile task '{key}' not found")))
@@ -228,7 +233,12 @@ impl YouGileClient {
             .as_ref()
             .and_then(|column_id| columns.get(column_id))
             .cloned();
-        let state = if is_closed_task(task) { "closed" } else { "open" }.to_string();
+        let state = if is_closed_task(task) {
+            "closed"
+        } else {
+            "open"
+        }
+        .to_string();
         let status_category = if task.deleted || task.archived {
             Some("cancelled".to_string())
         } else if task.completed {
@@ -248,7 +258,11 @@ impl YouGileClient {
             priority: None,
             labels: Vec::new(),
             author: task.created_by.as_ref().map(|id| minimal_user(id)),
-            assignees: task.assigned_ids.iter().map(|id| minimal_user(id)).collect(),
+            assignees: task
+                .assigned_ids
+                .iter()
+                .map(|id| minimal_user(id))
+                .collect(),
             url: None,
             created_at: Some(epoch_millis_to_rfc3339(task.timestamp)),
             updated_at: None,
@@ -300,9 +314,7 @@ impl IssueProvider for YouGileClient {
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
         let task_id = self.resolve_task_id(key).await?;
-        let task: YouGileTask = self
-            .get_json(&format!("/tasks/{task_id}"), &[])
-            .await?;
+        let task: YouGileTask = self.get_json(&format!("/tasks/{task_id}"), &[]).await?;
         let columns = self.list_board_columns().await?;
         let column_titles: HashMap<String, String> = columns
             .iter()

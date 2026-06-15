@@ -1989,7 +1989,9 @@ mod tests {
     fn test_set_and_get_yougile() {
         let mut config = Config::default();
 
-        config.set("yougile.url", "https://company.yougile.com/api-v2").unwrap();
+        config
+            .set("yougile.url", "https://company.yougile.com/api-v2")
+            .unwrap();
         config.set("yougile.board_id", "board-123").unwrap();
 
         assert_eq!(
@@ -2116,9 +2118,7 @@ mod tests {
 
         // YouGile unknown field
         assert!(config.set("yougile.unknown", "value").is_err());
-        config
-            .set("yougile.board_id", "board-123")
-            .unwrap();
+        config.set("yougile.board_id", "board-123").unwrap();
         assert!(config.get("yougile.unknown").is_err());
     }
 
