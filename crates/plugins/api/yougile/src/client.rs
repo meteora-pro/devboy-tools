@@ -33,6 +33,7 @@ pub struct YouGileClient {
     token: SecretString,
     client: reqwest::Client,
     rate_limiter: Arc<YouGileRateLimiter>,
+    user_cache: Arc<Mutex<HashMap<String, User>>>,
 }
 
 const YOUGILE_REQUEST_INTERVAL: Duration = Duration::from_millis(1200);
@@ -58,6 +59,7 @@ impl YouGileClient {
                 .build()
                 .expect("Failed to create HTTP client"),
             rate_limiter: Arc::new(YouGileRateLimiter::new(YOUGILE_REQUEST_INTERVAL)),
+            user_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -294,7 +296,42 @@ impl YouGileClient {
         Ok(columns.into_iter().next().map(|column| column.id))
     }
 
-    fn map_issue(&self, task: &YouGileTask, columns: &HashMap<String, String>) -> Issue {
+    async fn resolve_user(&self, id: &str) -> User {
+        if let Some(cached) = self.user_cache.lock().await.get(id).cloned() {
+            return cached;
+        }
+
+        let user = match self
+            .get_json::<YouGileUser>(&format!("/users/{id}"), &[])
+            .await
+        {
+            Ok(user) => map_yougile_user(user),
+            Err(error) => {
+                warn!(
+                    user_id = id,
+                    ?error,
+                    "Failed to hydrate YouGile user; falling back to id-only user"
+                );
+                minimal_user(id)
+            }
+        };
+
+        self.user_cache
+            .lock()
+            .await
+            .insert(id.to_string(), user.clone());
+        user
+    }
+
+    async fn resolve_users_by_id(&self, ids: &[String]) -> HashMap<String, User> {
+        let mut users = HashMap::new();
+        for id in ids {
+            users.insert(id.clone(), self.resolve_user(id).await);
+        }
+        users
+    }
+
+    async fn map_issue(&self, task: &YouGileTask, columns: &HashMap<String, String>) -> Issue {
         let status = task
             .column_id
             .as_ref()
@@ -313,6 +350,11 @@ impl YouGileClient {
         } else {
             None
         };
+        let mut user_ids = task.assigned_ids.clone();
+        if let Some(author_id) = &task.created_by {
+            user_ids.push(author_id.clone());
+        }
+        let users = self.resolve_users_by_id(&user_ids).await;
 
         Issue {
             key: task_display_key(task),
@@ -324,11 +366,11 @@ impl YouGileClient {
             source: "yougile".to_string(),
             priority: None,
             labels: Vec::new(),
-            author: task.created_by.as_ref().map(|id| minimal_user(id)),
+            author: task.created_by.as_ref().and_then(|id| users.get(id).cloned()),
             assignees: task
                 .assigned_ids
                 .iter()
-                .map(|id| minimal_user(id))
+                .filter_map(|id| users.get(id).cloned())
                 .collect(),
             url: None,
             created_at: Some(epoch_millis_to_rfc3339(task.timestamp)),
@@ -340,11 +382,11 @@ impl YouGileClient {
         }
     }
 
-    fn map_comment(&self, message: &YouGileChatMessage) -> Comment {
+    async fn map_comment(&self, message: &YouGileChatMessage) -> Comment {
         Comment {
             id: message.id.to_string(),
             body: message.text.clone(),
-            author: Some(minimal_user(&message.from_user_id)),
+            author: Some(self.resolve_user(&message.from_user_id).await),
             created_at: Some(epoch_millis_to_rfc3339(message.id)),
             updated_at: Some(epoch_millis_to_rfc3339(message.edit_timestamp)),
             position: None,
@@ -376,10 +418,10 @@ impl IssueProvider for YouGileClient {
                 .collect::<Vec<_>>()
         };
         let has_more = (offset + page_tasks.len()) < total as usize;
-        let items = page_tasks
-            .iter()
-            .map(|task| self.map_issue(task, &column_titles))
-            .collect::<Vec<_>>();
+        let mut items = Vec::with_capacity(page_tasks.len());
+        for task in &page_tasks {
+            items.push(self.map_issue(task, &column_titles).await);
+        }
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
             offset: offset as u32,
@@ -398,7 +440,7 @@ impl IssueProvider for YouGileClient {
             .iter()
             .map(|column| (column.id.clone(), column.title.clone()))
             .collect();
-        Ok(self.map_issue(&task, &column_titles))
+        Ok(self.map_issue(&task, &column_titles).await)
     }
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
@@ -505,12 +547,10 @@ impl IssueProvider for YouGileClient {
                 ],
             )
             .await?;
-        let comments = messages
-            .content
-            .into_iter()
-            .filter(|message| !message.deleted)
-            .map(|message| self.map_comment(&message))
-            .collect::<Vec<_>>();
+        let mut comments = Vec::new();
+        for message in messages.content.into_iter().filter(|message| !message.deleted) {
+            comments.push(self.map_comment(&message).await);
+        }
 
         Ok(ProviderResult::new(comments).with_pagination(Pagination {
             offset: messages.paging.offset,
@@ -547,17 +587,17 @@ impl IssueProvider for YouGileClient {
                 ],
             )
             .await?;
-        messages
+        let message = messages
             .content
             .into_iter()
             .find(|message| message.id == message_id)
-            .map(|message| self.map_comment(&message))
             .ok_or_else(|| {
                 Error::NotFound(format!(
                     "YouGile comment '{}' not found after creation",
                     message_id
                 ))
-            })
+            })?;
+        Ok(self.map_comment(&message).await)
     }
 
     fn provider_name(&self) -> &'static str {
@@ -583,13 +623,7 @@ impl PipelineProvider for YouGileClient {
 impl Provider for YouGileClient {
     async fn get_current_user(&self) -> Result<User> {
         let user: YouGileUser = self.get_json("/users/me", &[]).await?;
-        Ok(User {
-            id: user.id,
-            username: user.email.clone(),
-            name: Some(user.real_name),
-            email: Some(user.email),
-            avatar_url: None,
-        })
+        Ok(map_yougile_user(user))
     }
 }
 
@@ -708,6 +742,16 @@ fn minimal_user(id: &str) -> User {
     }
 }
 
+fn map_yougile_user(user: YouGileUser) -> User {
+    User {
+        id: user.id,
+        username: user.email.clone(),
+        name: Some(user.real_name),
+        email: Some(user.email),
+        avatar_url: None,
+    }
+}
+
 fn epoch_millis_to_rfc3339(timestamp: u64) -> String {
     let secs = (timestamp / 1000) as i64;
     let millis = (timestamp % 1000) as u32;
@@ -821,6 +865,26 @@ mod tests {
                 }));
             })
             .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/users/user-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "user-1",
+                    "email": "assignee@example.com",
+                    "realName": "Assignee User"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/users/user-2");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "user-2",
+                    "email": "author@example.com",
+                    "realName": "Author User"
+                }));
+            })
+            .await;
 
         let client = YouGileClient::with_base_url(
             format!("{}/api-v2", server.base_url()),
@@ -831,6 +895,9 @@ mod tests {
         assert_eq!(issue.key, "DEV-484");
         assert_eq!(issue.status.as_deref(), Some("To Do"));
         assert_eq!(issue.state, "open");
+        assert_eq!(issue.author.as_ref().unwrap().username, "author@example.com");
+        assert_eq!(issue.author.as_ref().unwrap().name.as_deref(), Some("Author User"));
+        assert_eq!(issue.assignees[0].username, "assignee@example.com");
     }
 
     #[tokio::test]
@@ -1064,6 +1131,16 @@ mod tests {
                 }));
             })
             .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/users/user-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "user-1",
+                    "email": "commenter@example.com",
+                    "realName": "Comment Author"
+                }));
+            })
+            .await;
 
         let client = YouGileClient::with_base_url(
             format!("{}/api-v2", server.base_url()),
@@ -1074,6 +1151,10 @@ mod tests {
         assert_eq!(comments.items.len(), 1);
         assert_eq!(comments.items[0].body, "First comment");
         assert_eq!(comments.items[0].author.as_ref().unwrap().id, "user-1");
+        assert_eq!(
+            comments.items[0].author.as_ref().unwrap().username,
+            "commenter@example.com"
+        );
     }
 
     #[tokio::test]
@@ -1110,6 +1191,16 @@ mod tests {
                 }));
             })
             .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/users/user-2");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "user-2",
+                    "email": "writer@example.com",
+                    "realName": "Comment Writer"
+                }));
+            })
+            .await;
 
         let client = YouGileClient::with_base_url(
             format!("{}/api-v2", server.base_url()),
@@ -1121,6 +1212,7 @@ mod tests {
             .unwrap();
         assert_eq!(comment.body, "Hello");
         assert_eq!(comment.author.as_ref().unwrap().id, "user-2");
+        assert_eq!(comment.author.as_ref().unwrap().name.as_deref(), Some("Comment Writer"));
     }
 
     #[tokio::test]
