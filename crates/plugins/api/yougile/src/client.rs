@@ -4,12 +4,13 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 use devboy_core::{
-    Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider, Pagination, PipelineProvider,
-    Provider, ProviderResult, Result, User,
+    CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider, Pagination,
+    PipelineProvider, Provider, ProviderResult, Result, UpdateIssueInput, User,
 };
 use reqwest::{Response, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
-use serde::de::DeserializeOwned;
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use tracing::warn;
 
 use crate::DEFAULT_YOUGILE_URL;
@@ -81,6 +82,40 @@ impl YouGileClient {
             .get(&url)
             .bearer_auth(self.token.expose_secret())
             .query(query)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        parse_json_response(response).await
+    }
+
+    async fn post_json<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
+        let response = self
+            .client
+            .post(&url)
+            .bearer_auth(self.token.expose_secret())
+            .json(body)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        parse_json_response(response).await
+    }
+
+    async fn put_json<T: DeserializeOwned, B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T> {
+        let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
+        let response = self
+            .client
+            .put(&url)
+            .bearer_auth(self.token.expose_secret())
+            .json(body)
             .send()
             .await
             .map_err(map_reqwest_error)?;
@@ -227,6 +262,25 @@ impl YouGileClient {
             .ok_or_else(|| Error::NotFound(format!("YouGile task '{key}' not found")))
     }
 
+    async fn resolve_column_id_by_status(&self, status: &str) -> Result<String> {
+        let columns = self.list_board_columns().await?;
+        columns
+            .into_iter()
+            .find(|column| column.title.eq_ignore_ascii_case(status))
+            .map(|column| column.id)
+            .ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "YouGile status '{status}' does not match any column title on board {}",
+                    self.board_id
+                ))
+            })
+    }
+
+    async fn default_column_id(&self) -> Result<Option<String>> {
+        let columns = self.list_board_columns().await?;
+        Ok(columns.into_iter().next().map(|column| column.id))
+    }
+
     fn map_issue(&self, task: &YouGileTask, columns: &HashMap<String, String>) -> Issue {
         let status = task
             .column_id
@@ -323,22 +377,96 @@ impl IssueProvider for YouGileClient {
         Ok(self.map_issue(&task, &column_titles))
     }
 
-    async fn create_issue(&self, _input: devboy_core::CreateIssueInput) -> Result<Issue> {
-        Err(Error::ProviderUnsupported {
-            provider: IssueProvider::provider_name(self).to_string(),
-            operation: "create_issue".to_string(),
-        })
+    async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
+        if !input.labels.is_empty() {
+            warn!("YouGile create_issue ignores labels");
+        }
+        if input.priority.is_some() {
+            warn!("YouGile create_issue ignores priority");
+        }
+        if input.parent.is_some() {
+            warn!("YouGile create_issue does not yet support generic parent/subtask linkage");
+        }
+        if input.issue_type.is_some() {
+            warn!("YouGile create_issue ignores issue_type");
+        }
+
+        let column_id = self.default_column_id().await?;
+
+        let mut body = serde_json::Map::new();
+        body.insert("title".to_string(), json!(input.title));
+        if let Some(description) = input.description {
+            body.insert("description".to_string(), json!(description));
+        }
+        if let Some(column_id) = column_id {
+            body.insert("columnId".to_string(), json!(column_id));
+        }
+        if !input.assignees.is_empty() {
+            body.insert("assigned".to_string(), json!(input.assignees));
+        }
+        if let Some(stickers) = custom_fields_to_stickers(input.custom_fields)? {
+            body.insert("stickers".to_string(), stickers);
+        }
+
+        let created: Value = self.post_json("/tasks", &body).await?;
+        let task_id = created
+            .get("id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::InvalidData("YouGile create_issue response missing id".to_string()))?;
+        self.get_issue(&format!("yougile#{task_id}")).await
     }
 
-    async fn update_issue(
-        &self,
-        _key: &str,
-        _input: devboy_core::UpdateIssueInput,
-    ) -> Result<Issue> {
-        Err(Error::ProviderUnsupported {
-            provider: IssueProvider::provider_name(self).to_string(),
-            operation: "update_issue".to_string(),
-        })
+    async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
+        if input.labels.is_some() {
+            warn!("YouGile update_issue ignores labels");
+        }
+        if input.priority.is_some() {
+            warn!("YouGile update_issue ignores priority");
+        }
+        if input.parent_id.is_some() {
+            warn!("YouGile update_issue does not yet support generic parent/subtask changes");
+        }
+
+        let task_id = self.resolve_task_id(key).await?;
+        let mut body = serde_json::Map::new();
+
+        if let Some(title) = input.title {
+            body.insert("title".to_string(), json!(title));
+        }
+        if let Some(description) = input.description {
+            body.insert("description".to_string(), json!(description));
+        }
+        if let Some(assignees) = input.assignees {
+            body.insert("assigned".to_string(), json!(assignees));
+        }
+        if let Some(status) = input.status.as_deref() {
+            body.insert(
+                "columnId".to_string(),
+                json!(self.resolve_column_id_by_status(status).await?),
+            );
+        } else if let Some(state) = input.state.as_deref() {
+            match state {
+                "open" | "opened" => {
+                    body.insert("completed".to_string(), json!(false));
+                    body.insert("archived".to_string(), json!(false));
+                    body.insert("deleted".to_string(), json!(false));
+                }
+                "closed" => {
+                    body.insert("completed".to_string(), json!(true));
+                }
+                _ => {}
+            }
+        }
+        if let Some(stickers) = custom_fields_to_stickers(input.custom_fields)? {
+            body.insert("stickers".to_string(), stickers);
+        }
+
+        if body.is_empty() {
+            return self.get_issue(key).await;
+        }
+
+        let _: Value = self.put_json(&format!("/tasks/{task_id}"), &body).await?;
+        self.get_issue(&format!("yougile#{task_id}")).await
     }
 
     async fn get_comments(&self, _issue_key: &str) -> Result<ProviderResult<devboy_core::Comment>> {
@@ -484,10 +612,39 @@ fn looks_like_uuid(value: &str) -> bool {
         })
 }
 
+fn custom_fields_to_stickers(custom_fields: Option<Value>) -> Result<Option<Value>> {
+    let Some(value) = custom_fields else {
+        return Ok(None);
+    };
+    let Value::Object(map) = value else {
+        return Err(Error::InvalidData(
+            "YouGile custom_fields must be a JSON object keyed by sticker id".to_string(),
+        ));
+    };
+
+    let mut stickers = serde_json::Map::new();
+    for (key, value) in map {
+        let sticker_value = match value {
+            Value::String(s) => Value::String(s),
+            Value::Number(n) => Value::String(n.to_string()),
+            Value::Bool(b) => Value::String(b.to_string()),
+            Value::Null => Value::String("-".to_string()),
+            other => {
+                return Err(Error::InvalidData(format!(
+                    "YouGile custom_fields[{key}] must be a scalar value, got {other}"
+                )));
+            }
+        };
+        stickers.insert(key, sticker_value);
+    }
+
+    Ok(Some(Value::Object(stickers)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use httpmock::Method::GET;
+    use httpmock::Method::{GET, POST, PUT};
     use httpmock::MockServer;
 
     #[test]
@@ -634,5 +791,130 @@ mod tests {
         assert_eq!(issues.items[0].key, "DEV-2");
         assert_eq!(issues.items[1].key, "DEV-1");
         assert_eq!(issues.pagination.unwrap().total, Some(2));
+    }
+
+    #[tokio::test]
+    async fn create_issue_posts_task_and_fetches_created_issue() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api-v2/tasks");
+                then.status(201).json_body_obj(&serde_json::json!({
+                    "id": "task-1"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/tasks/task-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1",
+                    "title": "Create task",
+                    "timestamp": 1710000000000_u64,
+                    "columnId": "col-1",
+                    "description": "body",
+                    "completed": false,
+                    "archived": false,
+                    "deleted": false,
+                    "assigned": ["user-1"],
+                    "idTaskProject": "DEV-10"
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issue = client
+            .create_issue(CreateIssueInput {
+                title: "Create task".to_string(),
+                description: Some("body".to_string()),
+                assignees: vec!["user-1".to_string()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(issue.key, "DEV-10");
+        assert_eq!(issue.status.as_deref(), Some("To Do"));
+    }
+
+    #[tokio::test]
+    async fn update_issue_maps_status_to_column_and_refetches() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" },
+                        { "id": "col-2", "title": "Done", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(PUT).path("/api-v2/tasks/task-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/tasks/task-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1",
+                    "title": "Updated task",
+                    "timestamp": 1710000000000_u64,
+                    "columnId": "col-2",
+                    "completed": false,
+                    "archived": false,
+                    "deleted": false,
+                    "idTaskProject": "DEV-11"
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issue = client
+            .update_issue(
+                "yougile#task-1",
+                UpdateIssueInput {
+                    title: Some("Updated task".to_string()),
+                    status: Some("Done".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(issue.key, "DEV-11");
+        assert_eq!(issue.status.as_deref(), Some("Done"));
     }
 }
