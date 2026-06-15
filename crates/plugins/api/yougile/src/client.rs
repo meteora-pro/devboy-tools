@@ -1,20 +1,26 @@
 //! YouGile API client scaffold.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use devboy_core::{
-    CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider, Pagination,
-    PipelineProvider, Provider, ProviderResult, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
+    Pagination, PipelineProvider, Provider, ProviderResult, Result, UpdateIssueInput, User,
 };
 use reqwest::{Response, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+use tokio::sync::Mutex;
+use tokio::time::{Instant, sleep_until};
 use tracing::warn;
 
 use crate::DEFAULT_YOUGILE_URL;
-use crate::types::{YouGileColumn, YouGileListResponse, YouGileTask, YouGileUser};
+use crate::types::{
+    YouGileChatMessage, YouGileColumn, YouGileListResponse, YouGileTask, YouGileUser,
+};
 
 /// Minimal YouGile client used by the workspace wiring layer.
 ///
@@ -26,7 +32,10 @@ pub struct YouGileClient {
     board_id: String,
     token: SecretString,
     client: reqwest::Client,
+    rate_limiter: Arc<YouGileRateLimiter>,
 }
+
+const YOUGILE_REQUEST_INTERVAL: Duration = Duration::from_millis(1200);
 
 impl YouGileClient {
     /// Create a new YouGile client with the default API base URL.
@@ -48,6 +57,7 @@ impl YouGileClient {
                 .user_agent("devboy-tools")
                 .build()
                 .expect("Failed to create HTTP client"),
+            rate_limiter: Arc::new(YouGileRateLimiter::new(YOUGILE_REQUEST_INTERVAL)),
         }
     }
 
@@ -77,6 +87,7 @@ impl YouGileClient {
         query: &[(&str, String)],
     ) -> Result<T> {
         let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
+        self.rate_limiter.acquire().await;
         let response = self
             .client
             .get(&url)
@@ -94,6 +105,7 @@ impl YouGileClient {
         body: &B,
     ) -> Result<T> {
         let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
+        self.rate_limiter.acquire().await;
         let response = self
             .client
             .post(&url)
@@ -111,6 +123,7 @@ impl YouGileClient {
         body: &B,
     ) -> Result<T> {
         let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
+        self.rate_limiter.acquire().await;
         let response = self
             .client
             .put(&url)
@@ -326,6 +339,17 @@ impl YouGileClient {
             custom_fields: HashMap::new(),
         }
     }
+
+    fn map_comment(&self, message: &YouGileChatMessage) -> Comment {
+        Comment {
+            id: message.id.to_string(),
+            body: message.text.clone(),
+            author: Some(minimal_user(&message.from_user_id)),
+            created_at: Some(epoch_millis_to_rfc3339(message.id)),
+            updated_at: Some(epoch_millis_to_rfc3339(message.edit_timestamp)),
+            position: None,
+        }
+    }
 }
 
 #[async_trait]
@@ -469,18 +493,71 @@ impl IssueProvider for YouGileClient {
         self.get_issue(&format!("yougile#{task_id}")).await
     }
 
-    async fn get_comments(&self, _issue_key: &str) -> Result<ProviderResult<devboy_core::Comment>> {
-        Err(Error::ProviderUnsupported {
-            provider: IssueProvider::provider_name(self).to_string(),
-            operation: "get_comments".to_string(),
-        })
+    async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
+        let task_id = self.resolve_task_id(issue_key).await?;
+        let messages: YouGileListResponse<YouGileChatMessage> = self
+            .get_json(
+                &format!("/chats/{task_id}/messages"),
+                &[
+                    ("limit", "1000".to_string()),
+                    ("offset", "0".to_string()),
+                    ("includeSystem", "false".to_string()),
+                ],
+            )
+            .await?;
+        let comments = messages
+            .content
+            .into_iter()
+            .filter(|message| !message.deleted)
+            .map(|message| self.map_comment(&message))
+            .collect::<Vec<_>>();
+
+        Ok(ProviderResult::new(comments).with_pagination(Pagination {
+            offset: messages.paging.offset,
+            limit: messages.paging.limit,
+            total: None,
+            has_more: messages.paging.next,
+            next_cursor: None,
+        }))
     }
 
-    async fn add_comment(&self, _issue_key: &str, _body: &str) -> Result<devboy_core::Comment> {
-        Err(Error::ProviderUnsupported {
-            provider: IssueProvider::provider_name(self).to_string(),
-            operation: "add_comment".to_string(),
-        })
+    async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
+        let task_id = self.resolve_task_id(issue_key).await?;
+        let response: Value = self
+            .post_json(
+                &format!("/chats/{task_id}/messages"),
+                &json!({
+                    "text": body,
+                    "textHtml": format!("<p>{}</p>", escape_html(body)),
+                    "label": ""
+                }),
+            )
+            .await?;
+        let message_id = response
+            .get("id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| Error::InvalidData("YouGile add_comment response missing id".to_string()))?;
+        let messages: YouGileListResponse<YouGileChatMessage> = self
+            .get_json(
+                &format!("/chats/{task_id}/messages"),
+                &[
+                    ("limit", "1000".to_string()),
+                    ("offset", "0".to_string()),
+                    ("includeSystem", "false".to_string()),
+                ],
+            )
+            .await?;
+        messages
+            .content
+            .into_iter()
+            .find(|message| message.id == message_id)
+            .map(|message| self.map_comment(&message))
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "YouGile comment '{}' not found after creation",
+                    message_id
+                ))
+            })
     }
 
     fn provider_name(&self) -> &'static str {
@@ -513,6 +590,42 @@ impl Provider for YouGileClient {
             email: Some(user.email),
             avatar_url: None,
         })
+    }
+}
+
+#[derive(Debug)]
+struct YouGileRateLimiter {
+    state: Mutex<YouGileRateLimiterState>,
+    interval: Duration,
+}
+
+#[derive(Debug)]
+struct YouGileRateLimiterState {
+    ready_at: Instant,
+}
+
+impl YouGileRateLimiter {
+    fn new(interval: Duration) -> Self {
+        Self {
+            state: Mutex::new(YouGileRateLimiterState {
+                ready_at: Instant::now(),
+            }),
+            interval,
+        }
+    }
+
+    async fn acquire(&self) {
+        let wait_until = {
+            let mut state = self.state.lock().await;
+            let now = Instant::now();
+            let wait_until = state.ready_at.max(now);
+            state.ready_at = wait_until + self.interval;
+            wait_until
+        };
+
+        if wait_until > Instant::now() {
+            sleep_until(wait_until).await;
+        }
     }
 }
 
@@ -639,6 +752,13 @@ fn custom_fields_to_stickers(custom_fields: Option<Value>) -> Result<Option<Valu
     }
 
     Ok(Some(Value::Object(stickers)))
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -916,5 +1036,106 @@ mod tests {
             .unwrap();
         assert_eq!(issue.key, "DEV-11");
         assert_eq!(issue.status.as_deref(), Some("Done"));
+    }
+
+    #[tokio::test]
+    async fn get_comments_reads_task_chat_messages() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/chats/task-1/messages")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeSystem", "false");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": 1710000000000_u64,
+                            "fromUserId": "user-1",
+                            "text": "First comment",
+                            "textHtml": "<p>First comment</p>",
+                            "label": "",
+                            "editTimestamp": 1710000000000_u64,
+                            "reactions": {}
+                        }
+                    ]
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let comments = client.get_comments("yougile#task-1").await.unwrap();
+        assert_eq!(comments.items.len(), 1);
+        assert_eq!(comments.items[0].body, "First comment");
+        assert_eq!(comments.items[0].author.as_ref().unwrap().id, "user-1");
+    }
+
+    #[tokio::test]
+    async fn add_comment_posts_chat_message_and_returns_created_comment() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api-v2/chats/task-1/messages");
+                then.status(201).json_body_obj(&serde_json::json!({
+                    "id": 1710000000001_u64
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/chats/task-1/messages")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeSystem", "false");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": 1710000000001_u64,
+                            "fromUserId": "user-2",
+                            "text": "Hello",
+                            "textHtml": "<p>Hello</p>",
+                            "label": "",
+                            "editTimestamp": 1710000000001_u64,
+                            "reactions": {}
+                        }
+                    ]
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let comment = IssueProvider::add_comment(&client, "yougile#task-1", "Hello")
+            .await
+            .unwrap();
+        assert_eq!(comment.body, "Hello");
+        assert_eq!(comment.author.as_ref().unwrap().id, "user-2");
+    }
+
+    #[tokio::test]
+    async fn rate_limiter_spaces_requests() {
+        let limiter = YouGileRateLimiter::new(Duration::from_millis(25));
+        let start = std::time::Instant::now();
+
+        limiter.acquire().await;
+        limiter.acquire().await;
+        limiter.acquire().await;
+
+        assert!(
+            start.elapsed() >= Duration::from_millis(45),
+            "expected spaced acquires, got {:?}",
+            start.elapsed()
+        );
     }
 }

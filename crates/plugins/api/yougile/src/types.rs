@@ -78,3 +78,19 @@ pub struct YouGileUser {
     #[serde(rename = "realName")]
     pub real_name: String,
 }
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct YouGileChatMessage {
+    pub id: u64,
+    #[serde(rename = "fromUserId")]
+    pub from_user_id: String,
+    pub text: String,
+    #[serde(default, rename = "textHtml")]
+    pub text_html: Option<String>,
+    #[serde(default)]
+    pub label: String,
+    #[serde(rename = "editTimestamp")]
+    pub edit_timestamp: u64,
+    #[serde(default)]
+    pub deleted: bool,
+}
