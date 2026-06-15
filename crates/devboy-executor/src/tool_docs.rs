@@ -71,6 +71,12 @@ pub fn known_providers() -> Vec<ProviderInfo> {
             }],
         },
         ProviderInfo {
+            display_name: "YouGile",
+            key: "yougile",
+            default_categories: &[ToolCategory::IssueTracker],
+            conditional_categories: &[],
+        },
+        ProviderInfo {
             display_name: "Confluence",
             key: "confluence",
             default_categories: &[ToolCategory::KnowledgeBase],
@@ -709,6 +715,12 @@ mod tests {
                 flavor: None,
                 extra: HashMap::new(),
             },
+            ProviderConfig::YouGile {
+                base_url: "https://yougile.com/api-v2".into(),
+                access_token: "x".into(),
+                scope: YouGileScope::Board { id: "1".into() },
+                extra: HashMap::new(),
+            },
             ProviderConfig::Confluence {
                 base_url: "https://wiki.example.com".into(),
                 auth: ConfluenceAuthConfig::BearerToken { token: "x".into() },
@@ -750,6 +762,7 @@ mod tests {
                 ProviderConfig::GitHub { .. } => Some("github"),
                 ProviderConfig::ClickUp { .. } => Some("clickup"),
                 ProviderConfig::Jira { .. } => Some("jira"),
+                ProviderConfig::YouGile { .. } => Some("yougile"),
                 ProviderConfig::Confluence { .. } => Some("confluence"),
                 ProviderConfig::Fireflies { .. } => Some("fireflies"),
                 ProviderConfig::Slack { .. } => Some("slack"),
