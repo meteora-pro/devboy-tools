@@ -25,6 +25,7 @@ serde_json.workspace = true
 async-trait.workspace = true
 tracing.workspace = true
 secrecy.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [dev-dependencies]
 httpmock.workspace = true

@@ -128,11 +128,17 @@ pub fn create_provider(
             }),
         },
 
-        ProviderConfig::YouGile { scope, .. } => match scope {
-            YouGileScope::Board { id } => Err(Error::ProviderUnsupported {
-                provider: "yougile".into(),
-                operation: format!("board scope ({id}) not yet implemented"),
-            }),
+        ProviderConfig::YouGile {
+            base_url,
+            access_token,
+            scope,
+            ..
+        } => match scope {
+            YouGileScope::Board { id } => Ok(Box::new(devboy_yougile::YouGileClient::with_base_url(
+                base_url,
+                id,
+                access_token.clone(),
+            ))),
         },
 
         ProviderConfig::Confluence { .. } => Err(Error::ProviderUnsupported {
@@ -801,6 +807,24 @@ mod tests {
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
             "clickup"
+        );
+    }
+
+    #[test]
+    fn test_create_yougile_provider() {
+        let config = ProviderConfig::YouGile {
+            base_url: "https://yougile.com/api-v2".into(),
+            access_token: "tok".into(),
+            scope: YouGileScope::Board {
+                id: "board-123".into(),
+            },
+            extra: HashMap::new(),
+        };
+        let provider = create_provider(&config, None);
+        assert!(provider.is_ok());
+        assert_eq!(
+            IssueProvider::provider_name(provider.unwrap().as_ref()),
+            "yougile"
         );
     }
 
