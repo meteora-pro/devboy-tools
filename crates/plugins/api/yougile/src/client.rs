@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use devboy_core::{
-    Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, MergeRequestProvider,
-    Pagination, PipelineProvider, Provider, ProviderResult, Result, UpdateIssueInput, User,
+    Comment, CreateIssueInput, CustomFieldValue, Error, Issue, IssueFilter, IssueProvider,
+    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result,
+    UpdateIssueInput, User,
 };
 use reqwest::{Response, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
@@ -228,7 +229,15 @@ impl YouGileClient {
         });
 
         if let Some(state_category) = filter.state_category.as_deref() {
-            tasks.retain(|task| matches_state_category(task, state_category));
+            tasks.retain(|task| {
+                matches_state_category(
+                    task,
+                    state_category,
+                    task.column_id
+                        .as_ref()
+                        .and_then(|column_id| column_titles.get(column_id).map(String::as_str)),
+                )
+            });
         }
 
         tasks.sort_by_key(|task| std::cmp::Reverse(task.timestamp));
@@ -343,13 +352,7 @@ impl YouGileClient {
             "open"
         }
         .to_string();
-        let status_category = if task.deleted || task.archived {
-            Some("cancelled".to_string())
-        } else if task.completed {
-            Some("done".to_string())
-        } else {
-            None
-        };
+        let status_category = Some(map_status_category(task, status.as_deref()));
         let mut user_ids = task.assigned_ids.clone();
         if let Some(author_id) = &task.created_by {
             user_ids.push(author_id.clone());
@@ -378,7 +381,7 @@ impl YouGileClient {
             attachments_count: None,
             parent: None,
             subtasks: Vec::new(),
-            custom_fields: HashMap::new(),
+            custom_fields: map_custom_fields(task),
         }
     }
 
@@ -723,13 +726,71 @@ fn is_closed_task(task: &YouGileTask) -> bool {
     task.completed || task.archived || task.deleted
 }
 
-fn matches_state_category(task: &YouGileTask, state_category: &str) -> bool {
-    match state_category {
-        "done" => task.completed,
-        "cancelled" => task.deleted || task.archived,
-        "todo" | "backlog" | "in_progress" => !is_closed_task(task),
-        _ => true,
+fn matches_state_category(
+    task: &YouGileTask,
+    state_category: &str,
+    status_name: Option<&str>,
+) -> bool {
+    map_status_category(task, status_name) == state_category
+}
+
+fn map_status_category(task: &YouGileTask, status_name: Option<&str>) -> String {
+    if task.deleted || task.archived {
+        return "cancelled".to_string();
     }
+    if task.completed {
+        return "done".to_string();
+    }
+
+    let normalized = status_name
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', " ")
+        .replace('_', " ");
+
+    if normalized.contains("backlog") || normalized.contains("icebox") {
+        return "backlog".to_string();
+    }
+    if matches!(
+        normalized.as_str(),
+        "todo" | "to do" | "open" | "new" | "incoming" | "planned" | "plan"
+    ) || normalized.contains("to do")
+        || normalized.contains("todo")
+    {
+        return "todo".to_string();
+    }
+    if normalized.contains("review")
+        || normalized.contains("progress")
+        || normalized.contains("doing")
+        || normalized.contains("active")
+        || normalized.contains("develop")
+        || normalized.contains("test")
+        || normalized.contains("qa")
+        || normalized.contains("verify")
+        || normalized.contains("ready")
+        || normalized.contains("wait")
+    {
+        return "in_progress".to_string();
+    }
+    if normalized.contains("done")
+        || normalized.contains("complete")
+        || normalized.contains("resolved")
+        || normalized.contains("closed")
+        || normalized.contains("shipped")
+    {
+        return "done".to_string();
+    }
+    if normalized.contains("cancel")
+        || normalized.contains("archive")
+        || normalized.contains("reject")
+        || normalized.contains("wontfix")
+        || normalized.contains("won't")
+    {
+        return "cancelled".to_string();
+    }
+
+    "in_progress".to_string()
 }
 
 fn minimal_user(id: &str) -> User {
@@ -750,6 +811,25 @@ fn map_yougile_user(user: YouGileUser) -> User {
         email: Some(user.email),
         avatar_url: None,
     }
+}
+
+fn map_custom_fields(task: &YouGileTask) -> HashMap<String, CustomFieldValue> {
+    let mut fields = HashMap::new();
+
+    if let Some(Value::Object(stickers)) = &task.stickers {
+        for (id, value) in stickers {
+            fields.insert(
+                id.clone(),
+                CustomFieldValue {
+                    name: None,
+                    value: value.clone(),
+                    display: value.as_str().map(ToOwned::to_owned),
+                },
+            );
+        }
+    }
+
+    fields
 }
 
 fn epoch_millis_to_rfc3339(timestamp: u64) -> String {
@@ -846,7 +926,10 @@ mod tests {
                     "deleted": false,
                     "assigned": ["user-1"],
                     "createdBy": "user-2",
-                    "idTaskProject": "DEV-484"
+                    "idTaskProject": "DEV-484",
+                    "stickers": {
+                        "severity": "high"
+                    }
                 }));
             })
             .await;
@@ -895,9 +978,14 @@ mod tests {
         assert_eq!(issue.key, "DEV-484");
         assert_eq!(issue.status.as_deref(), Some("To Do"));
         assert_eq!(issue.state, "open");
+        assert_eq!(issue.status_category.as_deref(), Some("todo"));
         assert_eq!(issue.author.as_ref().unwrap().username, "author@example.com");
         assert_eq!(issue.author.as_ref().unwrap().name.as_deref(), Some("Author User"));
         assert_eq!(issue.assignees[0].username, "assignee@example.com");
+        assert_eq!(
+            issue.custom_fields["severity"].display.as_deref(),
+            Some("high")
+        );
     }
 
     #[tokio::test]
@@ -977,6 +1065,8 @@ mod tests {
         assert_eq!(issues.items.len(), 2);
         assert_eq!(issues.items[0].key, "DEV-2");
         assert_eq!(issues.items[1].key, "DEV-1");
+        assert_eq!(issues.items[0].status_category.as_deref(), Some("done"));
+        assert_eq!(issues.items[1].status_category.as_deref(), Some("todo"));
         assert_eq!(issues.pagination.unwrap().total, Some(2));
     }
 
@@ -1229,5 +1319,31 @@ mod tests {
             "expected spaced acquires, got {:?}",
             start.elapsed()
         );
+    }
+
+    #[test]
+    fn map_status_category_uses_column_name_heuristics() {
+        let task = YouGileTask {
+            id: "task-1".to_string(),
+            title: "Task".to_string(),
+            timestamp: 0,
+            column_id: Some("col-1".to_string()),
+            description: None,
+            archived: false,
+            completed: false,
+            deleted: false,
+            subtask_ids: Vec::new(),
+            assigned_ids: Vec::new(),
+            created_by: None,
+            id_task_common: None,
+            id_task_project: None,
+            stickers: None,
+        };
+
+        assert_eq!(map_status_category(&task, Some("Backlog")), "backlog");
+        assert_eq!(map_status_category(&task, Some("To Do")), "todo");
+        assert_eq!(map_status_category(&task, Some("Code Review")), "in_progress");
+        assert_eq!(map_status_category(&task, Some("Done")), "done");
+        assert_eq!(map_status_category(&task, Some("Cancelled")), "cancelled");
     }
 }
