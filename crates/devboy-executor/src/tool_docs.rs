@@ -542,7 +542,7 @@ mod tests {
     use super::*;
     use crate::context::{
         ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-        ProviderConfig, SlackScope, TelegramScope,
+        ProviderConfig, SlackScope, TelegramScope, YouGileScope,
     };
     use devboy_core::ToolEnricher;
     use std::collections::HashMap;
