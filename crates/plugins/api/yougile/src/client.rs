@@ -432,6 +432,34 @@ impl YouGileClient {
     }
 }
 
+fn validate_generic_create_fields(input: &CreateIssueInput) -> Result<()> {
+    if !input.labels.is_empty() {
+        return Err(Error::InvalidData(
+            "YouGile create_issue does not support generic labels. Use provider-specific sticker ids via custom_fields instead.".to_string(),
+        ));
+    }
+    if input.priority.is_some() {
+        return Err(Error::InvalidData(
+            "YouGile create_issue does not support generic priority. Use a provider-specific priority sticker via custom_fields instead.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_generic_update_fields(input: &UpdateIssueInput) -> Result<()> {
+    if input.labels.is_some() {
+        return Err(Error::InvalidData(
+            "YouGile update_issue does not support generic labels. Use provider-specific sticker ids via custom_fields instead.".to_string(),
+        ));
+    }
+    if input.priority.is_some() {
+        return Err(Error::InvalidData(
+            "YouGile update_issue does not support generic priority. Use a provider-specific priority sticker via custom_fields instead.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl IssueProvider for YouGileClient {
     async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
@@ -493,12 +521,7 @@ impl IssueProvider for YouGileClient {
     }
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
-        if !input.labels.is_empty() {
-            warn!("YouGile create_issue ignores labels");
-        }
-        if input.priority.is_some() {
-            warn!("YouGile create_issue ignores priority");
-        }
+        validate_generic_create_fields(&input)?;
         if input.parent.is_some() {
             warn!("YouGile create_issue does not yet support generic parent/subtask linkage");
         }
@@ -531,12 +554,7 @@ impl IssueProvider for YouGileClient {
     }
 
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
-        if input.labels.is_some() {
-            warn!("YouGile update_issue ignores labels");
-        }
-        if input.priority.is_some() {
-            warn!("YouGile update_issue ignores priority");
-        }
+        validate_generic_update_fields(&input)?;
         if input.parent_id.is_some() {
             warn!("YouGile update_issue does not yet support generic parent/subtask changes");
         }
@@ -1610,6 +1628,42 @@ mod tests {
         assert_eq!(issue.key, "DEV-12");
         assert_eq!(issue.state, "open");
         assert_eq!(issue.status.as_deref(), Some("To Do"));
+    }
+
+    #[tokio::test]
+    async fn create_issue_rejects_generic_labels_and_priority() {
+        let client = YouGileClient::new("board-1", SecretString::from("token".to_owned()));
+
+        let err = client
+            .create_issue(CreateIssueInput {
+                title: "Task".to_string(),
+                labels: vec!["bug".to_string()],
+                priority: Some("high".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, Error::InvalidData(msg) if msg.contains("generic labels")));
+    }
+
+    #[tokio::test]
+    async fn update_issue_rejects_generic_labels_and_priority() {
+        let client = YouGileClient::new("board-1", SecretString::from("token".to_owned()));
+
+        let err = client
+            .update_issue(
+                "yougile#task-1",
+                UpdateIssueInput {
+                    labels: Some(vec!["bug".to_string()]),
+                    priority: Some("high".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, Error::InvalidData(msg) if msg.contains("generic labels")));
     }
 
     #[tokio::test]
