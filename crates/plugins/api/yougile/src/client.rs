@@ -340,7 +340,13 @@ impl YouGileClient {
         users
     }
 
-    async fn map_issue(&self, task: &YouGileTask, columns: &HashMap<String, String>) -> Issue {
+    async fn map_issue(
+        &self,
+        task: &YouGileTask,
+        columns: &HashMap<String, String>,
+        task_by_id: &HashMap<String, &YouGileTask>,
+        parent_by_child: &HashMap<String, &YouGileTask>,
+    ) -> Issue {
         let status = task
             .column_id
             .as_ref()
@@ -358,6 +364,7 @@ impl YouGileClient {
             user_ids.push(author_id.clone());
         }
         let users = self.resolve_users_by_id(&user_ids).await;
+        let updated_at = Some(epoch_millis_to_rfc3339(task.timestamp));
 
         Issue {
             key: task_display_key(task),
@@ -376,11 +383,18 @@ impl YouGileClient {
                 .filter_map(|id| users.get(id).cloned())
                 .collect(),
             url: None,
-            created_at: Some(epoch_millis_to_rfc3339(task.timestamp)),
-            updated_at: None,
+            created_at: updated_at.clone(),
+            updated_at,
             attachments_count: None,
-            parent: None,
-            subtasks: Vec::new(),
+            parent: parent_by_child
+                .get(&task.id)
+                .map(|parent| task_display_key(parent)),
+            subtasks: task
+                .subtask_ids
+                .iter()
+                .filter_map(|id| task_by_id.get(id))
+                .map(|subtask| map_related_issue(subtask, columns))
+                .collect(),
             custom_fields: map_custom_fields(task),
         }
     }
@@ -407,23 +421,28 @@ impl IssueProvider for YouGileClient {
             .collect();
 
         let all_tasks = self.list_board_tasks(&filter).await?;
+        let task_by_id = build_task_index(&all_tasks);
+        let parent_by_child = build_parent_index(&all_tasks);
         let total = all_tasks.len() as u32;
         let offset = filter.offset.unwrap_or(0) as usize;
         let limit = filter.limit.unwrap_or(20) as usize;
 
-        let page_tasks = if offset >= all_tasks.len() {
+        let page_tasks: Vec<&YouGileTask> = if offset >= all_tasks.len() {
             Vec::new()
         } else {
             all_tasks
-                .into_iter()
+                .iter()
                 .skip(offset)
                 .take(limit)
-                .collect::<Vec<_>>()
+                .collect()
         };
         let has_more = (offset + page_tasks.len()) < total as usize;
         let mut items = Vec::with_capacity(page_tasks.len());
-        for task in &page_tasks {
-            items.push(self.map_issue(task, &column_titles).await);
+        for task in page_tasks {
+            items.push(
+                self.map_issue(task, &column_titles, &task_by_id, &parent_by_child)
+                    .await,
+            );
         }
 
         Ok(ProviderResult::new(items).with_pagination(Pagination {
@@ -443,7 +462,17 @@ impl IssueProvider for YouGileClient {
             .iter()
             .map(|column| (column.id.clone(), column.title.clone()))
             .collect();
-        Ok(self.map_issue(&task, &column_titles).await)
+        let relation_tasks = self
+            .list_board_tasks(&IssueFilter {
+                state: Some("all".to_string()),
+                ..IssueFilter::default()
+            })
+            .await?;
+        let task_by_id = build_task_index(&relation_tasks);
+        let parent_by_child = build_parent_index(&relation_tasks);
+        Ok(self
+            .map_issue(&task, &column_titles, &task_by_id, &parent_by_child)
+            .await)
     }
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
@@ -832,6 +861,55 @@ fn map_custom_fields(task: &YouGileTask) -> HashMap<String, CustomFieldValue> {
     fields
 }
 
+fn map_related_issue(task: &YouGileTask, columns: &HashMap<String, String>) -> Issue {
+    let status = task
+        .column_id
+        .as_ref()
+        .and_then(|column_id| columns.get(column_id))
+        .cloned();
+    let updated_at = Some(epoch_millis_to_rfc3339(task.timestamp));
+
+    Issue {
+        key: task_display_key(task),
+        title: task.title.clone(),
+        description: task.description.clone(),
+        state: if is_closed_task(task) {
+            "closed"
+        } else {
+            "open"
+        }
+        .to_string(),
+        status: status.clone(),
+        status_category: Some(map_status_category(task, status.as_deref())),
+        source: "yougile".to_string(),
+        priority: None,
+        labels: Vec::new(),
+        author: None,
+        assignees: Vec::new(),
+        url: None,
+        created_at: updated_at.clone(),
+        updated_at,
+        attachments_count: None,
+        parent: None,
+        subtasks: Vec::new(),
+        custom_fields: map_custom_fields(task),
+    }
+}
+
+fn build_task_index<'a>(tasks: &'a [YouGileTask]) -> HashMap<String, &'a YouGileTask> {
+    tasks.iter().map(|task| (task.id.clone(), task)).collect()
+}
+
+fn build_parent_index<'a>(tasks: &'a [YouGileTask]) -> HashMap<String, &'a YouGileTask> {
+    let mut parents = HashMap::new();
+    for task in tasks {
+        for child_id in &task.subtask_ids {
+            parents.insert(child_id.clone(), task);
+        }
+    }
+    parents
+}
+
 fn epoch_millis_to_rfc3339(timestamp: u64) -> String {
     let secs = (timestamp / 1000) as i64;
     let millis = (timestamp % 1000) as u32;
@@ -950,6 +1028,48 @@ mod tests {
             .await;
         server
             .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "parent-1",
+                            "title": "Parent task",
+                            "timestamp": 1709999999000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-100",
+                            "subtasks": ["task-1"]
+                        },
+                        {
+                            "id": "task-1",
+                            "title": "Implement provider",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-1",
+                            "description": "read path",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "assigned": ["user-1"],
+                            "createdBy": "user-2",
+                            "idTaskProject": "DEV-484",
+                            "stickers": {
+                                "severity": "high"
+                            }
+                        }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
                 when.method(GET).path("/api-v2/users/user-1");
                 then.status(200).json_body_obj(&serde_json::json!({
                     "id": "user-1",
@@ -982,6 +1102,8 @@ mod tests {
         assert_eq!(issue.author.as_ref().unwrap().username, "author@example.com");
         assert_eq!(issue.author.as_ref().unwrap().name.as_deref(), Some("Author User"));
         assert_eq!(issue.assignees[0].username, "assignee@example.com");
+        assert_eq!(issue.parent.as_deref(), Some("DEV-100"));
+        assert_eq!(issue.updated_at.as_deref(), issue.created_at.as_deref());
         assert_eq!(
             issue.custom_fields["severity"].display.as_deref(),
             Some("high")
@@ -1071,6 +1193,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_issues_maps_parent_and_subtasks_from_board_hierarchy() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "parent-1",
+                            "title": "Epic",
+                            "timestamp": 1710000002000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-20",
+                            "subtasks": ["child-1"]
+                        },
+                        {
+                            "id": "child-1",
+                            "title": "Child task",
+                            "timestamp": 1710000001000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-21"
+                        }
+                    ]
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issues = client.get_issues(IssueFilter::default()).await.unwrap();
+        let parent = issues.items.iter().find(|issue| issue.key == "DEV-20").unwrap();
+        let child = issues.items.iter().find(|issue| issue.key == "DEV-21").unwrap();
+
+        assert_eq!(parent.subtasks.len(), 1);
+        assert_eq!(parent.subtasks[0].key, "DEV-21");
+        assert_eq!(child.parent.as_deref(), Some("DEV-20"));
+        assert_eq!(child.updated_at.as_deref(), child.created_at.as_deref());
+    }
+
+    #[tokio::test]
     async fn create_issue_posts_task_and_fetches_created_issue() {
         let server = MockServer::start_async().await;
         server
@@ -1084,6 +1275,33 @@ mod tests {
                     "paging": { "limit": 1000, "offset": 0, "next": false },
                     "content": [
                         { "id": "col-1", "title": "To Do", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "task-1",
+                            "title": "Create task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-1",
+                            "description": "body",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "assigned": ["user-1"],
+                            "idTaskProject": "DEV-10"
+                        }
                     ]
                 }));
             })
@@ -1147,6 +1365,56 @@ mod tests {
                     "content": [
                         { "id": "col-1", "title": "To Do", "boardId": "board-1" },
                         { "id": "col-2", "title": "Done", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "task-1",
+                            "title": "Updated task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-2",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-11"
+                        }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-2")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "task-1",
+                            "title": "Updated task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-2",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-11"
+                        }
                     ]
                 }));
             })
