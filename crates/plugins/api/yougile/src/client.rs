@@ -120,11 +120,7 @@ impl YouGileClient {
         parse_json_response(response).await
     }
 
-    async fn put_json<T: DeserializeOwned, B: Serialize>(
-        &self,
-        path: &str,
-        body: &B,
-    ) -> Result<T> {
+    async fn put_json<T: DeserializeOwned, B: Serialize>(&self, path: &str, body: &B) -> Result<T> {
         let url = format!("{}/{}", self.base_url, path.trim_start_matches('/'));
         self.rate_limiter.acquire().await;
         let response = self
@@ -286,18 +282,40 @@ impl YouGileClient {
             .ok_or_else(|| Error::NotFound(format!("YouGile task '{key}' not found")))
     }
 
-    async fn resolve_column_id_by_status(&self, status: &str) -> Result<String> {
+    async fn resolve_status_update(&self, status: &str) -> Result<serde_json::Map<String, Value>> {
         let columns = self.list_board_columns().await?;
-        columns
+        let column = columns
             .into_iter()
             .find(|column| column.title.eq_ignore_ascii_case(status))
-            .map(|column| column.id)
             .ok_or_else(|| {
                 Error::InvalidData(format!(
                     "YouGile status '{status}' does not match any column title on board {}",
                     self.board_id
                 ))
-            })
+            })?;
+
+        let mut body = serde_json::Map::new();
+        body.insert("columnId".to_string(), json!(column.id));
+
+        match map_status_category_from_name(&column.title).as_str() {
+            "done" => {
+                body.insert("completed".to_string(), json!(true));
+                body.insert("archived".to_string(), json!(false));
+                body.insert("deleted".to_string(), json!(false));
+            }
+            "cancelled" => {
+                body.insert("completed".to_string(), json!(false));
+                body.insert("archived".to_string(), json!(true));
+                body.insert("deleted".to_string(), json!(false));
+            }
+            _ => {
+                body.insert("completed".to_string(), json!(false));
+                body.insert("archived".to_string(), json!(false));
+                body.insert("deleted".to_string(), json!(false));
+            }
+        }
+
+        Ok(body)
     }
 
     async fn default_column_id(&self) -> Result<Option<String>> {
@@ -376,7 +394,10 @@ impl YouGileClient {
             source: "yougile".to_string(),
             priority: None,
             labels: Vec::new(),
-            author: task.created_by.as_ref().and_then(|id| users.get(id).cloned()),
+            author: task
+                .created_by
+                .as_ref()
+                .and_then(|id| users.get(id).cloned()),
             assignees: task
                 .assigned_ids
                 .iter()
@@ -430,11 +451,7 @@ impl IssueProvider for YouGileClient {
         let page_tasks: Vec<&YouGileTask> = if offset >= all_tasks.len() {
             Vec::new()
         } else {
-            all_tasks
-                .iter()
-                .skip(offset)
-                .take(limit)
-                .collect()
+            all_tasks.iter().skip(offset).take(limit).collect()
         };
         let has_more = (offset + page_tasks.len()) < total as usize;
         let mut items = Vec::with_capacity(page_tasks.len());
@@ -507,10 +524,9 @@ impl IssueProvider for YouGileClient {
         }
 
         let created: Value = self.post_json("/tasks", &body).await?;
-        let task_id = created
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| Error::InvalidData("YouGile create_issue response missing id".to_string()))?;
+        let task_id = created.get("id").and_then(|v| v.as_str()).ok_or_else(|| {
+            Error::InvalidData("YouGile create_issue response missing id".to_string())
+        })?;
         self.get_issue(&format!("yougile#{task_id}")).await
     }
 
@@ -538,10 +554,7 @@ impl IssueProvider for YouGileClient {
             body.insert("assigned".to_string(), json!(assignees));
         }
         if let Some(status) = input.status.as_deref() {
-            body.insert(
-                "columnId".to_string(),
-                json!(self.resolve_column_id_by_status(status).await?),
-            );
+            body.extend(self.resolve_status_update(status).await?);
         } else if let Some(state) = input.state.as_deref() {
             match state {
                 "open" | "opened" => {
@@ -580,7 +593,11 @@ impl IssueProvider for YouGileClient {
             )
             .await?;
         let mut comments = Vec::new();
-        for message in messages.content.into_iter().filter(|message| !message.deleted) {
+        for message in messages
+            .content
+            .into_iter()
+            .filter(|message| !message.deleted)
+        {
             comments.push(self.map_comment(&message).await);
         }
 
@@ -605,10 +622,9 @@ impl IssueProvider for YouGileClient {
                 }),
             )
             .await?;
-        let message_id = response
-            .get("id")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| Error::InvalidData("YouGile add_comment response missing id".to_string()))?;
+        let message_id = response.get("id").and_then(|v| v.as_u64()).ok_or_else(|| {
+            Error::InvalidData("YouGile add_comment response missing id".to_string())
+        })?;
         let messages: YouGileListResponse<YouGileChatMessage> = self
             .get_json(
                 &format!("/chats/{task_id}/messages"),
@@ -763,16 +779,8 @@ fn matches_state_category(
     map_status_category(task, status_name) == state_category
 }
 
-fn map_status_category(task: &YouGileTask, status_name: Option<&str>) -> String {
-    if task.deleted || task.archived {
-        return "cancelled".to_string();
-    }
-    if task.completed {
-        return "done".to_string();
-    }
-
+fn map_status_category_from_name(status_name: &str) -> String {
     let normalized = status_name
-        .unwrap_or_default()
         .trim()
         .to_ascii_lowercase()
         .replace('-', " ")
@@ -820,6 +828,16 @@ fn map_status_category(task: &YouGileTask, status_name: Option<&str>) -> String 
     }
 
     "in_progress".to_string()
+}
+
+fn map_status_category(task: &YouGileTask, status_name: Option<&str>) -> String {
+    if task.deleted || task.archived {
+        return "cancelled".to_string();
+    }
+    if task.completed {
+        return "done".to_string();
+    }
+    map_status_category_from_name(status_name.unwrap_or_default())
 }
 
 fn minimal_user(id: &str) -> User {
@@ -1099,8 +1117,14 @@ mod tests {
         assert_eq!(issue.status.as_deref(), Some("To Do"));
         assert_eq!(issue.state, "open");
         assert_eq!(issue.status_category.as_deref(), Some("todo"));
-        assert_eq!(issue.author.as_ref().unwrap().username, "author@example.com");
-        assert_eq!(issue.author.as_ref().unwrap().name.as_deref(), Some("Author User"));
+        assert_eq!(
+            issue.author.as_ref().unwrap().username,
+            "author@example.com"
+        );
+        assert_eq!(
+            issue.author.as_ref().unwrap().name.as_deref(),
+            Some("Author User")
+        );
         assert_eq!(issue.assignees[0].username, "assignee@example.com");
         assert_eq!(issue.parent.as_deref(), Some("DEV-100"));
         assert_eq!(issue.updated_at.as_deref(), issue.created_at.as_deref());
@@ -1252,8 +1276,16 @@ mod tests {
             SecretString::from("token".to_owned()),
         );
         let issues = client.get_issues(IssueFilter::default()).await.unwrap();
-        let parent = issues.items.iter().find(|issue| issue.key == "DEV-20").unwrap();
-        let child = issues.items.iter().find(|issue| issue.key == "DEV-21").unwrap();
+        let parent = issues
+            .items
+            .iter()
+            .find(|issue| issue.key == "DEV-20")
+            .unwrap();
+        let child = issues
+            .items
+            .iter()
+            .find(|issue| issue.key == "DEV-21")
+            .unwrap();
 
         assert_eq!(parent.subtasks.len(), 1);
         assert_eq!(parent.subtasks[0].key, "DEV-21");
@@ -1421,7 +1453,15 @@ mod tests {
             .await;
         server
             .mock_async(|when, then| {
-                when.method(PUT).path("/api-v2/tasks/task-1");
+                when.method(PUT)
+                    .path("/api-v2/tasks/task-1")
+                    .json_body_obj(&serde_json::json!({
+                        "title": "Updated task",
+                        "columnId": "col-2",
+                        "completed": true,
+                        "archived": false,
+                        "deleted": false
+                    }));
                 then.status(200).json_body_obj(&serde_json::json!({
                     "id": "task-1"
                 }));
@@ -1461,6 +1501,115 @@ mod tests {
             .unwrap();
         assert_eq!(issue.key, "DEV-11");
         assert_eq!(issue.status.as_deref(), Some("Done"));
+    }
+
+    #[tokio::test]
+    async fn update_issue_status_reopens_task_when_moved_to_active_column() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" },
+                        { "id": "col-2", "title": "Done", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "task-1",
+                            "title": "Reopened task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-12"
+                        }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-2")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": []
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(PUT)
+                    .path("/api-v2/tasks/task-1")
+                    .json_body_obj(&serde_json::json!({
+                        "columnId": "col-1",
+                        "completed": false,
+                        "archived": false,
+                        "deleted": false
+                    }));
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/tasks/task-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1",
+                    "title": "Reopened task",
+                    "timestamp": 1710000000000_u64,
+                    "columnId": "col-1",
+                    "completed": false,
+                    "archived": false,
+                    "deleted": false,
+                    "idTaskProject": "DEV-12"
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issue = client
+            .update_issue(
+                "yougile#task-1",
+                UpdateIssueInput {
+                    status: Some("To Do".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(issue.key, "DEV-12");
+        assert_eq!(issue.state, "open");
+        assert_eq!(issue.status.as_deref(), Some("To Do"));
     }
 
     #[tokio::test]
@@ -1570,7 +1719,10 @@ mod tests {
             .unwrap();
         assert_eq!(comment.body, "Hello");
         assert_eq!(comment.author.as_ref().unwrap().id, "user-2");
-        assert_eq!(comment.author.as_ref().unwrap().name.as_deref(), Some("Comment Writer"));
+        assert_eq!(
+            comment.author.as_ref().unwrap().name.as_deref(),
+            Some("Comment Writer")
+        );
     }
 
     #[tokio::test]
@@ -1610,7 +1762,10 @@ mod tests {
 
         assert_eq!(map_status_category(&task, Some("Backlog")), "backlog");
         assert_eq!(map_status_category(&task, Some("To Do")), "todo");
-        assert_eq!(map_status_category(&task, Some("Code Review")), "in_progress");
+        assert_eq!(
+            map_status_category(&task, Some("Code Review")),
+            "in_progress"
+        );
         assert_eq!(map_status_category(&task, Some("Done")), "done");
         assert_eq!(map_status_category(&task, Some("Cancelled")), "cancelled");
     }
