@@ -318,6 +318,119 @@ impl YouGileClient {
         Ok(body)
     }
 
+    async fn load_board_hierarchy(&self) -> Result<Vec<YouGileTask>> {
+        self.list_board_tasks(&IssueFilter {
+            state: Some("all".to_string()),
+            ..IssueFilter::default()
+        })
+        .await
+    }
+
+    async fn rewrite_parent_subtasks(&self, parent_id: &str, subtasks: Vec<String>) -> Result<()> {
+        let _: Value = self
+            .put_json(
+                &format!("/tasks/{parent_id}"),
+                &json!({
+                    "subtasks": subtasks
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn get_issue_with_relations(
+        &self,
+        task_id: &str,
+        relation_tasks: &[YouGileTask],
+    ) -> Result<Issue> {
+        let task: YouGileTask = self.get_json(&format!("/tasks/{task_id}"), &[]).await?;
+        let columns = self.list_board_columns().await?;
+        let column_titles: HashMap<String, String> = columns
+            .iter()
+            .map(|column| (column.id.clone(), column.title.clone()))
+            .collect();
+        let task_by_id = build_task_index(relation_tasks);
+        let parent_by_child = build_parent_index(relation_tasks);
+        Ok(self
+            .map_issue(&task, &column_titles, &task_by_id, &parent_by_child)
+            .await)
+    }
+
+    async fn sync_parent_link(
+        &self,
+        child_id: &str,
+        desired_parent_key: Option<&str>,
+    ) -> Result<Vec<YouGileTask>> {
+        let mut tasks = self.load_board_hierarchy().await?;
+        let task_by_id = build_task_index(&tasks);
+        let parent_by_child = build_parent_index(&tasks);
+        let current_parent = parent_by_child.get(child_id).map(|task| task.id.clone());
+
+        let desired_parent = match desired_parent_key {
+            Some(parent_key)
+                if !parent_key.trim().is_empty() && !parent_key.eq_ignore_ascii_case("none") =>
+            {
+                Some(
+                    resolve_task_id_from_tasks(&tasks, parent_key)
+                        .or_else(|| {
+                            if looks_like_uuid(parent_key) {
+                                Some(parent_key.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| {
+                            Error::NotFound(format!(
+                                "YouGile parent task '{}' not found on board {}",
+                                parent_key, self.board_id
+                            ))
+                        })?,
+                )
+            }
+            _ => None,
+        };
+
+        if current_parent == desired_parent {
+            apply_parent_link_to_tasks(&mut tasks, child_id, desired_parent.as_deref());
+            return Ok(tasks);
+        }
+
+        if let Some(old_parent_id) = current_parent {
+            let old_parent = task_by_id.get(&old_parent_id).ok_or_else(|| {
+                Error::NotFound(format!(
+                    "YouGile parent task '{}' not found while detaching child '{}'",
+                    old_parent_id, child_id
+                ))
+            })?;
+            let new_subtasks: Vec<String> = old_parent
+                .subtask_ids
+                .iter()
+                .filter(|id| id.as_str() != child_id)
+                .cloned()
+                .collect();
+            self.rewrite_parent_subtasks(&old_parent_id, new_subtasks)
+                .await?;
+        }
+
+        if let Some(new_parent_id) = desired_parent.as_deref() {
+            let new_parent = task_by_id.get(new_parent_id).ok_or_else(|| {
+                Error::NotFound(format!(
+                    "YouGile parent task '{}' not found while attaching child '{}'",
+                    new_parent_id, child_id
+                ))
+            })?;
+            let mut subtasks = new_parent.subtask_ids.clone();
+            if !subtasks.iter().any(|id| id == child_id) {
+                subtasks.push(child_id.to_string());
+            }
+            self.rewrite_parent_subtasks(new_parent_id, subtasks)
+                .await?;
+        }
+
+        apply_parent_link_to_tasks(&mut tasks, child_id, desired_parent.as_deref());
+        Ok(tasks)
+    }
+
     async fn default_column_id(&self) -> Result<Option<String>> {
         let columns = self.list_board_columns().await?;
         Ok(columns.into_iter().next().map(|column| column.id))
@@ -522,12 +635,10 @@ impl IssueProvider for YouGileClient {
 
     async fn create_issue(&self, input: CreateIssueInput) -> Result<Issue> {
         validate_generic_create_fields(&input)?;
-        if input.parent.is_some() {
-            warn!("YouGile create_issue does not yet support generic parent/subtask linkage");
-        }
         if input.issue_type.is_some() {
             warn!("YouGile create_issue ignores issue_type");
         }
+        let parent_key = input.parent.clone();
 
         let column_id = self.default_column_id().await?;
 
@@ -550,16 +661,19 @@ impl IssueProvider for YouGileClient {
         let task_id = created.get("id").and_then(|v| v.as_str()).ok_or_else(|| {
             Error::InvalidData("YouGile create_issue response missing id".to_string())
         })?;
+        if let Some(parent_key) = parent_key.as_deref() {
+            let relation_tasks = self.sync_parent_link(task_id, Some(parent_key)).await?;
+            return self
+                .get_issue_with_relations(task_id, &relation_tasks)
+                .await;
+        }
         self.get_issue(&format!("yougile#{task_id}")).await
     }
 
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue> {
         validate_generic_update_fields(&input)?;
-        if input.parent_id.is_some() {
-            warn!("YouGile update_issue does not yet support generic parent/subtask changes");
-        }
-
         let task_id = self.resolve_task_id(key).await?;
+        let parent_id = input.parent_id.clone();
         let mut body = serde_json::Map::new();
 
         if let Some(title) = input.title {
@@ -590,11 +704,15 @@ impl IssueProvider for YouGileClient {
             body.insert("stickers".to_string(), stickers);
         }
 
-        if body.is_empty() {
-            return self.get_issue(key).await;
+        if !body.is_empty() {
+            let _: Value = self.put_json(&format!("/tasks/{task_id}"), &body).await?;
         }
-
-        let _: Value = self.put_json(&format!("/tasks/{task_id}"), &body).await?;
+        if let Some(parent_id) = parent_id.as_deref() {
+            let relation_tasks = self.sync_parent_link(&task_id, Some(parent_id)).await?;
+            return self
+                .get_issue_with_relations(&task_id, &relation_tasks)
+                .await;
+        }
         self.get_issue(&format!("yougile#{task_id}")).await
     }
 
@@ -785,6 +903,13 @@ fn task_matches_key(task: &YouGileTask, key: &str) -> bool {
         || format!("yougile#{}", task.id) == key
 }
 
+fn resolve_task_id_from_tasks(tasks: &[YouGileTask], key: &str) -> Option<String> {
+    tasks
+        .iter()
+        .find(|task| task_matches_key(task, key))
+        .map(|task| task.id.clone())
+}
+
 fn is_closed_task(task: &YouGileTask) -> bool {
     task.completed || task.archived || task.deleted
 }
@@ -944,6 +1069,20 @@ fn build_parent_index<'a>(tasks: &'a [YouGileTask]) -> HashMap<String, &'a YouGi
         }
     }
     parents
+}
+
+fn apply_parent_link_to_tasks(tasks: &mut [YouGileTask], child_id: &str, parent_id: Option<&str>) {
+    for task in tasks.iter_mut() {
+        task.subtask_ids.retain(|id| id != child_id);
+    }
+
+    if let Some(parent_id) = parent_id {
+        if let Some(parent) = tasks.iter_mut().find(|task| task.id == parent_id) {
+            if !parent.subtask_ids.iter().any(|id| id == child_id) {
+                parent.subtask_ids.push(child_id.to_string());
+            }
+        }
+    }
 }
 
 fn epoch_millis_to_rfc3339(timestamp: u64) -> String {
@@ -1401,6 +1540,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_issue_with_parent_updates_parent_subtasks() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/api-v2/tasks");
+                then.status(201).json_body_obj(&serde_json::json!({
+                    "id": "task-2"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "parent-1",
+                            "title": "Parent task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-700",
+                            "subtasks": ["task-2"]
+                        },
+                        {
+                            "id": "task-2",
+                            "title": "New child",
+                            "timestamp": 1710000001000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-701"
+                        }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(PUT)
+                    .path("/api-v2/tasks/parent-1")
+                    .json_body_obj(&serde_json::json!({
+                        "subtasks": ["task-2"]
+                    }));
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "parent-1"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/tasks/task-2");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-2",
+                    "title": "New child",
+                    "timestamp": 1710000001000_u64,
+                    "columnId": "col-1",
+                    "completed": false,
+                    "archived": false,
+                    "deleted": false,
+                    "idTaskProject": "DEV-701"
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issue = client
+            .create_issue(CreateIssueInput {
+                title: "New child".to_string(),
+                parent: Some("DEV-700".to_string()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(issue.key, "DEV-701");
+        assert_eq!(issue.parent.as_deref(), Some("DEV-700"));
+    }
+
+    #[tokio::test]
     async fn update_issue_maps_status_to_column_and_refetches() {
         let server = MockServer::start_async().await;
         server
@@ -1628,6 +1875,209 @@ mod tests {
         assert_eq!(issue.key, "DEV-12");
         assert_eq!(issue.state, "open");
         assert_eq!(issue.status.as_deref(), Some("To Do"));
+    }
+
+    #[tokio::test]
+    async fn update_issue_parent_id_attaches_task_to_parent() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "parent-1",
+                            "title": "Parent task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-800"
+                        },
+                        {
+                            "id": "task-1",
+                            "title": "Child task",
+                            "timestamp": 1710000001000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-801"
+                        }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(PUT)
+                    .path("/api-v2/tasks/parent-1")
+                    .json_body_obj(&serde_json::json!({
+                        "subtasks": ["task-1"]
+                    }));
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "parent-1"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/tasks/task-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1",
+                    "title": "Child task",
+                    "timestamp": 1710000001000_u64,
+                    "columnId": "col-1",
+                    "completed": false,
+                    "archived": false,
+                    "deleted": false,
+                    "idTaskProject": "DEV-801"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issue = client
+            .update_issue(
+                "yougile#task-1",
+                UpdateIssueInput {
+                    parent_id: Some("DEV-800".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(issue.key, "DEV-801");
+        assert_eq!(issue.parent.as_deref(), Some("DEV-800"));
+    }
+
+    #[tokio::test]
+    async fn update_issue_parent_id_none_detaches_task_from_parent() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "parent-1",
+                            "title": "Parent task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-900",
+                            "subtasks": ["task-1"]
+                        },
+                        {
+                            "id": "task-1",
+                            "title": "Child task",
+                            "timestamp": 1710000001000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": false,
+                            "deleted": false,
+                            "idTaskProject": "DEV-901"
+                        }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(PUT)
+                    .path("/api-v2/tasks/parent-1")
+                    .json_body_obj(&serde_json::json!({
+                        "subtasks": []
+                    }));
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "parent-1"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/tasks/task-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1",
+                    "title": "Child task",
+                    "timestamp": 1710000001000_u64,
+                    "columnId": "col-1",
+                    "completed": false,
+                    "archived": false,
+                    "deleted": false,
+                    "idTaskProject": "DEV-901"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issue = client
+            .update_issue(
+                "yougile#task-1",
+                UpdateIssueInput {
+                    parent_id: Some("none".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(issue.key, "DEV-901");
+        assert_eq!(issue.parent, None);
     }
 
     #[tokio::test]
