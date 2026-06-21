@@ -1,7 +1,7 @@
 # devboy-yougile
 
-Scaffold for the YouGile issue-tracker provider used by `devboy-tools`.
+YouGile issue-tracker provider used by `devboy-tools`.
 
-This crate currently exposes the module structure and basic client/config types
-needed to wire YouGile into the workspace. Provider behavior lands in follow-up
-steps.
+This crate integrates the YouGile REST API with the shared `IssueProvider`
+surface used across the workspace, including task listing, single-task fetches,
+create/update flows, comments, and board-column status mapping.

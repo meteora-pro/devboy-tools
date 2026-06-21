@@ -3,14 +3,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Minimal board descriptor reused by follow-up provider implementation work.
+/// Board descriptor used by the YouGile provider.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YouGileBoardRef {
     pub id: String,
     pub title: String,
 }
 
-/// Minimal column descriptor reused by follow-up provider implementation work.
+/// Column descriptor used by the YouGile provider.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct YouGileColumnRef {
     pub id: String,

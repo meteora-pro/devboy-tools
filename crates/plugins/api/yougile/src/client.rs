@@ -1,4 +1,4 @@
-//! YouGile API client scaffold.
+//! YouGile API client.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,10 +23,7 @@ use crate::types::{
     YouGileChatMessage, YouGileColumn, YouGileListResponse, YouGileTask, YouGileUser,
 };
 
-/// Minimal YouGile client used by the workspace wiring layer.
-///
-/// Provider methods are added in follow-up steps once the config and scope
-/// decisions are finalized.
+/// YouGile client used by the workspace provider layer.
 #[derive(Clone)]
 pub struct YouGileClient {
     base_url: String,
@@ -79,7 +76,7 @@ impl YouGileClient {
         &self.client
     }
 
-    /// API token accessor for internal follow-up implementation work.
+    /// API token accessor for internal use.
     pub fn token(&self) -> &SecretString {
         &self.token
     }

@@ -98,7 +98,9 @@ The integration is usable, but a few parts are intentionally strict or incomplet
 
 - Generic `labels` are not supported. Passing them to `create_issue` or `update_issue` returns an error.
 - Generic `priority` is not supported. Use provider-specific sticker ids via `custom_fields` if your board models priority that way.
-- Generic parent/subtask writes are not supported yet.
+- Parent/subtask writes are supported through the unified parent fields:
+  - `create_issue.parent`
+  - `update_issue.parentId`
 - Task attachments are not yet surfaced as `attachments_count`.
 - Issue `url` is not yet mapped.
 

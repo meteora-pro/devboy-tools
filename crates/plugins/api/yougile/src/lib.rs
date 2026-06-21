@@ -1,8 +1,8 @@
 //! YouGile provider implementation for devboy-tools.
 //!
 //! This crate provides integration with the YouGile REST API for issues/tasks.
-//! The initial scaffold exposes the client, liveness probe, and schema
-//! enrichment surface; issue operations land in follow-up steps.
+//! It includes issue operations, comment support, board-column status
+//! mapping, and schema enrichment for YouGile-specific issue workflows.
 
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(rustdoc::private_intra_doc_links)]

@@ -1,14 +1,14 @@
-//! YouGile schema enricher scaffold.
+//! YouGile schema enricher.
 
 use devboy_core::{ToolCategory, ToolEnricher, ToolSchema};
 use serde_json::Value;
 
 use crate::metadata::YouGileMetadata;
 
-/// No-op schema enricher placeholder for YouGile.
+/// Schema enricher for YouGile issue tools.
 ///
-/// The real implementation will use board/column metadata to refine issue tool
-/// schemas once the provider behavior is in place.
+/// Uses board/column metadata to refine shared issue-tool schemas with
+/// YouGile-specific status values and supported filters.
 pub struct YouGileSchemaEnricher {
     metadata: YouGileMetadata,
 }
