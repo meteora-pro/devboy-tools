@@ -15,7 +15,7 @@ use serde::de::DeserializeOwned;
 
 use crate::DEFAULT_CONFLUENCE_API_PATH;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum ConfluenceFlavor {
     SelfHosted,
     Cloud,
@@ -112,13 +112,14 @@ impl fmt::Debug for ConfluenceClient {
 impl ConfluenceClient {
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
         let base = normalize_base_url(base_url.into());
+        let flavor = ConfluenceFlavor::default();
         Self {
             instance_url: base.clone(),
             base_url: base,
-            flavor: ConfluenceFlavor::default(),
-            api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
-            page_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
-            space_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
+            flavor,
+            api_path: api_path_for_flavor(flavor.clone(), None),
+            page_api_path: api_path_for_flavor(flavor.clone(), None),
+            space_api_path: api_path_for_flavor(flavor, None),
             auth,
             proxy_headers: None,
             http: reqwest::Client::new(),
@@ -151,12 +152,15 @@ impl ConfluenceClient {
 
     pub fn with_flavor(mut self, flavor: ConfluenceFlavor) -> Self {
         self.flavor = flavor;
+        self.api_path = api_path_for_flavor(self.flavor, None);
+        self.page_api_path = api_path_for_flavor(self.flavor, None);
+        self.space_api_path = api_path_for_flavor(self.flavor, None);
         self
     }
 
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
-        self.page_api_path = api_path_for_version(api_version);
-        self.space_api_path = api_path_for_version(api_version);
+        self.page_api_path = api_path_for_flavor(self.flavor, api_version);
+        self.space_api_path = api_path_for_flavor(self.flavor, api_version);
         self
     }
 
@@ -402,10 +406,17 @@ fn normalize_base_url(base_url: String) -> String {
     base_url.trim_end_matches('/').to_string()
 }
 
-fn api_path_for_version(api_version: Option<&str>) -> String {
-    match api_version.map(str::trim).filter(|v| !v.is_empty()) {
-        Some("v2") => "/api/v2".to_string(),
-        _ => DEFAULT_CONFLUENCE_API_PATH.to_string(),
+fn api_path_for_flavor(flavor: ConfluenceFlavor, api_version: Option<&str>) -> String {
+    let version = api_version.map(str::trim).filter(|v| !v.is_empty());
+    match flavor {
+        ConfluenceFlavor::Cloud => match version {
+            Some("v2") | None => "/wiki/api/v2".to_string(),
+            Some(_) => "/wiki/api/v2".to_string(),
+        },
+        ConfluenceFlavor::SelfHosted => match version {
+            Some("v2") => "/api/v2".to_string(),
+            _ => DEFAULT_CONFLUENCE_API_PATH.to_string(),
+        },
     }
 }
 
@@ -2055,6 +2066,18 @@ mod tests {
             ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("token"));
 
         assert!(matches!(client.flavor(), ConfluenceFlavor::SelfHosted));
+    }
+
+    #[tokio::test]
+    async fn with_flavor_cloud_switches_to_cloud_api_paths() {
+        let client = ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
+            .with_flavor(ConfluenceFlavor::Cloud);
+
+        assert!(matches!(client.flavor(), ConfluenceFlavor::Cloud));
+        assert_eq!(
+            client.rest_api_url("spaces"),
+            "https://wiki.example.com/wiki/api/v2/spaces"
+        );
     }
 
     #[tokio::test]
