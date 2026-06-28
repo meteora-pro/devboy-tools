@@ -16,6 +16,27 @@ use serde::de::DeserializeOwned;
 use crate::DEFAULT_CONFLUENCE_API_PATH;
 
 #[derive(Clone)]
+pub enum ConfluenceFlavor {
+    SelfHosted,
+    Cloud,
+}
+
+impl fmt::Debug for ConfluenceFlavor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SelfHosted => f.write_str("SelfHosted"),
+            Self::Cloud => f.write_str("Cloud"),
+        }
+    }
+}
+
+impl Default for ConfluenceFlavor {
+    fn default() -> Self {
+        Self::SelfHosted
+    }
+}
+
+#[derive(Clone)]
 pub enum ConfluenceAuth {
     None,
     BearerToken(SecretString),
@@ -57,6 +78,7 @@ impl ConfluenceAuth {
 #[derive(Clone)]
 pub struct ConfluenceClient {
     base_url: String,
+    flavor: ConfluenceFlavor,
     /// Original Confluence instance URL for generating browse links
     /// (`_links.webui`, `/pages/<id>`). When the client is configured
     /// for proxy mode, `base_url` points at the proxy host so API
@@ -76,6 +98,7 @@ impl fmt::Debug for ConfluenceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
+            .field("flavor", &self.flavor)
             .field("instance_url", &self.instance_url)
             .field("api_path", &self.api_path)
             .field("page_api_path", &self.page_api_path)
@@ -92,6 +115,7 @@ impl ConfluenceClient {
         Self {
             instance_url: base.clone(),
             base_url: base,
+            flavor: ConfluenceFlavor::default(),
             api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             page_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
             space_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
@@ -119,6 +143,15 @@ impl ConfluenceClient {
 
     pub fn auth(&self) -> &ConfluenceAuth {
         &self.auth
+    }
+
+    pub fn flavor(&self) -> &ConfluenceFlavor {
+        &self.flavor
+    }
+
+    pub fn with_flavor(mut self, flavor: ConfluenceFlavor) -> Self {
+        self.flavor = flavor;
+        self
     }
 
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
@@ -2014,6 +2047,14 @@ mod tests {
             client.rest_api_url("content"),
             "https://wiki.example.com/rest/api/content"
         );
+    }
+
+    #[tokio::test]
+    async fn new_defaults_to_self_hosted_flavor() {
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("token"));
+
+        assert!(matches!(client.flavor(), ConfluenceFlavor::SelfHosted));
     }
 
     #[tokio::test]

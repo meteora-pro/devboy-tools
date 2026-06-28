@@ -1,7 +1,7 @@
-//! Confluence self-hosted provider implementation for devboy-tools.
+//! Confluence provider implementation for devboy-tools.
 //!
-//! This crate provides the Confluence Server / Data Center knowledge base
-//! provider implementation, including API client logic plus page/space/search
+//! This crate provides the Confluence knowledge base provider
+//! implementation, including API client logic plus page/space/search
 //! operations exposed through the shared `KnowledgeBaseProvider` trait.
 
 #![deny(rustdoc::broken_intra_doc_links)]
@@ -11,7 +11,7 @@ mod client;
 mod enricher;
 pub mod liveness;
 
-pub use client::{ConfluenceAuth, ConfluenceClient};
+pub use client::{ConfluenceAuth, ConfluenceClient, ConfluenceFlavor};
 pub use enricher::ConfluenceSchemaEnricher;
 
 /// Default REST API base path for Confluence Server / Data Center.
