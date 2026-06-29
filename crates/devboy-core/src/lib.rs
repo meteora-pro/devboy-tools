@@ -91,9 +91,9 @@ pub use asset::{
 
 // Re-export config types
 pub use config::{
-    BuiltinToolsConfig, ClickUpConfig, Config, ConfluenceConfig, ContextConfig, FirefliesConfig,
-    FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyConfig, ProxyMatchingConfig,
-    ProxyMcpServerConfig, ProxyRoutingConfig, ProxyRoutingOverride, ProxySecretsConfig,
-    ProxyTelemetryConfig, ProxyToolRule, RemoteConfigSettings, RoutingStrategy, SentryConfig,
-    SlackConfig, default_slack_required_scopes, matches_glob, routing_strategy_slug,
+    BuiltinToolsConfig, ClickUpConfig, Config, ConfluenceConfig, ConfluenceFlavor, ContextConfig,
+    FirefliesConfig, FormatPipelineConfig, GitHubConfig, GitLabConfig, JiraConfig, ProxyConfig,
+    ProxyMatchingConfig, ProxyMcpServerConfig, ProxyRoutingConfig, ProxyRoutingOverride,
+    ProxySecretsConfig, ProxyTelemetryConfig, ProxyToolRule, RemoteConfigSettings, RoutingStrategy,
+    SentryConfig, SlackConfig, default_slack_required_scopes, matches_glob, routing_strategy_slug,
 };

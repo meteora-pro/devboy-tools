@@ -505,6 +505,8 @@ mod tests {
         ContextConfig {
             confluence: Some(ConfluenceConfig {
                 base_url: "https://wiki.example.com".to_string(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".to_string()),
                 username: Some("dev@example.com".to_string()),
                 space_key: Some("ENG".to_string()),

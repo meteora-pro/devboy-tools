@@ -1065,6 +1065,8 @@ mod tests {
         let outcome = confluence_connectivity(
             &ConfluenceConfig {
                 base_url: server.base_url(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".to_string()),
                 username: Some("dev@example.com".to_string()),
                 space_key: Some("ENG".to_string()),
@@ -1112,6 +1114,8 @@ mod tests {
         let outcome = confluence_connectivity(
             &ConfluenceConfig {
                 base_url: server.base_url(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v2".to_string()),
                 username: Some("dev@example.com".to_string()),
                 space_key: Some("ENG".to_string()),
@@ -1155,6 +1159,8 @@ mod tests {
             ContextConfig {
                 confluence: Some(ConfluenceConfig {
                     base_url: server.base_url(),
+                    flavor: None,
+                    cloud_id: None,
                     api_version: Some("v1".to_string()),
                     username: Some("dev@example.com".to_string()),
                     space_key: Some("ENG".to_string()),

@@ -3994,8 +3994,18 @@ fn add_context_providers_from_env(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client = ConfluenceClient::new(&confluence.base_url, auth)
+            let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
+            if matches!(
+                confluence.flavor,
+                Some(devboy_core::ConfluenceFlavor::Cloud)
+            ) || confluence.cloud_id.is_some()
+            {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = confluence.cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -4246,8 +4256,18 @@ fn add_context_providers(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client = ConfluenceClient::new(&confluence.base_url, auth)
+            let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
+            if matches!(
+                confluence.flavor,
+                Some(devboy_core::ConfluenceFlavor::Cloud)
+            ) || confluence.cloud_id.is_some()
+            {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = confluence.cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -5375,6 +5395,8 @@ mod tests {
         let context = ContextConfig {
             confluence: Some(ConfluenceConfig {
                 base_url: "https://wiki.example.com".to_string(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".to_string()),
                 username: None,
                 space_key: Some("ENG".to_string()),

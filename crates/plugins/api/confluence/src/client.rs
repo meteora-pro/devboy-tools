@@ -2091,8 +2091,9 @@ mod tests {
 
     #[tokio::test]
     async fn with_flavor_cloud_switches_to_cloud_api_paths() {
-        let client = ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
-            .with_flavor(ConfluenceFlavor::Cloud);
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud);
 
         assert!(matches!(client.flavor(), ConfluenceFlavor::Cloud));
         assert_eq!(
@@ -2103,9 +2104,10 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_api_root_url_uses_atlassian_cloud_base() {
-        let client = ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
-            .with_flavor(ConfluenceFlavor::Cloud)
-            .with_cloud_id("abc123");
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud)
+                .with_cloud_id("abc123");
 
         assert_eq!(
             client.cloud_api_root_url().as_deref(),
