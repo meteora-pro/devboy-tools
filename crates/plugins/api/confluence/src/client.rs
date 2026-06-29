@@ -80,6 +80,7 @@ pub struct ConfluenceClient {
     base_url: String,
     flavor: ConfluenceFlavor,
     cloud_id: Option<String>,
+    cloud_api_base_url: Option<String>,
     /// Original Confluence instance URL for generating browse links
     /// (`_links.webui`, `/pages/<id>`). When the client is configured
     /// for proxy mode, `base_url` points at the proxy host so API
@@ -101,6 +102,7 @@ impl fmt::Debug for ConfluenceClient {
             .field("base_url", &self.base_url)
             .field("flavor", &self.flavor)
             .field("cloud_id", &self.cloud_id)
+            .field("cloud_api_base_url", &self.cloud_api_base_url)
             .field("instance_url", &self.instance_url)
             .field("api_path", &self.api_path)
             .field("page_api_path", &self.page_api_path)
@@ -120,6 +122,7 @@ impl ConfluenceClient {
             base_url: base,
             flavor,
             cloud_id: None,
+            cloud_api_base_url: None,
             api_path: api_path_for_flavor(flavor.clone(), None),
             page_api_path: api_path_for_flavor(flavor.clone(), None),
             space_api_path: api_path_for_flavor(flavor, None),
@@ -166,6 +169,11 @@ impl ConfluenceClient {
         self
     }
 
+    pub fn with_cloud_api_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.cloud_api_base_url = Some(normalize_base_url(base_url.into()));
+        self
+    }
+
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
         self.page_api_path = api_path_for_flavor(self.flavor, api_version);
         self.space_api_path = api_path_for_flavor(self.flavor, api_version);
@@ -195,9 +203,14 @@ impl ConfluenceClient {
     }
 
     pub fn cloud_api_root_url(&self) -> Option<String> {
-        self.cloud_id
-            .as_ref()
-            .map(|cloud_id| format!("https://api.atlassian.com/ex/confluence/{cloud_id}"))
+        self.cloud_id.as_ref().map(|cloud_id| {
+            format!(
+                "{}/ex/confluence/{cloud_id}",
+                self.cloud_api_base_url
+                    .as_deref()
+                    .unwrap_or("https://api.atlassian.com")
+            )
+        })
     }
 
     pub fn cloud_api_url(&self, path: &str) -> Option<String> {
@@ -212,25 +225,28 @@ impl ConfluenceClient {
         format!("{}{}/{}", self.base_url, api_path, path)
     }
 
-    fn api_request_url(&self, api_path: &str, path: &str) -> String {
-        if matches!(self.flavor, ConfluenceFlavor::Cloud)
-            && let Some(url) = self.cloud_api_url(&format!(
+    async fn api_request_url(&self, api_path: &str, path: &str) -> Result<String> {
+        if matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            let cloud_root = self.resolve_cloud_api_root_url().await?;
+            return Ok(format!(
                 "{}/{}",
-                api_path.trim_matches('/'),
-                path.trim_start_matches('/')
-            ))
-        {
-            return url;
+                cloud_root,
+                format!(
+                    "{}/{}",
+                    api_path.trim_matches('/'),
+                    path.trim_start_matches('/')
+                )
+            ));
         }
-        self.api_url(api_path, path)
+        Ok(self.api_url(api_path, path))
     }
 
-    fn legacy_rest_api_url(&self, path: &str) -> String {
+    async fn legacy_rest_api_url(&self, path: &str) -> Result<String> {
         let api_path = match self.flavor {
             ConfluenceFlavor::Cloud => "/wiki/rest/api",
             ConfluenceFlavor::SelfHosted => DEFAULT_CONFLUENCE_API_PATH,
         };
-        self.api_url(api_path, path)
+        Ok(self.api_url(api_path, path))
     }
 
     #[cfg(test)]
@@ -253,9 +269,10 @@ impl ConfluenceClient {
     where
         T: DeserializeOwned,
     {
+        let url = self.api_request_url(api_path, path).await?;
         let request = self
             .http
-            .get(self.api_request_url(api_path, path))
+            .get(url)
             .header(reqwest::header::ACCEPT, "application/json");
         self.send_json(request).await
     }
@@ -265,9 +282,10 @@ impl ConfluenceClient {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
+        let url = self.api_request_url(api_path, path).await?;
         let request = self
             .http
-            .post(self.api_request_url(api_path, path))
+            .post(url)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
@@ -279,9 +297,10 @@ impl ConfluenceClient {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
+        let url = self.api_request_url(api_path, path).await?;
         let request = self
             .http
-            .put(self.api_request_url(api_path, path))
+            .put(url)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
@@ -292,9 +311,10 @@ impl ConfluenceClient {
     where
         T: DeserializeOwned,
     {
+        let url = self.legacy_rest_api_url(path).await?;
         let request = self
             .http
-            .get(self.legacy_rest_api_url(path))
+            .get(url)
             .header(reqwest::header::ACCEPT, "application/json");
         self.send_json(request).await
     }
@@ -303,9 +323,10 @@ impl ConfluenceClient {
     where
         B: Serialize + ?Sized,
     {
+        let url = self.legacy_rest_api_url(path).await?;
         let request = self
             .http
-            .post(self.legacy_rest_api_url(path))
+            .post(url)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
@@ -313,9 +334,10 @@ impl ConfluenceClient {
     }
 
     async fn delete_empty_from_legacy_api(&self, path: &str) -> Result<()> {
+        let url = self.legacy_rest_api_url(path).await?;
         let request = self
             .http
-            .delete(self.legacy_rest_api_url(path))
+            .delete(url)
             .header(reqwest::header::ACCEPT, "application/json");
         self.send_empty(request).await
     }
@@ -460,7 +482,7 @@ fn should_fallback_to_rest_api(error: &Error) -> bool {
 }
 
 fn uses_v2_api(api_path: &str) -> bool {
-    api_path == "/api/v2"
+    api_path.ends_with("/api/v2")
 }
 
 fn proxy_headers_to_headermap(headers: &HashMap<String, String>) -> HeaderMap {
@@ -697,6 +719,13 @@ struct ConfluenceLabel {
     name: Option<String>,
     #[serde(default)]
     label: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AtlassianAccessibleResource {
+    id: String,
+    #[serde(default)]
+    url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1482,6 +1511,81 @@ fn path_from_cursor(cursor: &str, api_path: &str) -> String {
 }
 
 impl ConfluenceClient {
+    async fn resolve_cloud_api_root_url(&self) -> Result<String> {
+        if let Some(url) = self.cloud_api_root_url() {
+            return Ok(url);
+        }
+
+        if !matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            return Err(Error::InvalidData(
+                "cloud API root requested for non-cloud Confluence client".to_string(),
+            ));
+        }
+
+        let cloud_id = self.discover_cloud_id().await?;
+        Ok(format!(
+            "{}/ex/confluence/{cloud_id}",
+            self.cloud_api_base_url
+                .as_deref()
+                .unwrap_or("https://api.atlassian.com")
+        ))
+    }
+
+    async fn discover_cloud_id(&self) -> Result<String> {
+        match &self.auth {
+            ConfluenceAuth::BearerToken(_) => {}
+            ConfluenceAuth::Basic { .. } => {
+                return Err(Error::InvalidData(
+                    "Confluence Cloud with basic auth requires explicit cloud_id".to_string(),
+                ));
+            }
+            ConfluenceAuth::None => {
+                return Err(Error::InvalidData(
+                    "Confluence Cloud requires bearer auth or explicit cloud_id".to_string(),
+                ));
+            }
+        }
+
+        let url = format!(
+            "{}/oauth/token/accessible-resources",
+            self.cloud_api_base_url
+                .as_deref()
+                .unwrap_or("https://api.atlassian.com")
+        );
+        let request = self
+            .http
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json");
+        let resources: Vec<AtlassianAccessibleResource> = self.send_json(request).await?;
+
+        let wanted_origin = url_origin(&self.instance_url)
+            .or_else(|| url_origin(&self.base_url))
+            .ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "cannot determine Confluence Cloud origin from base URL '{}'",
+                    self.base_url
+                ))
+            })?;
+
+        resources
+            .into_iter()
+            .find(|resource| {
+                resource
+                    .url
+                    .as_deref()
+                    .and_then(url_origin)
+                    .map(|origin| origin == wanted_origin)
+                    .unwrap_or(false)
+            })
+            .map(|resource| resource.id)
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "no Atlassian accessible resource matched Confluence base URL '{}'",
+                    self.instance_url
+                ))
+            })
+    }
+
     async fn resolve_space_by_key(&self, space_key: &str) -> Result<ConfluenceSpace> {
         let spaces = self.get_spaces().await?;
         spaces
@@ -2182,7 +2286,10 @@ mod tests {
                 .with_cloud_id("abc123");
 
         assert_eq!(
-            client.api_request_url("/wiki/api/v2", "spaces/42/pages"),
+            client
+                .api_request_url("/wiki/api/v2", "spaces/42/pages")
+                .await
+                .unwrap(),
             "https://api.atlassian.com/ex/confluence/abc123/wiki/api/v2/spaces/42/pages"
         );
     }
@@ -2194,7 +2301,10 @@ mod tests {
                 .with_flavor(ConfluenceFlavor::Cloud);
 
         assert_eq!(
-            client.legacy_rest_api_url("content/42/label"),
+            client
+                .legacy_rest_api_url("content/42/label")
+                .await
+                .unwrap(),
             "https://example.atlassian.net/wiki/rest/api/content/42/label"
         );
     }
@@ -2429,6 +2539,61 @@ mod tests {
             .unwrap();
 
         mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_spaces_discovers_cloud_id_from_accessible_resources() {
+        let server = MockServer::start();
+        let resources_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/oauth/token/accessible-resources")
+                .header("authorization", "Bearer secret-token");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"[
+                    {
+                        "id": "cloud-123",
+                        "url": "https://team.atlassian.net"
+                    }
+                ]"#,
+                );
+        });
+        let spaces_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .header("authorization", "Bearer secret-token")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud)
+        .with_cloud_api_base_url(server.base_url());
+
+        let response = client.get_spaces().await.unwrap();
+
+        assert!(response.items.is_empty());
+        resources_mock.assert();
+        spaces_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_spaces_cloud_basic_auth_requires_explicit_cloud_id() {
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::basic("dev@example.com", "secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud);
+
+        let err = client.get_spaces().await.unwrap_err();
+        assert!(err.to_string().contains("explicit cloud_id"));
     }
 
     #[tokio::test]
