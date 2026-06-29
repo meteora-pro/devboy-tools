@@ -12,6 +12,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use crate::DEFAULT_CONFLUENCE_API_PATH;
 
@@ -689,6 +690,8 @@ struct ConfluenceUser {
 struct ConfluenceBody {
     #[serde(default)]
     storage: Option<ConfluenceBodyValue>,
+    #[serde(default, rename = "atlas_doc_format")]
+    atlas_doc_format: Option<ConfluenceBodyJsonValue>,
     #[serde(default)]
     view: Option<ConfluenceBodyValue>,
     #[serde(default)]
@@ -699,6 +702,12 @@ struct ConfluenceBody {
 struct ConfluenceBodyValue {
     #[serde(default)]
     value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ConfluenceBodyJsonValue {
+    #[serde(default)]
+    value: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -744,8 +753,8 @@ struct ConfluenceAncestor {
 }
 
 #[derive(Debug, Serialize)]
-struct ConfluenceContentBody<'a> {
-    value: &'a str,
+struct ConfluenceContentBody {
+    value: Value,
     representation: &'static str,
 }
 
@@ -755,7 +764,7 @@ struct ConfluenceContentPayload<'a> {
     content_type: &'static str,
     title: &'a str,
     space: ConfluenceCreateSpaceRef<'a>,
-    body: ConfluenceCreateBodyPayload<'a>,
+    body: ConfluenceCreateBodyPayload,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     ancestors: Vec<ConfluenceCreateAncestorRef<'a>>,
 }
@@ -766,8 +775,8 @@ struct ConfluenceCreateSpaceRef<'a> {
 }
 
 #[derive(Debug, Serialize)]
-struct ConfluenceCreateBodyPayload<'a> {
-    storage: ConfluenceContentBody<'a>,
+struct ConfluenceCreateBodyPayload {
+    storage: ConfluenceContentBody,
 }
 
 #[derive(Debug, Serialize)]
@@ -782,7 +791,7 @@ struct ConfluenceUpdatePayload<'a> {
     content_type: &'static str,
     title: &'a str,
     version: ConfluenceUpdateVersion,
-    body: ConfluenceCreateBodyPayload<'a>,
+    body: ConfluenceCreateBodyPayload,
     #[serde(skip_serializing_if = "Option::is_none")]
     ancestors: Option<Vec<ConfluenceCreateAncestorRef<'a>>>,
 }
@@ -800,7 +809,7 @@ struct ConfluenceV2PagePayload<'a> {
     title: &'a str,
     #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
     parent_id: Option<&'a str>,
-    body: ConfluenceContentBody<'a>,
+    body: ConfluenceContentBody,
 }
 
 #[derive(Debug, Serialize)]
@@ -812,7 +821,7 @@ struct ConfluenceV2UpdatePayload<'a> {
     space_id: &'a str,
     #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
     parent_id: Option<&'a str>,
-    body: ConfluenceContentBody<'a>,
+    body: ConfluenceContentBody,
     version: ConfluenceUpdateVersion,
 }
 
@@ -898,6 +907,28 @@ fn body_value(body: &ConfluenceBody) -> Option<String> {
         .or_else(|| body.value.clone())
 }
 
+fn adf_body_value(body: &ConfluenceBody) -> Option<&Value> {
+    body.atlas_doc_format
+        .as_ref()
+        .and_then(|value| value.value.as_ref())
+}
+
+fn page_content_markdown(page: &ConfluencePage) -> String {
+    page.body
+        .as_ref()
+        .and_then(adf_body_value)
+        .map(adf_to_markdown)
+        .or_else(|| {
+            page.body
+                .as_ref()
+                .and_then(|body| body.storage.as_ref())
+                .and_then(|storage| storage.value.as_deref())
+                .map(confluence_storage_to_markdown)
+        })
+        .or_else(|| page.body.as_ref().and_then(body_value))
+        .unwrap_or_default()
+}
+
 fn extract_labels(page: &ConfluencePage) -> Vec<String> {
     page.labels
         .as_ref()
@@ -931,11 +962,13 @@ fn normalize_labels(labels: &[String]) -> Vec<String> {
 }
 
 fn page_excerpt(page: &ConfluencePage) -> Option<String> {
-    page.body
-        .as_ref()
-        .and_then(body_value)
-        .map(|value| truncate_string(strip_html_tags(&value), 280))
-        .filter(|value| !value.is_empty())
+    let content = page_content_markdown(page);
+    let normalized = collapse_markdown_whitespace(&content);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(truncate_string(normalized, 280))
+    }
 }
 
 fn strip_html_tags(input: &str) -> String {
@@ -985,6 +1018,38 @@ fn normalize_confluence_write_content(content: &str, content_type: Option<&str>)
         other => Err(Error::InvalidData(format!(
             "unsupported confluence content_type '{other}', expected markdown, html, or storage"
         ))),
+    }
+}
+
+fn normalize_confluence_v2_write_content(
+    flavor: ConfluenceFlavor,
+    content: &str,
+    content_type: Option<&str>,
+) -> Result<ConfluenceContentBody> {
+    if matches!(flavor, ConfluenceFlavor::Cloud) {
+        let adf = match content_type
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("markdown")
+        {
+            "markdown" => markdown_to_adf(content),
+            "html" => markdown_to_adf(&strip_html_tags_preserve_layout(content)),
+            "storage" => markdown_to_adf(&confluence_storage_to_markdown(content)),
+            other => {
+                return Err(Error::InvalidData(format!(
+                    "unsupported confluence cloud content_type '{other}', expected markdown, html, or storage"
+                )));
+            }
+        };
+        Ok(ConfluenceContentBody {
+            value: adf,
+            representation: "atlas_doc_format",
+        })
+    } else {
+        Ok(ConfluenceContentBody {
+            value: Value::String(normalize_confluence_write_content(content, content_type)?),
+            representation: "storage",
+        })
     }
 }
 
@@ -1109,6 +1174,213 @@ fn markdown_to_confluence_storage(markdown: &str) -> String {
     out
 }
 
+fn markdown_to_adf(markdown: &str) -> Value {
+    let markdown = markdown.replace("\r\n", "\n");
+    let mut content = Vec::new();
+    let mut paragraph: Vec<String> = Vec::new();
+    let mut lines = markdown.lines().peekable();
+
+    let flush_paragraph = |content: &mut Vec<Value>, paragraph: &mut Vec<String>| {
+        if paragraph.is_empty() {
+            return;
+        }
+        let text = paragraph.join(" ");
+        content.push(json!({
+            "type": "paragraph",
+            "content": markdown_inline_to_adf(&text)
+        }));
+        paragraph.clear();
+    };
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            flush_paragraph(&mut content, &mut paragraph);
+            let mut code_lines = Vec::new();
+            for code_line in lines.by_ref() {
+                if code_line.trim_start().starts_with("```") {
+                    break;
+                }
+                code_lines.push(code_line);
+            }
+            content.push(json!({
+                "type": "codeBlock",
+                "content": [{ "type": "text", "text": code_lines.join("\n") }]
+            }));
+            continue;
+        }
+        if trimmed.is_empty() {
+            flush_paragraph(&mut content, &mut paragraph);
+            continue;
+        }
+        if let Some((level, title)) = parse_markdown_heading(trimmed) {
+            flush_paragraph(&mut content, &mut paragraph);
+            content.push(json!({
+                "type": "heading",
+                "attrs": { "level": level },
+                "content": markdown_inline_to_adf(title)
+            }));
+            continue;
+        }
+
+        let mut list_items = Vec::new();
+        if let Some(item) = parse_unordered_list_item(trimmed) {
+            flush_paragraph(&mut content, &mut paragraph);
+            list_items.push(item.to_string());
+            while let Some(next) = lines.peek() {
+                if let Some(item) = parse_unordered_list_item(next.trim()) {
+                    list_items.push(item.to_string());
+                    lines.next();
+                } else {
+                    break;
+                }
+            }
+            content.push(json!({
+                "type": "bulletList",
+                "content": list_items.into_iter().map(|item| json!({
+                    "type": "listItem",
+                    "content": [{ "type": "paragraph", "content": markdown_inline_to_adf(&item) }]
+                })).collect::<Vec<_>>()
+            }));
+            continue;
+        }
+        if let Some(item) = parse_ordered_list_item(trimmed) {
+            flush_paragraph(&mut content, &mut paragraph);
+            list_items.push(item.to_string());
+            while let Some(next) = lines.peek() {
+                if let Some(item) = parse_ordered_list_item(next.trim()) {
+                    list_items.push(item.to_string());
+                    lines.next();
+                } else {
+                    break;
+                }
+            }
+            content.push(json!({
+                "type": "orderedList",
+                "content": list_items.into_iter().map(|item| json!({
+                    "type": "listItem",
+                    "content": [{ "type": "paragraph", "content": markdown_inline_to_adf(&item) }]
+                })).collect::<Vec<_>>()
+            }));
+            continue;
+        }
+        paragraph.push(trimmed.to_string());
+    }
+
+    flush_paragraph(&mut content, &mut paragraph);
+    json!({
+        "type": "doc",
+        "version": 1,
+        "content": content
+    })
+}
+
+fn markdown_inline_to_adf(input: &str) -> Vec<Value> {
+    let mut nodes = Vec::new();
+    let mut chars = input.chars().peekable();
+    let mut plain = String::new();
+
+    let flush_plain = |nodes: &mut Vec<Value>, plain: &mut String| {
+        if !plain.is_empty() {
+            nodes.push(json!({ "type": "text", "text": plain.clone() }));
+            plain.clear();
+        }
+    };
+
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            flush_plain(&mut nodes, &mut plain);
+            let mut code = String::new();
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next == '`' {
+                    break;
+                }
+                code.push(next);
+            }
+            nodes.push(json!({
+                "type": "text",
+                "text": code,
+                "marks": [{ "type": "code" }]
+            }));
+            continue;
+        }
+        if ch == '*' && chars.peek() == Some(&'*') {
+            chars.next();
+            flush_plain(&mut nodes, &mut plain);
+            let mut bold = String::new();
+            while let Some(next) = chars.next() {
+                if next == '*' && chars.peek() == Some(&'*') {
+                    chars.next();
+                    break;
+                }
+                bold.push(next);
+            }
+            nodes.push(json!({
+                "type": "text",
+                "text": bold,
+                "marks": [{ "type": "strong" }]
+            }));
+            continue;
+        }
+        if ch == '*' {
+            flush_plain(&mut nodes, &mut plain);
+            let mut em = String::new();
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next == '*' {
+                    break;
+                }
+                em.push(next);
+            }
+            nodes.push(json!({
+                "type": "text",
+                "text": em,
+                "marks": [{ "type": "em" }]
+            }));
+            continue;
+        }
+        if ch == '[' {
+            let mut label = String::new();
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next == ']' {
+                    break;
+                }
+                label.push(next);
+            }
+            if chars.peek() == Some(&'(') {
+                chars.next();
+                let mut href = String::new();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == ')' {
+                        break;
+                    }
+                    href.push(next);
+                }
+                flush_plain(&mut nodes, &mut plain);
+                nodes.push(json!({
+                    "type": "text",
+                    "text": label,
+                    "marks": [{ "type": "link", "attrs": { "href": href } }]
+                }));
+                continue;
+            }
+            plain.push('[');
+            plain.push_str(&label);
+            continue;
+        }
+        plain.push(ch);
+    }
+    flush_plain(&mut nodes, &mut plain);
+    if nodes.is_empty() {
+        vec![json!({ "type": "text", "text": "" })]
+    } else {
+        nodes
+    }
+}
+
 fn parse_markdown_heading(line: &str) -> Option<(usize, &str)> {
     let hashes = line.chars().take_while(|&ch| ch == '#').count();
     if !(1..=6).contains(&hashes) {
@@ -1202,6 +1474,113 @@ fn replace_inline_delimited(input: &str, delimiter: &str, open: &str, close: &st
         out.push_str(delimiter);
     }
     out
+}
+
+fn adf_to_markdown(adf: &Value) -> String {
+    let mut out = String::new();
+    if let Some(content) = adf.get("content").and_then(Value::as_array) {
+        for (index, node) in content.iter().enumerate() {
+            if index > 0 && !out.ends_with("\n\n") {
+                out.push_str("\n\n");
+            }
+            render_adf_block(node, &mut out);
+        }
+    }
+    collapse_markdown_whitespace(&out)
+}
+
+fn render_adf_block(node: &Value, out: &mut String) {
+    match node.get("type").and_then(Value::as_str).unwrap_or_default() {
+        "paragraph" => render_adf_inline_nodes(node.get("content"), out),
+        "heading" => {
+            let level = node
+                .get("attrs")
+                .and_then(|attrs| attrs.get("level"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 6) as usize;
+            out.push_str(&"#".repeat(level));
+            out.push(' ');
+            render_adf_inline_nodes(node.get("content"), out);
+        }
+        "bulletList" => {
+            if let Some(items) = node.get("content").and_then(Value::as_array) {
+                for (idx, item) in items.iter().enumerate() {
+                    if idx > 0 {
+                        out.push('\n');
+                    }
+                    out.push_str("- ");
+                    render_adf_list_item(item, out);
+                }
+            }
+        }
+        "orderedList" => {
+            if let Some(items) = node.get("content").and_then(Value::as_array) {
+                for (idx, item) in items.iter().enumerate() {
+                    if idx > 0 {
+                        out.push('\n');
+                    }
+                    out.push_str(&(idx + 1).to_string());
+                    out.push_str(". ");
+                    render_adf_list_item(item, out);
+                }
+            }
+        }
+        "codeBlock" => {
+            out.push_str("```");
+            out.push('\n');
+            render_adf_inline_nodes(node.get("content"), out);
+            out.push('\n');
+            out.push_str("```");
+        }
+        _ => render_adf_inline_nodes(node.get("content"), out),
+    }
+}
+
+fn render_adf_list_item(node: &Value, out: &mut String) {
+    if let Some(content) = node.get("content").and_then(Value::as_array) {
+        for block in content {
+            render_adf_inline_nodes(block.get("content"), out);
+        }
+    }
+}
+
+fn render_adf_inline_nodes(content: Option<&Value>, out: &mut String) {
+    if let Some(nodes) = content.and_then(Value::as_array) {
+        for node in nodes {
+            match node.get("type").and_then(Value::as_str).unwrap_or_default() {
+                "text" => {
+                    let mut text = node
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if let Some(marks) = node.get("marks").and_then(Value::as_array) {
+                        for mark in marks {
+                            match mark.get("type").and_then(Value::as_str).unwrap_or_default() {
+                                "strong" => text = format!("**{text}**"),
+                                "em" => text = format!("*{text}*"),
+                                "code" => text = format!("`{text}`"),
+                                "link" => {
+                                    if let Some(href) = mark
+                                        .get("attrs")
+                                        .and_then(|attrs| attrs.get("href"))
+                                        .and_then(Value::as_str)
+                                    {
+                                        text = format!("[{text}]({href})");
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    out.push_str(&text);
+                }
+                "hardBreak" => out.push('\n'),
+                _ => render_adf_inline_nodes(node.get("content"), out),
+            }
+        }
+    }
 }
 
 fn confluence_storage_to_markdown(storage: &str) -> String {
@@ -1800,7 +2179,7 @@ impl ConfluenceClient {
             },
             body: ConfluenceCreateBodyPayload {
                 storage: ConfluenceContentBody {
-                    value: &storage_content,
+                    value: Value::String(storage_content),
                     representation: "storage",
                 },
             },
@@ -1876,7 +2255,7 @@ impl ConfluenceClient {
             },
             body: ConfluenceCreateBodyPayload {
                 storage: ConfluenceContentBody {
-                    value: &content,
+                    value: Value::String(content),
                     representation: "storage",
                 },
             },
@@ -1945,7 +2324,12 @@ impl ConfluenceClient {
     }
 
     async fn get_page_v2(&self, page_id: &str) -> Result<KbPageContent> {
-        let path = format!("pages/{page_id}?body-format=storage&include-labels=true");
+        let body_format = if matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            "atlas_doc_format"
+        } else {
+            "storage"
+        };
+        let path = format!("pages/{page_id}?body-format={body_format}&include-labels=true");
         let page: ConfluencePage = self.get_json_from_api(&self.page_api_path, &path).await?;
         let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none()
@@ -1957,8 +2341,7 @@ impl ConfluenceClient {
             summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
 
-        let storage_content = page.body.as_ref().and_then(body_value).unwrap_or_default();
-        let content = confluence_storage_to_markdown(&storage_content);
+        let content = page_content_markdown(&page);
         let content_type = "markdown".to_string();
         let ancestors = match self.get_page_ancestor_chain_v2(page_id).await {
             Ok(ancestors) => ancestors,
@@ -1977,18 +2360,18 @@ impl ConfluenceClient {
     }
 
     async fn create_page_v2(&self, params: CreatePageParams) -> Result<KbPage> {
-        let storage_content =
-            normalize_confluence_write_content(&params.content, params.content_type.as_deref())?;
+        let body = normalize_confluence_v2_write_content(
+            self.flavor,
+            &params.content,
+            params.content_type.as_deref(),
+        )?;
         let space = self.resolve_space_by_key(&params.space_key).await?;
         let payload = ConfluenceV2PagePayload {
             space_id: &space.id,
             status: "current",
             title: &params.title,
             parent_id: params.parent_id.as_deref(),
-            body: ConfluenceContentBody {
-                value: &storage_content,
-                representation: "storage",
-            },
+            body,
         };
 
         let page: ConfluencePage = self
@@ -2006,23 +2389,24 @@ impl ConfluenceClient {
     }
 
     async fn update_page_v2(&self, params: UpdatePageParams) -> Result<KbPage> {
+        let body_format = if matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            "atlas_doc_format"
+        } else {
+            "storage"
+        };
         let current_path = if params.labels.is_some() {
             format!(
-                "pages/{}?body-format=storage&include-labels=true",
-                params.page_id
+                "pages/{}?body-format={body_format}&include-labels=true",
+                params.page_id,
             )
         } else {
-            format!("pages/{}?body-format=storage", params.page_id)
+            format!("pages/{}?body-format={body_format}", params.page_id)
         };
         let current: ConfluencePage = self
             .get_json_from_api(&self.page_api_path, &current_path)
             .await?;
         let current_title = current.title.clone();
-        let current_content = current
-            .body
-            .as_ref()
-            .and_then(body_value)
-            .unwrap_or_default();
+        let current_content = page_content_markdown(&current);
         let current_version = current
             .version
             .as_ref()
@@ -2048,10 +2432,16 @@ impl ConfluenceClient {
 
         let title = params.title.as_deref().unwrap_or(&current_title);
         let content = match params.content.as_deref() {
-            Some(updated) => {
-                normalize_confluence_write_content(updated, params.content_type.as_deref())?
-            }
-            None => current_content,
+            Some(updated) => normalize_confluence_v2_write_content(
+                self.flavor,
+                updated,
+                params.content_type.as_deref(),
+            )?,
+            None => normalize_confluence_v2_write_content(
+                self.flavor,
+                &current_content,
+                Some("markdown"),
+            )?,
         };
         let space_id = current
             .space_id
@@ -2070,10 +2460,7 @@ impl ConfluenceClient {
             title,
             space_id,
             parent_id,
-            body: ConfluenceContentBody {
-                value: &content,
-                representation: "storage",
-            },
+            body: content,
             version: ConfluenceUpdateVersion {
                 number: current_version.saturating_add(1),
             },
@@ -3142,6 +3529,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_page_cloud_v2_reads_adf_as_markdown() {
+        let server = MockServer::start();
+        let _resource_mock = server.mock(|when, then| {
+            when.method(GET).path("/oauth/token/accessible-resources");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"[{ "id": "cloud-123", "url": "https://team.atlassian.net" }]"#);
+        });
+        let _space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "results": [{ "id": "123", "key": "ENG", "name": "Engineering" }], "_links": {} }"#);
+        });
+        let page_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/pages/42")
+                .query_param("body-format", "atlas_doc_format")
+                .query_param("include-labels", "true");
+            then.status(200).header("content-type", "application/json").body(r#"{
+                "id": "42",
+                "title": "ADR-001",
+                "spaceId": "123",
+                "version": { "number": 7 },
+                "body": {
+                    "atlas_doc_format": {
+                        "value": {
+                            "type": "doc",
+                            "version": 1,
+                            "content": [
+                                { "type": "heading", "attrs": { "level": 2 }, "content": [{ "type": "text", "text": "ADR" }] },
+                                { "type": "paragraph", "content": [{ "type": "text", "text": "Hello " }, { "type": "text", "text": "world", "marks": [{ "type": "strong" }] }] }
+                            ]
+                        }
+                    }
+                },
+                "labels": { "results": [{ "label": "adr" }] }
+            }"#);
+        });
+        let ancestors_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/pages/42/ancestors")
+                .query_param("limit", "100");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "results": [], "_links": {} }"#);
+        });
+
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud)
+        .with_cloud_api_base_url(server.base_url());
+        let page = client.get_page("42").await.unwrap();
+
+        page_mock.assert();
+        ancestors_mock.assert();
+        assert_eq!(page.content, "## ADR\n\nHello **world**");
+        assert_eq!(page.labels, vec!["adr"]);
+    }
+
+    #[tokio::test]
     async fn get_page_v2_propagates_non_fallback_ancestor_errors() {
         let server = MockServer::start();
         let space_mock = server.mock(|when, then| {
@@ -3385,6 +3838,85 @@ mod tests {
         assert_eq!(page.id, "43");
         assert_eq!(page.space_key.as_deref(), Some("ENG"));
         assert_eq!(page.version, Some(1));
+    }
+
+    #[tokio::test]
+    async fn create_page_cloud_v2_writes_adf_payload() {
+        let server = MockServer::start();
+        let _resource_mock = server.mock(|when, then| {
+            when.method(GET).path("/oauth/token/accessible-resources");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"[{ "id": "cloud-123", "url": "https://team.atlassian.net" }]"#);
+        });
+        let _space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "results": [{ "id": "123", "key": "ENG", "name": "Engineering" }], "_links": {} }"#);
+        });
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/pages")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&json!({
+                    "spaceId": "123",
+                    "status": "current",
+                    "title": "ADR-002",
+                    "body": {
+                        "representation": "atlas_doc_format",
+                        "value": {
+                            "type": "doc",
+                            "version": 1,
+                            "content": [
+                                {
+                                    "type": "heading",
+                                    "attrs": { "level": 1 },
+                                    "content": [{ "type": "text", "text": "Decision" }]
+                                },
+                                {
+                                    "type": "paragraph",
+                                    "content": [
+                                        { "type": "text", "text": "Hello " },
+                                        { "type": "text", "text": "world", "marks": [{ "type": "strong" }] }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                }));
+            then.status(200).header("content-type", "application/json").body(r#"{
+                "id": "43",
+                "title": "ADR-002",
+                "spaceId": "123",
+                "version": { "number": 1 }
+            }"#);
+        });
+
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud)
+        .with_cloud_api_base_url(server.base_url());
+        let page = client
+            .create_page(CreatePageParams {
+                space_key: "ENG".into(),
+                title: "ADR-002".into(),
+                content: "# Decision\n\nHello **world**".into(),
+                content_type: Some("markdown".into()),
+                parent_id: None,
+                labels: vec![],
+            })
+            .await
+            .unwrap();
+
+        create_mock.assert();
+        assert_eq!(page.id, "43");
     }
 
     #[tokio::test]
@@ -3728,6 +4260,39 @@ mod tests {
         assert_eq!(
             storage,
             "<h2>ADR</h2><p>Hello <strong>world</strong> and <a href=\"https://example.com\">link</a></p><ul><li>One</li><li>Two</li></ul>"
+        );
+    }
+
+    #[test]
+    fn adf_and_markdown_converters_cover_basic_formatting() {
+        let adf = markdown_to_adf("## ADR\n\nHello **world** and [link](https://example.com)");
+        assert_eq!(adf["type"], "doc");
+        assert_eq!(adf["content"][0]["type"], "heading");
+        assert_eq!(adf["content"][1]["type"], "paragraph");
+
+        let markdown = adf_to_markdown(&json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "heading",
+                    "attrs": { "level": 2 },
+                    "content": [{ "type": "text", "text": "ADR" }]
+                },
+                {
+                    "type": "paragraph",
+                    "content": [
+                        { "type": "text", "text": "Hello " },
+                        { "type": "text", "text": "world", "marks": [{ "type": "strong" }] },
+                        { "type": "text", "text": " and " },
+                        { "type": "text", "text": "link", "marks": [{ "type": "link", "attrs": { "href": "https://example.com" } }] }
+                    ]
+                }
+            ]
+        }));
+        assert_eq!(
+            markdown,
+            "## ADR\n\nHello **world** and [link](https://example.com)"
         );
     }
 
