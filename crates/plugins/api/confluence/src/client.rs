@@ -212,6 +212,27 @@ impl ConfluenceClient {
         format!("{}{}/{}", self.base_url, api_path, path)
     }
 
+    fn api_request_url(&self, api_path: &str, path: &str) -> String {
+        if matches!(self.flavor, ConfluenceFlavor::Cloud)
+            && let Some(url) = self.cloud_api_url(&format!(
+                "{}/{}",
+                api_path.trim_matches('/'),
+                path.trim_start_matches('/')
+            ))
+        {
+            return url;
+        }
+        self.api_url(api_path, path)
+    }
+
+    fn legacy_rest_api_url(&self, path: &str) -> String {
+        let api_path = match self.flavor {
+            ConfluenceFlavor::Cloud => "/wiki/rest/api",
+            ConfluenceFlavor::SelfHosted => DEFAULT_CONFLUENCE_API_PATH,
+        };
+        self.api_url(api_path, path)
+    }
+
     #[cfg(test)]
     fn space_api_url(&self, path: &str) -> String {
         self.api_url(&self.space_api_path, path)
@@ -234,7 +255,7 @@ impl ConfluenceClient {
     {
         let request = self
             .http
-            .get(self.api_url(api_path, path))
+            .get(self.api_request_url(api_path, path))
             .header(reqwest::header::ACCEPT, "application/json");
         self.send_json(request).await
     }
@@ -246,7 +267,7 @@ impl ConfluenceClient {
     {
         let request = self
             .http
-            .post(self.api_url(api_path, path))
+            .post(self.api_request_url(api_path, path))
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
@@ -260,11 +281,43 @@ impl ConfluenceClient {
     {
         let request = self
             .http
-            .put(self.api_url(api_path, path))
+            .put(self.api_request_url(api_path, path))
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
         self.send_json(request).await
+    }
+
+    async fn get_json_from_legacy_api<T>(&self, path: &str) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let request = self
+            .http
+            .get(self.legacy_rest_api_url(path))
+            .header(reqwest::header::ACCEPT, "application/json");
+        self.send_json(request).await
+    }
+
+    async fn post_empty_json_to_legacy_api<B>(&self, path: &str, body: &B) -> Result<()>
+    where
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .post(self.legacy_rest_api_url(path))
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_empty(request).await
+    }
+
+    async fn delete_empty_from_legacy_api(&self, path: &str) -> Result<()> {
+        let request = self
+            .http
+            .delete(self.legacy_rest_api_url(path))
+            .header(reqwest::header::ACCEPT, "application/json");
+        self.send_empty(request).await
     }
 
     pub async fn post_json<T, B>(&self, path: &str, body: &B) -> Result<T>
@@ -1500,7 +1553,7 @@ impl ConfluenceClient {
                 name: label.as_str(),
             })
             .collect::<Vec<_>>();
-        self.post_empty_json(&format!("content/{page_id}/label"), &payload)
+        self.post_empty_json_to_legacy_api(&format!("content/{page_id}/label"), &payload)
             .await
     }
 
@@ -1515,7 +1568,7 @@ impl ConfluenceClient {
 
         for label in current.iter().filter(|label| !desired.contains(*label)) {
             let path = format!("content/{page_id}/label?name={}", encode_query_value(label));
-            self.delete_empty(&path).await?;
+            self.delete_empty_from_legacy_api(&path).await?;
         }
 
         let to_add = desired
@@ -1564,7 +1617,8 @@ impl ConfluenceClient {
             format!("content?{}", query.join("&"))
         };
 
-        let response: ConfluenceListResponse<ConfluencePage> = self.get_json(&path).await?;
+        let response: ConfluenceListResponse<ConfluencePage> =
+            self.get_json_from_legacy_api(&path).await?;
         let pagination = map_pagination(&response, Some(limit));
         let mut items = response
             .results
@@ -2040,7 +2094,8 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             )
         };
 
-        let response: ConfluenceListResponse<ConfluencePage> = self.get_json(&path).await?;
+        let response: ConfluenceListResponse<ConfluencePage> =
+            self.get_json_from_legacy_api(&path).await?;
         let pagination = map_pagination(&response, Some(limit));
         let items = response
             .results
@@ -2116,6 +2171,31 @@ mod tests {
         assert_eq!(
             client.cloud_api_url("/wiki/api/v2/spaces").as_deref(),
             Some("https://api.atlassian.com/ex/confluence/abc123/wiki/api/v2/spaces")
+        );
+    }
+
+    #[tokio::test]
+    async fn api_request_url_uses_atlassian_cloud_root_for_cloud_v2_calls() {
+        let client =
+            ConfluenceClient::new("https://example.atlassian.net", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud)
+                .with_cloud_id("abc123");
+
+        assert_eq!(
+            client.api_request_url("/wiki/api/v2", "spaces/42/pages"),
+            "https://api.atlassian.com/ex/confluence/abc123/wiki/api/v2/spaces/42/pages"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_rest_api_url_uses_wiki_rest_api_for_cloud() {
+        let client =
+            ConfluenceClient::new("https://example.atlassian.net", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+
+        assert_eq!(
+            client.legacy_rest_api_url("content/42/label"),
+            "https://example.atlassian.net/wiki/rest/api/content/42/label"
         );
     }
 
@@ -2327,6 +2407,28 @@ mod tests {
 
         mock.assert();
         assert!(response.ok);
+    }
+
+    #[tokio::test]
+    async fn add_labels_uses_cloud_legacy_rest_api() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/wiki/rest/api/content/42/label")
+                .header("authorization", "Bearer secret-token");
+            then.status(204);
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+
+        client
+            .add_labels("42", &[String::from("adr")])
+            .await
+            .unwrap();
+
+        mock.assert();
     }
 
     #[tokio::test]
@@ -3526,6 +3628,34 @@ mod tests {
         assert_eq!(result.items[0].id, "99");
         assert_eq!(result.items[0].title, "Architecture Overview");
         assert_eq!(result.items[0].space_key.as_deref(), Some("ENG"));
+    }
+
+    #[tokio::test]
+    async fn search_uses_cloud_legacy_rest_api_path() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/wiki/rest/api/content/search");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":10,"size":0,"_links":{}}"#);
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+        let result = client
+            .search(SearchKbParams {
+                query: "architecture".into(),
+                space_key: None,
+                cursor: None,
+                limit: Some(10),
+                raw_query: false,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert!(result.items.is_empty());
     }
 
     #[tokio::test]
