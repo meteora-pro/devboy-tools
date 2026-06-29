@@ -16,6 +16,9 @@ use serde_json::{Value, json};
 
 use crate::DEFAULT_CONFLUENCE_API_PATH;
 
+const ATLASSIAN_OAUTH_AUTHORIZE_URL: &str = "https://auth.atlassian.com/authorize";
+const ATLASSIAN_OAUTH_TOKEN_URL: &str = "https://auth.atlassian.com/oauth/token";
+
 #[derive(Clone, Copy)]
 pub enum ConfluenceFlavor {
     SelfHosted,
@@ -45,6 +48,19 @@ pub enum ConfluenceAuth {
         username: String,
         password: SecretString,
     },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConfluenceOAuthTokens {
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub token_type: Option<String>,
 }
 
 impl fmt::Debug for ConfluenceAuth {
@@ -115,6 +131,96 @@ impl fmt::Debug for ConfluenceClient {
 }
 
 impl ConfluenceClient {
+    pub fn oauth_authorize_url(
+        client_id: &str,
+        redirect_uri: &str,
+        state: &str,
+        scopes: &[&str],
+    ) -> String {
+        let scope = if scopes.is_empty() {
+            "offline_access read:confluence-content.all write:confluence-content read:confluence-space.summary".to_string()
+        } else {
+            scopes.join(" ")
+        };
+        format!(
+            "{ATLASSIAN_OAUTH_AUTHORIZE_URL}?audience=api.atlassian.com&client_id={}&scope={}&redirect_uri={}&state={}&response_type=code&prompt=consent",
+            encode_query_value(client_id),
+            encode_query_value(&scope),
+            encode_query_value(redirect_uri),
+            encode_query_value(state),
+        )
+    }
+
+    pub async fn exchange_oauth_code(
+        client_id: &str,
+        client_secret: &str,
+        redirect_uri: &str,
+        code: &str,
+    ) -> Result<ConfluenceOAuthTokens> {
+        let http = reqwest::Client::new();
+        let request = http
+            .post(ATLASSIAN_OAUTH_TOKEN_URL)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(&json!({
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri
+            }));
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::from_status(
+                status.as_u16(),
+                String::from_utf8_lossy(&body).into_owned(),
+            ));
+        }
+        serde_json::from_slice::<ConfluenceOAuthTokens>(&body)
+            .map_err(|e| Error::InvalidData(format!("invalid Atlassian OAuth response: {e}")))
+    }
+
+    pub async fn refresh_oauth_token(
+        client_id: &str,
+        client_secret: &str,
+        refresh_token: &str,
+    ) -> Result<ConfluenceOAuthTokens> {
+        let http = reqwest::Client::new();
+        let request = http
+            .post(ATLASSIAN_OAUTH_TOKEN_URL)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(&json!({
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token
+            }));
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::from_status(
+                status.as_u16(),
+                String::from_utf8_lossy(&body).into_owned(),
+            ));
+        }
+        serde_json::from_slice::<ConfluenceOAuthTokens>(&body)
+            .map_err(|e| Error::InvalidData(format!("invalid Atlassian OAuth response: {e}")))
+    }
+
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
         let base = normalize_base_url(base_url.into());
         let flavor = ConfluenceFlavor::default();
@@ -2679,6 +2785,22 @@ mod tests {
                 .unwrap(),
             "https://api.atlassian.com/ex/confluence/abc123/wiki/api/v2/spaces/42/pages"
         );
+    }
+
+    #[test]
+    fn oauth_authorize_url_contains_required_atlassian_parameters() {
+        let url = ConfluenceClient::oauth_authorize_url(
+            "client-123",
+            "http://localhost:8787/callback",
+            "state-1",
+            &["offline_access", "read:confluence-content.all"],
+        );
+        assert!(url.contains("https://auth.atlassian.com/authorize?"));
+        assert!(url.contains("audience=api.atlassian.com"));
+        assert!(url.contains("client_id=client-123"));
+        assert!(url.contains("state=state-1"));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("prompt=consent"));
     }
 
     #[tokio::test]

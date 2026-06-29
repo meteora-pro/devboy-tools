@@ -11,7 +11,7 @@ mod client;
 mod enricher;
 pub mod liveness;
 
-pub use client::{ConfluenceAuth, ConfluenceClient, ConfluenceFlavor};
+pub use client::{ConfluenceAuth, ConfluenceClient, ConfluenceFlavor, ConfluenceOAuthTokens};
 pub use enricher::ConfluenceSchemaEnricher;
 
 /// Default REST API base path for Confluence Server / Data Center.
