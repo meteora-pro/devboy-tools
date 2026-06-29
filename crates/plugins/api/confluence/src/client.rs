@@ -79,6 +79,7 @@ impl ConfluenceAuth {
 pub struct ConfluenceClient {
     base_url: String,
     flavor: ConfluenceFlavor,
+    cloud_id: Option<String>,
     /// Original Confluence instance URL for generating browse links
     /// (`_links.webui`, `/pages/<id>`). When the client is configured
     /// for proxy mode, `base_url` points at the proxy host so API
@@ -99,6 +100,7 @@ impl fmt::Debug for ConfluenceClient {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
             .field("flavor", &self.flavor)
+            .field("cloud_id", &self.cloud_id)
             .field("instance_url", &self.instance_url)
             .field("api_path", &self.api_path)
             .field("page_api_path", &self.page_api_path)
@@ -117,6 +119,7 @@ impl ConfluenceClient {
             instance_url: base.clone(),
             base_url: base,
             flavor,
+            cloud_id: None,
             api_path: api_path_for_flavor(flavor.clone(), None),
             page_api_path: api_path_for_flavor(flavor.clone(), None),
             space_api_path: api_path_for_flavor(flavor, None),
@@ -158,6 +161,11 @@ impl ConfluenceClient {
         self
     }
 
+    pub fn with_cloud_id(mut self, cloud_id: impl Into<String>) -> Self {
+        self.cloud_id = Some(cloud_id.into());
+        self
+    }
+
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
         self.page_api_path = api_path_for_flavor(self.flavor, api_version);
         self.space_api_path = api_path_for_flavor(self.flavor, api_version);
@@ -184,6 +192,19 @@ impl ConfluenceClient {
 
     pub fn rest_api_url(&self, path: &str) -> String {
         self.api_url(&self.api_path, path)
+    }
+
+    pub fn cloud_api_root_url(&self) -> Option<String> {
+        self.cloud_id
+            .as_ref()
+            .map(|cloud_id| format!("https://api.atlassian.com/ex/confluence/{cloud_id}"))
+    }
+
+    pub fn cloud_api_url(&self, path: &str) -> Option<String> {
+        self.cloud_api_root_url().map(|root| {
+            let path = path.trim_start_matches('/');
+            format!("{root}/{path}")
+        })
     }
 
     fn api_url(&self, api_path: &str, path: &str) -> String {
@@ -2077,6 +2098,22 @@ mod tests {
         assert_eq!(
             client.rest_api_url("spaces"),
             "https://wiki.example.com/wiki/api/v2/spaces"
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_api_root_url_uses_atlassian_cloud_base() {
+        let client = ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
+            .with_flavor(ConfluenceFlavor::Cloud)
+            .with_cloud_id("abc123");
+
+        assert_eq!(
+            client.cloud_api_root_url().as_deref(),
+            Some("https://api.atlassian.com/ex/confluence/abc123")
+        );
+        assert_eq!(
+            client.cloud_api_url("/wiki/api/v2/spaces").as_deref(),
+            Some("https://api.atlassian.com/ex/confluence/abc123/wiki/api/v2/spaces")
         );
     }
 
