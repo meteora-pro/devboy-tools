@@ -182,9 +182,9 @@ pub fn create_knowledge_base_provider(
                 devboy_confluence::ConfluenceClient::new(base_url, confluence_auth(auth))
                     .with_api_version(api_version.as_deref())
             };
-            if matches!(flavor, Some(devboy_confluence::ConfluenceFlavor::Cloud))
-                || cloud_id.is_some()
-            {
+            if let Some(flavor) = flavor {
+                client = client.with_flavor(*flavor);
+            } else if cloud_id.is_some() {
                 client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
             }
             if let Some(cloud_id) = cloud_id.as_deref() {
@@ -552,6 +552,41 @@ mod tests {
         };
 
         let provider = create_knowledge_base_provider(&config, None).unwrap();
+        let _ = provider.get_spaces().await.unwrap();
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_confluence_knowledge_base_provider_explicit_self_hosted_overrides_detection() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let config = ProviderConfig::Confluence {
+            base_url: "https://team.atlassian.net".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            flavor: Some(devboy_confluence::ConfluenceFlavor::SelfHosted),
+            cloud_id: None,
+            api_version: None,
+            extra: HashMap::new(),
+        };
+
+        let proxy = ProxyConfig {
+            url: server.base_url(),
+            headers: HashMap::new(),
+        };
+        let provider = create_knowledge_base_provider(&config, Some(&proxy)).unwrap();
         let _ = provider.get_spaces().await.unwrap();
 
         mock.assert();

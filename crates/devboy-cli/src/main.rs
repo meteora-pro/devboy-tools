@@ -4335,11 +4335,16 @@ fn add_context_providers_from_env(
             };
             let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
-            if matches!(
-                confluence.flavor,
-                Some(devboy_core::ConfluenceFlavor::Cloud)
-            ) || confluence.cloud_id.is_some()
-            {
+            if let Some(flavor) = confluence.flavor {
+                client = client.with_flavor(match flavor {
+                    devboy_core::ConfluenceFlavor::SelfHosted => {
+                        devboy_confluence::ConfluenceFlavor::SelfHosted
+                    }
+                    devboy_core::ConfluenceFlavor::Cloud => {
+                        devboy_confluence::ConfluenceFlavor::Cloud
+                    }
+                });
+            } else if confluence.cloud_id.is_some() {
                 client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
             }
             if let Some(cloud_id) = confluence.cloud_id.as_deref() {
@@ -4597,11 +4602,16 @@ fn add_context_providers(
             };
             let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
-            if matches!(
-                confluence.flavor,
-                Some(devboy_core::ConfluenceFlavor::Cloud)
-            ) || confluence.cloud_id.is_some()
-            {
+            if let Some(flavor) = confluence.flavor {
+                client = client.with_flavor(match flavor {
+                    devboy_core::ConfluenceFlavor::SelfHosted => {
+                        devboy_confluence::ConfluenceFlavor::SelfHosted
+                    }
+                    devboy_core::ConfluenceFlavor::Cloud => {
+                        devboy_confluence::ConfluenceFlavor::Cloud
+                    }
+                });
+            } else if confluence.cloud_id.is_some() {
                 client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
             }
             if let Some(cloud_id) = confluence.cloud_id.as_deref() {

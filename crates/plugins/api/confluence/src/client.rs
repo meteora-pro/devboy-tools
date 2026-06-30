@@ -40,6 +40,14 @@ impl Default for ConfluenceFlavor {
     }
 }
 
+fn detect_flavor(url: &str) -> ConfluenceFlavor {
+    if url.contains(".atlassian.net") {
+        ConfluenceFlavor::Cloud
+    } else {
+        ConfluenceFlavor::SelfHosted
+    }
+}
+
 #[derive(Clone)]
 pub enum ConfluenceAuth {
     None,
@@ -223,7 +231,7 @@ impl ConfluenceClient {
 
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
         let base = normalize_base_url(base_url.into());
-        let flavor = ConfluenceFlavor::default();
+        let flavor = detect_flavor(&base);
         Self {
             instance_url: base.clone(),
             base_url: base,
@@ -2739,6 +2747,18 @@ mod tests {
             ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("token"));
 
         assert!(matches!(client.flavor(), ConfluenceFlavor::SelfHosted));
+    }
+
+    #[tokio::test]
+    async fn new_auto_detects_cloud_flavor_for_atlassian_net() {
+        let client =
+            ConfluenceClient::new("https://team.atlassian.net", ConfluenceAuth::bearer("token"));
+
+        assert!(matches!(client.flavor(), ConfluenceFlavor::Cloud));
+        assert_eq!(
+            client.rest_api_url("spaces"),
+            "https://team.atlassian.net/wiki/api/v2/spaces"
+        );
     }
 
     #[tokio::test]
