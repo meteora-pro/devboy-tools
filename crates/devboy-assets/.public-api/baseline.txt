@@ -133,7 +133,7 @@ pub enum devboy_assets::error::AssetError
 pub devboy_assets::error::AssetError::CacheDir(alloc::string::String)
 pub devboy_assets::error::AssetError::Config(alloc::string::String)
 pub devboy_assets::error::AssetError::Core(devboy_core::error::Error)
-pub devboy_assets::error::AssetError::Io(std::io::error::Error)
+pub devboy_assets::error::AssetError::Io(core::io::error::Error)
 pub devboy_assets::error::AssetError::NotFound(alloc::string::String)
 pub devboy_assets::error::AssetError::Poisoned(alloc::string::String)
 pub devboy_assets::error::AssetError::Serialization(serde_json::error::Error)
@@ -142,12 +142,12 @@ pub fn devboy_assets::error::AssetError::cache_dir(msg: impl core::convert::Into
 pub fn devboy_assets::error::AssetError::config(msg: impl core::convert::Into<alloc::string::String>) -> Self
 pub fn devboy_assets::error::AssetError::not_found(id: impl core::convert::Into<alloc::string::String>) -> Self
 pub fn devboy_assets::error::AssetError::poisoned(msg: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<core::io::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: core::io::error::Error) -> Self
 impl core::convert::From<devboy_core::error::Error> for devboy_assets::error::AssetError
 pub fn devboy_assets::error::AssetError::from(source: devboy_core::error::Error) -> Self
 impl core::convert::From<serde_json::error::Error> for devboy_assets::error::AssetError
 pub fn devboy_assets::error::AssetError::from(source: serde_json::error::Error) -> Self
-impl core::convert::From<std::io::error::Error> for devboy_assets::error::AssetError
-pub fn devboy_assets::error::AssetError::from(source: std::io::error::Error) -> Self
 impl core::error::Error for devboy_assets::error::AssetError
 pub fn devboy_assets::error::AssetError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_assets::error::AssetError
@@ -351,7 +351,7 @@ pub enum devboy_assets::AssetError
 pub devboy_assets::AssetError::CacheDir(alloc::string::String)
 pub devboy_assets::AssetError::Config(alloc::string::String)
 pub devboy_assets::AssetError::Core(devboy_core::error::Error)
-pub devboy_assets::AssetError::Io(std::io::error::Error)
+pub devboy_assets::AssetError::Io(core::io::error::Error)
 pub devboy_assets::AssetError::NotFound(alloc::string::String)
 pub devboy_assets::AssetError::Poisoned(alloc::string::String)
 pub devboy_assets::AssetError::Serialization(serde_json::error::Error)
@@ -360,12 +360,12 @@ pub fn devboy_assets::error::AssetError::cache_dir(msg: impl core::convert::Into
 pub fn devboy_assets::error::AssetError::config(msg: impl core::convert::Into<alloc::string::String>) -> Self
 pub fn devboy_assets::error::AssetError::not_found(id: impl core::convert::Into<alloc::string::String>) -> Self
 pub fn devboy_assets::error::AssetError::poisoned(msg: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::convert::From<core::io::error::Error> for devboy_assets::error::AssetError
+pub fn devboy_assets::error::AssetError::from(source: core::io::error::Error) -> Self
 impl core::convert::From<devboy_core::error::Error> for devboy_assets::error::AssetError
 pub fn devboy_assets::error::AssetError::from(source: devboy_core::error::Error) -> Self
 impl core::convert::From<serde_json::error::Error> for devboy_assets::error::AssetError
 pub fn devboy_assets::error::AssetError::from(source: serde_json::error::Error) -> Self
-impl core::convert::From<std::io::error::Error> for devboy_assets::error::AssetError
-pub fn devboy_assets::error::AssetError::from(source: std::io::error::Error) -> Self
 impl core::error::Error for devboy_assets::error::AssetError
 pub fn devboy_assets::error::AssetError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_assets::error::AssetError

@@ -199,7 +199,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
-      - uses: dtolnay/rust-toolchain@nightly
+      # Pinned nightly: cargo-public-api prints fully-qualified type paths, and
+      # those shift when the toolchain changes (e.g. std::io::Error became a
+      # re-export of core::io::Error), producing spurious baseline drift on a
+      # floating @nightly. Pin a date so baselines stay stable; bump it
+      # deliberately (and regenerate baselines) when needed.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-06-30
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-public-api
         run: cargo install cargo-public-api --locked --version 0.51.0

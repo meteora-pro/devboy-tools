@@ -22,6 +22,8 @@ pub struct devboy_clickup::comment_format::CommentAttributes
 pub devboy_clickup::comment_format::CommentAttributes::bold: bool
 pub devboy_clickup::comment_format::CommentAttributes::code: bool
 pub devboy_clickup::comment_format::CommentAttributes::code_block: core::option::Option<devboy_clickup::comment_format::CodeBlockAttr>
+pub devboy_clickup::comment_format::CommentAttributes::italic: bool
+pub devboy_clickup::comment_format::CommentAttributes::link: core::option::Option<alloc::string::String>
 pub devboy_clickup::comment_format::CommentAttributes::list: core::option::Option<devboy_clickup::comment_format::ListAttr>
 impl core::clone::Clone for devboy_clickup::comment_format::CommentAttributes
 pub fn devboy_clickup::comment_format::CommentAttributes::clone(&self) -> devboy_clickup::comment_format::CommentAttributes

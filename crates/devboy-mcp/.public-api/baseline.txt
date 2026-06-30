@@ -1506,10 +1506,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::transport::Incoming
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::transport::IncomingMessage
 pub struct devboy_mcp::transport::StdioTransport
 impl devboy_mcp::transport::StdioTransport
-pub fn devboy_mcp::transport::StdioTransport::read_message(&mut self) -> std::io::error::Result<core::option::Option<devboy_mcp::transport::IncomingMessage>>
+pub fn devboy_mcp::transport::StdioTransport::read_message(&mut self) -> core::io::error::Result<core::option::Option<devboy_mcp::transport::IncomingMessage>>
 pub fn devboy_mcp::transport::StdioTransport::stdio() -> Self
-pub fn devboy_mcp::transport::StdioTransport::write_notification(&mut self, notification: &devboy_mcp::protocol::JsonRpcNotification) -> std::io::error::Result<()>
-pub fn devboy_mcp::transport::StdioTransport::write_response(&mut self, response: &devboy_mcp::protocol::JsonRpcResponse) -> std::io::error::Result<()>
+pub fn devboy_mcp::transport::StdioTransport::write_notification(&mut self, notification: &devboy_mcp::protocol::JsonRpcNotification) -> core::io::error::Result<()>
+pub fn devboy_mcp::transport::StdioTransport::write_response(&mut self, response: &devboy_mcp::protocol::JsonRpcResponse) -> core::io::error::Result<()>
 impl core::marker::Freeze for devboy_mcp::transport::StdioTransport
 impl core::marker::Send for devboy_mcp::transport::StdioTransport
 impl !core::marker::Sync for devboy_mcp::transport::StdioTransport
