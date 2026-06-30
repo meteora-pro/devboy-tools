@@ -260,12 +260,6 @@ enum Commands {
         limit: u32,
     },
 
-    /// Confluence-specific utilities
-    Confluence {
-        #[command(subcommand)]
-        command: ConfluenceCommands,
-    },
-
     /// Get information about merge requests / pull requests
     Mrs {
         /// Filter by state
@@ -464,6 +458,12 @@ enum ConfigCommands {
 
     /// Show configuration file path
     Path,
+
+    /// Confluence Cloud OAuth setup helpers
+    ConfluenceOauth {
+        #[command(subcommand)]
+        command: ConfluenceOauthCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -537,9 +537,9 @@ enum ContextCommands {
 }
 
 #[derive(Subcommand)]
-enum ConfluenceCommands {
+enum ConfluenceOauthCommands {
     /// Print the Atlassian OAuth 3LO authorization URL
-    OauthUrl {
+    Url {
         /// Optional context name. Defaults to active context, then global config.
         #[arg(long)]
         context: Option<String>,
@@ -548,7 +548,7 @@ enum ConfluenceCommands {
         state: Option<String>,
     },
     /// Exchange an Atlassian OAuth authorization code for tokens and store them
-    OauthExchange {
+    Exchange {
         /// Authorization code returned by Atlassian
         #[arg(long)]
         code: String,
@@ -563,7 +563,7 @@ enum ConfluenceCommands {
         store_client_secret: bool,
     },
     /// Refresh Atlassian OAuth tokens using the stored refresh token
-    OauthRefresh {
+    Refresh {
         /// Optional context name. Defaults to active context, then global config.
         #[arg(long)]
         context: Option<String>,
@@ -1009,7 +1009,7 @@ async fn main() -> Result<()> {
             }
 
             Some(Commands::Config { command }) => {
-                handle_config_command(command)?;
+                handle_config_command(command).await?;
             }
 
             Some(Commands::Context { command }) => {
@@ -1018,10 +1018,6 @@ async fn main() -> Result<()> {
 
             Some(Commands::Issues { state, limit }) => {
                 handle_issues_command(&state, limit).await?;
-            }
-
-            Some(Commands::Confluence { command }) => {
-                handle_confluence_command(command).await?;
             }
 
             Some(Commands::Mrs { state, limit }) => {
@@ -2345,7 +2341,7 @@ fn register_forge_mcp_to_path(server_name: &str, config_path: &std::path::Path) 
 // Config Commands
 // =============================================================================
 
-fn handle_config_command(command: ConfigCommands) -> Result<()> {
+async fn handle_config_command(command: ConfigCommands) -> Result<()> {
     match command {
         ConfigCommands::Set { key, value } => {
             let mut config = Config::load().context("Failed to load config")?;
@@ -2603,6 +2599,10 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!("  devboy config set slack.workspace <workspace>");
                 println!("  devboy config set-secret slack.token <xoxb-token>");
             }
+        }
+
+        ConfigCommands::ConfluenceOauth { command } => {
+            handle_confluence_oauth_command(command).await?;
         }
 
         ConfigCommands::Path => {
@@ -3382,9 +3382,9 @@ fn maybe_store_secret(
     Ok(())
 }
 
-async fn handle_confluence_command(command: ConfluenceCommands) -> Result<()> {
+async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Result<()> {
     match command {
-        ConfluenceCommands::OauthUrl { context, state } => {
+        ConfluenceOauthCommands::Url { context, state } => {
             let (config, _) = load_runtime_config()?;
             let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
             let client_id = target
@@ -3416,7 +3416,7 @@ async fn handle_confluence_command(command: ConfluenceCommands) -> Result<()> {
             );
             println!("{url}");
         }
-        ConfluenceCommands::OauthExchange {
+        ConfluenceOauthCommands::Exchange {
             code,
             context,
             client_secret,
@@ -3475,7 +3475,7 @@ async fn handle_confluence_command(command: ConfluenceCommands) -> Result<()> {
                 println!("Access token expires in {} seconds", expires_in);
             }
         }
-        ConfluenceCommands::OauthRefresh {
+        ConfluenceOauthCommands::Refresh {
             context,
             refresh_token,
             client_secret,

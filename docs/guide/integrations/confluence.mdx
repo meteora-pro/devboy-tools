@@ -107,14 +107,14 @@ devboy config set confluence.redirect_uri http://localhost:8787/callback
 Then:
 
 ```bash
-devboy confluence oauth-url
-devboy confluence oauth-exchange --code <authorization-code>
+devboy config confluence-oauth url
+devboy config confluence-oauth exchange --code <authorization-code>
 ```
 
 To refresh the stored access token later:
 
 ```bash
-devboy confluence oauth-refresh
+devboy config confluence-oauth refresh
 ```
 
 The access token and refresh token are stored in the keychain. The current runtime behavior expects a valid stored access token; token refresh is an explicit CLI action rather than an automatic background refresh.

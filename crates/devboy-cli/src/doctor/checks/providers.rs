@@ -591,8 +591,7 @@ async fn confluence_cloud_connectivity(
         None => discover_confluence_cloud_id(client, base_url, token, cloud_api_base).await?,
     };
 
-    let url =
-        format!("{cloud_api_base}/ex/confluence/{cloud_id}/wiki/api/v2/space?limit=1");
+    let url = format!("{cloud_api_base}/ex/confluence/{cloud_id}/wiki/api/v2/space?limit=1");
     let mut request = client
         .request(Method::GET, &url)
         .header(USER_AGENT, "devboy-tools")
