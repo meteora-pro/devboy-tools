@@ -923,8 +923,7 @@ fn map_status_category_from_name(status_name: &str) -> String {
     let normalized = status_name
         .trim()
         .to_ascii_lowercase()
-        .replace('-', " ")
-        .replace('_', " ");
+        .replace(['-', '_'], " ");
 
     if normalized.contains("backlog") || normalized.contains("icebox") {
         return "backlog".to_string();
@@ -1054,11 +1053,11 @@ fn map_related_issue(task: &YouGileTask, columns: &HashMap<String, String>) -> I
     }
 }
 
-fn build_task_index<'a>(tasks: &'a [YouGileTask]) -> HashMap<String, &'a YouGileTask> {
+fn build_task_index(tasks: &[YouGileTask]) -> HashMap<String, &YouGileTask> {
     tasks.iter().map(|task| (task.id.clone(), task)).collect()
 }
 
-fn build_parent_index<'a>(tasks: &'a [YouGileTask]) -> HashMap<String, &'a YouGileTask> {
+fn build_parent_index(tasks: &[YouGileTask]) -> HashMap<String, &YouGileTask> {
     let mut parents = HashMap::new();
     for task in tasks {
         for child_id in &task.subtask_ids {
