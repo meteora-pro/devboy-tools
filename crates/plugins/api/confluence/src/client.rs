@@ -289,6 +289,10 @@ impl ConfluenceClient {
         self
     }
 
+    pub fn cloud_api_base_url(&self) -> Option<String> {
+        self.cloud_api_base_url.clone()
+    }
+
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
         self.page_api_path = api_path_for_flavor(self.flavor, api_version);
         self.space_api_path = api_path_for_flavor(self.flavor, api_version);
