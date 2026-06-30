@@ -140,6 +140,47 @@ jobs:
             sleep 20
           done
 
+      # Layer 2.5 — secrets plugins. These depend on Layer 1/2 (storage,
+      # vault-crypto) and feed devboy-mcp (kdbx) + devboy-cli (all of them),
+      # so they MUST publish before Layer 4. Order within the layer respects
+      # internal deps: secrets-agent first (vault-crypto only), then the
+      # storage-only plugins, then local-vault (needs secrets-agent).
+      - name: Publish layer 2.5 (secrets plugins)
+        run: |
+          set -euo pipefail
+          publish_if_new() {
+            local crate="$1"
+            local version
+            version="$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg c "$crate" '.packages[] | select(.name == $c) | .version')"
+            echo "::group::publish $crate $version"
+            if cargo publish -p "$crate" --no-verify 2>&1 | tee /tmp/publish.log; then
+              echo "published"
+            else
+              if grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
+                echo "$crate $version already on crates.io — skipping"
+              else
+                exit 1
+              fi
+            fi
+            echo "::endgroup::"
+          }
+          for crate in \
+              devboy-secrets-agent \
+              devboy-secrets-ui \
+              devboy-secret-keychain \
+              devboy-secret-1password \
+              devboy-secret-vault \
+              devboy-secret-env-store \
+              devboy-secret-kdbx \
+              devboy-secret-local-vault ; do
+            publish_if_new "$crate"
+            sleep 20
+          done
+
+      - name: Wait for index propagation
+        run: sleep 30
+
       # Layer 3 — depends on Layer 1 + 2.
       - name: Publish devboy-executor
         run: |
