@@ -57,7 +57,7 @@ pub devboy_skills::error::SkillError::InvalidYaml::skill: alloc::string::String
 pub devboy_skills::error::SkillError::InvalidYaml::source: serde_yaml::error::Error
 pub devboy_skills::error::SkillError::Io
 pub devboy_skills::error::SkillError::Io::path: std::path::PathBuf
-pub devboy_skills::error::SkillError::Io::source: std::io::error::Error
+pub devboy_skills::error::SkillError::Io::source: core::io::error::Error
 pub devboy_skills::error::SkillError::MissingFrontmatter
 pub devboy_skills::error::SkillError::MissingFrontmatter::skill: alloc::string::String
 pub devboy_skills::error::SkillError::MissingRequiredField
@@ -827,7 +827,7 @@ pub devboy_skills::SkillError::InvalidYaml::skill: alloc::string::String
 pub devboy_skills::SkillError::InvalidYaml::source: serde_yaml::error::Error
 pub devboy_skills::SkillError::Io
 pub devboy_skills::SkillError::Io::path: std::path::PathBuf
-pub devboy_skills::SkillError::Io::source: std::io::error::Error
+pub devboy_skills::SkillError::Io::source: core::io::error::Error
 pub devboy_skills::SkillError::MissingFrontmatter
 pub devboy_skills::SkillError::MissingFrontmatter::skill: alloc::string::String
 pub devboy_skills::SkillError::MissingRequiredField
