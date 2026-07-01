@@ -3449,13 +3449,12 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
                 &code,
             )
             .await?;
-            let access_token = SecretString::from(tokens.access_token.clone());
+            let access_token = tokens.access_token.clone();
             store.store(
                 &get_secret_key(&target.secret_prefix, "token"),
                 &access_token,
             )?;
-            if let Some(refresh_token) = tokens.refresh_token.as_deref() {
-                let refresh_token = SecretString::from(refresh_token.to_string());
+            if let Some(refresh_token) = tokens.refresh_token.clone() {
                 store.store(
                     &get_secret_key(&target.secret_prefix, "refresh_token"),
                     &refresh_token,
@@ -3506,18 +3505,15 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
             let tokens =
                 ConfluenceClient::refresh_oauth_token(&client_id, &client_secret, &refresh_token)
                     .await?;
-            let access_token = SecretString::from(tokens.access_token.clone());
+            let access_token = tokens.access_token.clone();
             store.store(
                 &get_secret_key(&target.secret_prefix, "token"),
                 &access_token,
             )?;
-            let refresh_token = SecretString::from(
-                tokens
-                    .refresh_token
-                    .clone()
-                    .unwrap_or(refresh_token)
-                    .to_string(),
-            );
+            let refresh_token = tokens
+                .refresh_token
+                .clone()
+                .unwrap_or_else(|| SecretString::from(refresh_token));
             store.store(&refresh_token_key, &refresh_token)?;
             maybe_store_secret(
                 store.as_ref(),
