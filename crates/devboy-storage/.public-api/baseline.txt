@@ -206,12 +206,12 @@ pub enum devboy_storage::index::IndexError
 pub devboy_storage::index::IndexError::NoConfigDir
 pub devboy_storage::index::IndexError::Parse
 pub devboy_storage::index::IndexError::Parse::path: std::path::PathBuf
-pub devboy_storage::index::IndexError::Parse::source: toml::de::Error
+pub devboy_storage::index::IndexError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::index::IndexError::Path
 pub devboy_storage::index::IndexError::Path::source: devboy_storage::secret_path::PathError
 pub devboy_storage::index::IndexError::Read
 pub devboy_storage::index::IndexError::Read::path: std::path::PathBuf
-pub devboy_storage::index::IndexError::Read::source: core::io::error::Error
+pub devboy_storage::index::IndexError::Read::source: std::io::error::Error
 pub devboy_storage::index::IndexError::Serialize
 pub devboy_storage::index::IndexError::Serialize::path: std::path::PathBuf
 pub devboy_storage::index::IndexError::Serialize::source: toml::ser::Error
@@ -328,13 +328,13 @@ pub mod devboy_storage::manifest
 pub enum devboy_storage::manifest::ManifestError
 pub devboy_storage::manifest::ManifestError::Parse
 pub devboy_storage::manifest::ManifestError::Parse::path: std::path::PathBuf
-pub devboy_storage::manifest::ManifestError::Parse::source: toml::de::Error
+pub devboy_storage::manifest::ManifestError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::manifest::ManifestError::Path
 pub devboy_storage::manifest::ManifestError::Path::role: devboy_storage::manifest::PathRole
 pub devboy_storage::manifest::ManifestError::Path::source: devboy_storage::secret_path::PathError
 pub devboy_storage::manifest::ManifestError::Read
 pub devboy_storage::manifest::ManifestError::Read::path: std::path::PathBuf
-pub devboy_storage::manifest::ManifestError::Read::source: core::io::error::Error
+pub devboy_storage::manifest::ManifestError::Read::source: std::io::error::Error
 impl core::error::Error for devboy_storage::manifest::ManifestError
 pub fn devboy_storage::manifest::ManifestError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_storage::manifest::ManifestError
@@ -629,7 +629,7 @@ pub devboy_storage::plugin_client::PluginClientError::InitFailed::detail: alloc:
 pub devboy_storage::plugin_client::PluginClientError::InitFailed::plugin: alloc::string::String
 pub devboy_storage::plugin_client::PluginClientError::Io
 pub devboy_storage::plugin_client::PluginClientError::Io::plugin: alloc::string::String
-pub devboy_storage::plugin_client::PluginClientError::Io::source: core::io::error::Error
+pub devboy_storage::plugin_client::PluginClientError::Io::source: std::io::error::Error
 pub devboy_storage::plugin_client::PluginClientError::MalformedResponse
 pub devboy_storage::plugin_client::PluginClientError::MalformedResponse::plugin: alloc::string::String
 pub devboy_storage::plugin_client::PluginClientError::MalformedResponse::source: serde_json::error::Error
@@ -643,7 +643,7 @@ pub devboy_storage::plugin_client::PluginClientError::RestartCapExceeded::window
 pub devboy_storage::plugin_client::PluginClientError::Spawn
 pub devboy_storage::plugin_client::PluginClientError::Spawn::path: std::path::PathBuf
 pub devboy_storage::plugin_client::PluginClientError::Spawn::plugin: alloc::string::String
-pub devboy_storage::plugin_client::PluginClientError::Spawn::source: core::io::error::Error
+pub devboy_storage::plugin_client::PluginClientError::Spawn::source: std::io::error::Error
 pub devboy_storage::plugin_client::PluginClientError::UnexpectedPayload
 pub devboy_storage::plugin_client::PluginClientError::UnexpectedPayload::method: alloc::string::String
 pub devboy_storage::plugin_client::PluginClientError::UnexpectedPayload::plugin: alloc::string::String
@@ -765,7 +765,7 @@ pub devboy_storage::plugin_manifest::ManifestError::BadFilename
 pub devboy_storage::plugin_manifest::ManifestError::BadFilename::filename: alloc::string::String
 pub devboy_storage::plugin_manifest::ManifestError::ChecksumIo
 pub devboy_storage::plugin_manifest::ManifestError::ChecksumIo::path: std::path::PathBuf
-pub devboy_storage::plugin_manifest::ManifestError::ChecksumIo::source: core::io::error::Error
+pub devboy_storage::plugin_manifest::ManifestError::ChecksumIo::source: std::io::error::Error
 pub devboy_storage::plugin_manifest::ManifestError::ChecksumMismatch
 pub devboy_storage::plugin_manifest::ManifestError::ChecksumMismatch::actual: alloc::string::String
 pub devboy_storage::plugin_manifest::ManifestError::ChecksumMismatch::declared: alloc::string::String
@@ -778,10 +778,10 @@ pub devboy_storage::plugin_manifest::ManifestError::NameMismatch::from_filename:
 pub devboy_storage::plugin_manifest::ManifestError::NameMismatch::path: std::path::PathBuf
 pub devboy_storage::plugin_manifest::ManifestError::Parse
 pub devboy_storage::plugin_manifest::ManifestError::Parse::path: std::path::PathBuf
-pub devboy_storage::plugin_manifest::ManifestError::Parse::source: toml::de::Error
+pub devboy_storage::plugin_manifest::ManifestError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::plugin_manifest::ManifestError::Read
 pub devboy_storage::plugin_manifest::ManifestError::Read::path: std::path::PathBuf
-pub devboy_storage::plugin_manifest::ManifestError::Read::source: core::io::error::Error
+pub devboy_storage::plugin_manifest::ManifestError::Read::source: std::io::error::Error
 impl core::error::Error for devboy_storage::plugin_manifest::ManifestError
 pub fn devboy_storage::plugin_manifest::ManifestError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_storage::plugin_manifest::ManifestError
@@ -1330,10 +1330,10 @@ pub devboy_storage::router_config::RouterConfigError::DuplicateSource::name: all
 pub devboy_storage::router_config::RouterConfigError::NoConfigDir
 pub devboy_storage::router_config::RouterConfigError::Parse
 pub devboy_storage::router_config::RouterConfigError::Parse::path: std::path::PathBuf
-pub devboy_storage::router_config::RouterConfigError::Parse::source: toml::de::Error
+pub devboy_storage::router_config::RouterConfigError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::router_config::RouterConfigError::Read
 pub devboy_storage::router_config::RouterConfigError::Read::path: std::path::PathBuf
-pub devboy_storage::router_config::RouterConfigError::Read::source: core::io::error::Error
+pub devboy_storage::router_config::RouterConfigError::Read::source: std::io::error::Error
 pub devboy_storage::router_config::RouterConfigError::UndefinedDefaultSource
 pub devboy_storage::router_config::RouterConfigError::UndefinedDefaultSource::name: alloc::string::String
 pub devboy_storage::router_config::RouterConfigError::UndefinedFallbackSource
@@ -1683,7 +1683,7 @@ pub devboy_storage::source::SourceError::BadReference::reason: alloc::string::St
 pub devboy_storage::source::SourceError::BadReference::reference: alloc::string::String
 pub devboy_storage::source::SourceError::Io
 pub devboy_storage::source::SourceError::Io::name: alloc::string::String
-pub devboy_storage::source::SourceError::Io::source: core::io::error::Error
+pub devboy_storage::source::SourceError::Io::source: std::io::error::Error
 pub devboy_storage::source::SourceError::Locked
 pub devboy_storage::source::SourceError::Locked::name: alloc::string::String
 pub devboy_storage::source::SourceError::Unavailable
@@ -1766,7 +1766,6 @@ pub const fn devboy_storage::source::Capabilities::iter_names(&self) -> bitflags
 impl bitflags::traits::Flags for devboy_storage::source::Capabilities
 pub type devboy_storage::source::Capabilities::Bits = u32
 pub const devboy_storage::source::Capabilities::FLAGS: &'static [bitflags::traits::Flag<devboy_storage::source::Capabilities>]
-pub fn devboy_storage::source::Capabilities::all_named() -> devboy_storage::source::Capabilities
 pub fn devboy_storage::source::Capabilities::bits(&self) -> u32
 pub fn devboy_storage::source::Capabilities::from_bits_retain(bits: u32) -> devboy_storage::source::Capabilities
 impl bitflags::traits::PublicFlags for devboy_storage::source::Capabilities
@@ -2112,12 +2111,12 @@ pub enum devboy_storage::IndexError
 pub devboy_storage::IndexError::NoConfigDir
 pub devboy_storage::IndexError::Parse
 pub devboy_storage::IndexError::Parse::path: std::path::PathBuf
-pub devboy_storage::IndexError::Parse::source: toml::de::Error
+pub devboy_storage::IndexError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::IndexError::Path
 pub devboy_storage::IndexError::Path::source: devboy_storage::secret_path::PathError
 pub devboy_storage::IndexError::Read
 pub devboy_storage::IndexError::Read::path: std::path::PathBuf
-pub devboy_storage::IndexError::Read::source: core::io::error::Error
+pub devboy_storage::IndexError::Read::source: std::io::error::Error
 pub devboy_storage::IndexError::Serialize
 pub devboy_storage::IndexError::Serialize::path: std::path::PathBuf
 pub devboy_storage::IndexError::Serialize::source: toml::ser::Error
@@ -2156,13 +2155,13 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_storage::pattern_resolution
 pub enum devboy_storage::ManifestError
 pub devboy_storage::ManifestError::Parse
 pub devboy_storage::ManifestError::Parse::path: std::path::PathBuf
-pub devboy_storage::ManifestError::Parse::source: toml::de::Error
+pub devboy_storage::ManifestError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::ManifestError::Path
 pub devboy_storage::ManifestError::Path::role: devboy_storage::manifest::PathRole
 pub devboy_storage::ManifestError::Path::source: devboy_storage::secret_path::PathError
 pub devboy_storage::ManifestError::Read
 pub devboy_storage::ManifestError::Read::path: std::path::PathBuf
-pub devboy_storage::ManifestError::Read::source: core::io::error::Error
+pub devboy_storage::ManifestError::Read::source: std::io::error::Error
 impl core::error::Error for devboy_storage::manifest::ManifestError
 pub fn devboy_storage::manifest::ManifestError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_storage::manifest::ManifestError
@@ -2388,10 +2387,10 @@ pub devboy_storage::RouterConfigError::DuplicateSource::name: alloc::string::Str
 pub devboy_storage::RouterConfigError::NoConfigDir
 pub devboy_storage::RouterConfigError::Parse
 pub devboy_storage::RouterConfigError::Parse::path: std::path::PathBuf
-pub devboy_storage::RouterConfigError::Parse::source: toml::de::Error
+pub devboy_storage::RouterConfigError::Parse::source: alloc::boxed::Box<toml::de::Error>
 pub devboy_storage::RouterConfigError::Read
 pub devboy_storage::RouterConfigError::Read::path: std::path::PathBuf
-pub devboy_storage::RouterConfigError::Read::source: core::io::error::Error
+pub devboy_storage::RouterConfigError::Read::source: std::io::error::Error
 pub devboy_storage::RouterConfigError::UndefinedDefaultSource
 pub devboy_storage::RouterConfigError::UndefinedDefaultSource::name: alloc::string::String
 pub devboy_storage::RouterConfigError::UndefinedFallbackSource
@@ -2468,7 +2467,7 @@ pub devboy_storage::SourceError::BadReference::reason: alloc::string::String
 pub devboy_storage::SourceError::BadReference::reference: alloc::string::String
 pub devboy_storage::SourceError::Io
 pub devboy_storage::SourceError::Io::name: alloc::string::String
-pub devboy_storage::SourceError::Io::source: core::io::error::Error
+pub devboy_storage::SourceError::Io::source: std::io::error::Error
 pub devboy_storage::SourceError::Locked
 pub devboy_storage::SourceError::Locked::name: alloc::string::String
 pub devboy_storage::SourceError::Unavailable
@@ -2593,7 +2592,6 @@ pub const fn devboy_storage::source::Capabilities::iter_names(&self) -> bitflags
 impl bitflags::traits::Flags for devboy_storage::source::Capabilities
 pub type devboy_storage::source::Capabilities::Bits = u32
 pub const devboy_storage::source::Capabilities::FLAGS: &'static [bitflags::traits::Flag<devboy_storage::source::Capabilities>]
-pub fn devboy_storage::source::Capabilities::all_named() -> devboy_storage::source::Capabilities
 pub fn devboy_storage::source::Capabilities::bits(&self) -> u32
 pub fn devboy_storage::source::Capabilities::from_bits_retain(bits: u32) -> devboy_storage::source::Capabilities
 impl bitflags::traits::PublicFlags for devboy_storage::source::Capabilities
