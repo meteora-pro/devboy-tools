@@ -1203,10 +1203,10 @@ pub fn devboy_core::error::Error::is_auth_error(&self) -> bool
 pub fn devboy_core::error::Error::is_retryable(&self) -> bool
 impl core::convert::From<anyhow::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: anyhow::Error) -> Self
-impl core::convert::From<serde_json::error::Error> for devboy_core::error::Error
-pub fn devboy_core::error::Error::from(source: serde_json::error::Error) -> Self
 impl core::convert::From<core::io::error::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: core::io::error::Error) -> Self
+impl core::convert::From<serde_json::error::Error> for devboy_core::error::Error
+pub fn devboy_core::error::Error::from(source: serde_json::error::Error) -> Self
 impl core::error::Error for devboy_core::error::Error
 pub fn devboy_core::error::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_core::error::Error
@@ -3841,10 +3841,10 @@ pub fn devboy_core::error::Error::is_auth_error(&self) -> bool
 pub fn devboy_core::error::Error::is_retryable(&self) -> bool
 impl core::convert::From<anyhow::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: anyhow::Error) -> Self
-impl core::convert::From<serde_json::error::Error> for devboy_core::error::Error
-pub fn devboy_core::error::Error::from(source: serde_json::error::Error) -> Self
 impl core::convert::From<core::io::error::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: core::io::error::Error) -> Self
+impl core::convert::From<serde_json::error::Error> for devboy_core::error::Error
+pub fn devboy_core::error::Error::from(source: serde_json::error::Error) -> Self
 impl core::error::Error for devboy_core::error::Error
 pub fn devboy_core::error::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_core::error::Error
