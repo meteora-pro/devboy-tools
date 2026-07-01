@@ -215,10 +215,7 @@ async fn probe_cloud_bearer(
             match probe.status().as_u16() {
                 200 => Ok(LivenessResult::live(format!(
                     "{} ({})",
-                    matched
-                        .url
-                        .as_deref()
-                        .unwrap_or(client.instance_url()),
+                    matched.url.as_deref().unwrap_or(client.instance_url()),
                     matched.id
                 ))),
                 401 => Ok(LivenessResult::revoked(
@@ -330,12 +327,10 @@ mod tests {
         let server = MockServer::start_async().await;
         let _m = server
             .mock_async(|when, then| {
-                when.method(GET)
-                    .path("/wiki/rest/api/user/current")
-                    .header(
-                        "Authorization",
-                        "Basic ZGV2QGV4YW1wbGUuY29tOnNlY3JldC10b2tlbg==",
-                    );
+                when.method(GET).path("/wiki/rest/api/user/current").header(
+                    "Authorization",
+                    "Basic ZGV2QGV4YW1wbGUuY29tOnNlY3JldC10b2tlbg==",
+                );
                 then.status(200)
                     .json_body(serde_json::json!({"accountId": "acct-123"}));
             })

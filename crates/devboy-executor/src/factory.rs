@@ -558,7 +558,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_confluence_knowledge_base_provider_explicit_self_hosted_overrides_detection() {
+    async fn test_create_confluence_knowledge_base_provider_explicit_self_hosted_overrides_detection()
+     {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(GET)

@@ -1023,7 +1023,10 @@ fn display_name(user: Option<&ConfluenceUser>) -> Option<String> {
 
 fn normalize_body_content(value: Option<&str>, representation: Option<&str>) -> Option<String> {
     let value = value?;
-    match representation.map(str::trim).filter(|value| !value.is_empty()) {
+    match representation
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         Some("storage") | Some("view") => Some(confluence_storage_to_markdown(value)),
         _ => Some(value.to_string()),
     }
@@ -2777,8 +2780,10 @@ mod tests {
 
     #[tokio::test]
     async fn new_auto_detects_cloud_flavor_for_atlassian_net() {
-        let client =
-            ConfluenceClient::new("https://team.atlassian.net", ConfluenceAuth::bearer("token"));
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("token"),
+        );
 
         assert!(matches!(client.flavor(), ConfluenceFlavor::Cloud));
         assert_eq!(
