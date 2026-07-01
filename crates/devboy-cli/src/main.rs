@@ -5800,9 +5800,11 @@ mod tests {
 
         assert!(state.starts_with("devboy-"));
         assert_eq!(state.len(), "devboy-".len() + 32);
-        assert!(state["devboy-".len()..]
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
+        assert!(
+            state["devboy-".len()..]
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
     }
 
     #[test]
