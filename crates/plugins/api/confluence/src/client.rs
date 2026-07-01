@@ -19,8 +19,9 @@ use crate::DEFAULT_CONFLUENCE_API_PATH;
 const ATLASSIAN_OAUTH_AUTHORIZE_URL: &str = "https://auth.atlassian.com/authorize";
 const ATLASSIAN_OAUTH_TOKEN_URL: &str = "https://auth.atlassian.com/oauth/token";
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub enum ConfluenceFlavor {
+    #[default]
     SelfHosted,
     Cloud,
 }
@@ -31,12 +32,6 @@ impl fmt::Debug for ConfluenceFlavor {
             Self::SelfHosted => f.write_str("SelfHosted"),
             Self::Cloud => f.write_str("Cloud"),
         }
-    }
-}
-
-impl Default for ConfluenceFlavor {
-    fn default() -> Self {
-        Self::SelfHosted
     }
 }
 
@@ -238,8 +233,8 @@ impl ConfluenceClient {
             flavor,
             cloud_id: None,
             cloud_api_base_url: None,
-            api_path: api_path_for_flavor(flavor.clone(), None),
-            page_api_path: api_path_for_flavor(flavor.clone(), None),
+            api_path: api_path_for_flavor(flavor, None),
+            page_api_path: api_path_for_flavor(flavor, None),
             space_api_path: api_path_for_flavor(flavor, None),
             auth,
             proxy_headers: None,
@@ -348,13 +343,10 @@ impl ConfluenceClient {
         if matches!(self.flavor, ConfluenceFlavor::Cloud) {
             let cloud_root = self.resolve_cloud_api_root_url().await?;
             return Ok(format!(
-                "{}/{}",
+                "{}/{}/{}",
                 cloud_root,
-                format!(
-                    "{}/{}",
-                    api_path.trim_matches('/'),
-                    path.trim_start_matches('/')
-                )
+                api_path.trim_matches('/'),
+                path.trim_start_matches('/')
             ));
         }
         Ok(self.api_url(api_path, path))

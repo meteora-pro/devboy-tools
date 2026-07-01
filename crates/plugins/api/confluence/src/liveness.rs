@@ -313,7 +313,7 @@ mod tests {
             })
             .await;
 
-        let client = ConfluenceClient::new(&server.base_url(), ConfluenceAuth::bearer("ignored"));
+        let client = ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("ignored"));
         let r = client
             .test(&SecretString::from("secret-token".to_owned()))
             .await
@@ -337,7 +337,7 @@ mod tests {
             .await;
 
         let client = ConfluenceClient::new(
-            &server.base_url(),
+            server.base_url(),
             ConfluenceAuth::basic("dev@example.com", "ignored"),
         )
         .with_flavor(ConfluenceFlavor::Cloud);
@@ -398,7 +398,7 @@ mod tests {
                 then.status(401);
             })
             .await;
-        let client = ConfluenceClient::new(&server.base_url(), ConfluenceAuth::bearer("ignored"));
+        let client = ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("ignored"));
         let r = client
             .test(&SecretString::from("bad".to_owned()))
             .await
@@ -415,7 +415,7 @@ mod tests {
                 then.status(429).header("Retry-After", "60");
             })
             .await;
-        let client = ConfluenceClient::new(&server.base_url(), ConfluenceAuth::bearer("ignored"));
+        let client = ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("ignored"));
         let r = client
             .test(&SecretString::from("over-limit".to_owned()))
             .await
