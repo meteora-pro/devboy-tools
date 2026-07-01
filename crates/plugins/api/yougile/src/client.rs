@@ -858,6 +858,11 @@ fn map_reqwest_error(error: reqwest::Error) -> Error {
 
 async fn parse_json_response<T: DeserializeOwned>(response: Response) -> Result<T> {
     let status = response.status();
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok());
     let body = response.text().await.map_err(map_reqwest_error)?;
     if !status.is_success() {
         let message = if body.trim().is_empty() {
@@ -872,7 +877,7 @@ async fn parse_json_response<T: DeserializeOwned>(response: Response) -> Result<
             StatusCode::UNAUTHORIZED => Error::Unauthorized(message),
             StatusCode::FORBIDDEN => Error::Forbidden(message),
             StatusCode::NOT_FOUND => Error::NotFound(message),
-            StatusCode::TOO_MANY_REQUESTS => Error::RateLimited { retry_after: None },
+            StatusCode::TOO_MANY_REQUESTS => Error::RateLimited { retry_after },
             s if s.is_server_error() => Error::ServerError {
                 status: s.as_u16(),
                 message,
@@ -2361,5 +2366,32 @@ mod tests {
         );
         assert_eq!(map_status_category(&task, Some("Done")), "done");
         assert_eq!(map_status_category(&task, Some("Cancelled")), "cancelled");
+    }
+
+    #[tokio::test]
+    async fn parse_json_response_preserves_retry_after_on_http_429() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/test-rate-limit");
+                then.status(429)
+                    .header("Retry-After", "7")
+                    .body("Too Many Requests");
+            })
+            .await;
+
+        let response = reqwest::Client::new()
+            .get(format!("{}/api-v2/test-rate-limit", server.base_url()))
+            .send()
+            .await
+            .unwrap();
+        let err = parse_json_response::<Value>(response).await.unwrap_err();
+
+        assert!(matches!(
+            err,
+            Error::RateLimited {
+                retry_after: Some(7)
+            }
+        ));
     }
 }
