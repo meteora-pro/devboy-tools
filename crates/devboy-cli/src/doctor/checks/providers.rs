@@ -561,9 +561,11 @@ async fn probe_confluence_endpoint(
 }
 
 fn confluence_is_cloud(config: &ConfluenceConfig) -> bool {
-    matches!(config.flavor, Some(devboy_core::ConfluenceFlavor::Cloud))
-        || config.cloud_id.is_some()
-        || config.base_url.contains(".atlassian.net")
+    match config.flavor {
+        Some(devboy_core::ConfluenceFlavor::Cloud) => true,
+        Some(devboy_core::ConfluenceFlavor::SelfHosted) => false,
+        None => config.cloud_id.is_some() || config.base_url.contains(".atlassian.net"),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1279,6 +1281,22 @@ mod tests {
 
         assert!(outcome.message.contains("Confluence API reachable"));
         rest_mock.assert();
+    }
+
+    #[test]
+    fn confluence_is_cloud_respects_explicit_self_hosted_override() {
+        let config = ConfluenceConfig {
+            base_url: "https://team.atlassian.net".to_string(),
+            flavor: Some(devboy_core::ConfluenceFlavor::SelfHosted),
+            cloud_id: Some("cloud-123".to_string()),
+            api_version: None,
+            username: None,
+            client_id: None,
+            redirect_uri: None,
+            space_key: None,
+        };
+
+        assert!(!confluence_is_cloud(&config));
     }
 
     #[tokio::test]
