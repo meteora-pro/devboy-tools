@@ -1159,7 +1159,7 @@ pub devboy_core::error::Error::CredentialNotFound::provider: alloc::string::Stri
 pub devboy_core::error::Error::Forbidden(alloc::string::String)
 pub devboy_core::error::Error::Http(alloc::string::String)
 pub devboy_core::error::Error::InvalidData(alloc::string::String)
-pub devboy_core::error::Error::Io(std::io::error::Error)
+pub devboy_core::error::Error::Io(core::io::error::Error)
 pub devboy_core::error::Error::MissingConfig(alloc::string::String)
 pub devboy_core::error::Error::Network(alloc::string::String)
 pub devboy_core::error::Error::NotFound(alloc::string::String)
@@ -1183,10 +1183,10 @@ pub fn devboy_core::error::Error::is_auth_error(&self) -> bool
 pub fn devboy_core::error::Error::is_retryable(&self) -> bool
 impl core::convert::From<anyhow::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: anyhow::Error) -> Self
+impl core::convert::From<core::io::error::Error> for devboy_core::error::Error
+pub fn devboy_core::error::Error::from(source: core::io::error::Error) -> Self
 impl core::convert::From<serde_json::error::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: serde_json::error::Error) -> Self
-impl core::convert::From<std::io::error::Error> for devboy_core::error::Error
-pub fn devboy_core::error::Error::from(source: std::io::error::Error) -> Self
 impl core::error::Error for devboy_core::error::Error
 pub fn devboy_core::error::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_core::error::Error
@@ -3797,7 +3797,7 @@ pub devboy_core::Error::CredentialNotFound::provider: alloc::string::String
 pub devboy_core::Error::Forbidden(alloc::string::String)
 pub devboy_core::Error::Http(alloc::string::String)
 pub devboy_core::Error::InvalidData(alloc::string::String)
-pub devboy_core::Error::Io(std::io::error::Error)
+pub devboy_core::Error::Io(core::io::error::Error)
 pub devboy_core::Error::MissingConfig(alloc::string::String)
 pub devboy_core::Error::Network(alloc::string::String)
 pub devboy_core::Error::NotFound(alloc::string::String)
@@ -3821,10 +3821,10 @@ pub fn devboy_core::error::Error::is_auth_error(&self) -> bool
 pub fn devboy_core::error::Error::is_retryable(&self) -> bool
 impl core::convert::From<anyhow::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: anyhow::Error) -> Self
+impl core::convert::From<core::io::error::Error> for devboy_core::error::Error
+pub fn devboy_core::error::Error::from(source: core::io::error::Error) -> Self
 impl core::convert::From<serde_json::error::Error> for devboy_core::error::Error
 pub fn devboy_core::error::Error::from(source: serde_json::error::Error) -> Self
-impl core::convert::From<std::io::error::Error> for devboy_core::error::Error
-pub fn devboy_core::error::Error::from(source: std::io::error::Error) -> Self
 impl core::error::Error for devboy_core::error::Error
 pub fn devboy_core::error::Error::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_core::error::Error

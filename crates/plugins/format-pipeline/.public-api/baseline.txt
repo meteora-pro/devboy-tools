@@ -1,12 +1,12 @@
 pub mod devboy_format_pipeline
 pub mod devboy_format_pipeline::adaptive_config
 pub enum devboy_format_pipeline::adaptive_config::ConfigError
-pub devboy_format_pipeline::adaptive_config::ConfigError::Io(std::io::error::Error)
+pub devboy_format_pipeline::adaptive_config::ConfigError::Io(core::io::error::Error)
 pub devboy_format_pipeline::adaptive_config::ConfigError::Parse(toml::de::Error)
 pub devboy_format_pipeline::adaptive_config::ConfigError::Serialize(toml::ser::Error)
 pub devboy_format_pipeline::adaptive_config::ConfigError::UnsupportedSchemaVersion(u32)
-impl core::convert::From<std::io::error::Error> for devboy_format_pipeline::adaptive_config::ConfigError
-pub fn devboy_format_pipeline::adaptive_config::ConfigError::from(source: std::io::error::Error) -> Self
+impl core::convert::From<core::io::error::Error> for devboy_format_pipeline::adaptive_config::ConfigError
+pub fn devboy_format_pipeline::adaptive_config::ConfigError::from(source: core::io::error::Error) -> Self
 impl core::convert::From<toml::de::Error> for devboy_format_pipeline::adaptive_config::ConfigError
 pub fn devboy_format_pipeline::adaptive_config::ConfigError::from(source: toml::de::Error) -> Self
 impl core::convert::From<toml::ser::Error> for devboy_format_pipeline::adaptive_config::ConfigError
@@ -1365,12 +1365,12 @@ impl core::marker::UnsafeUnpin for devboy_format_pipeline::telemetry::Shape
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_format_pipeline::telemetry::Shape
 impl core::panic::unwind_safe::UnwindSafe for devboy_format_pipeline::telemetry::Shape
 pub enum devboy_format_pipeline::telemetry::TelemetryError
-pub devboy_format_pipeline::telemetry::TelemetryError::Io(std::io::error::Error)
+pub devboy_format_pipeline::telemetry::TelemetryError::Io(core::io::error::Error)
 pub devboy_format_pipeline::telemetry::TelemetryError::Serde(serde_json::error::Error)
+impl core::convert::From<core::io::error::Error> for devboy_format_pipeline::telemetry::TelemetryError
+pub fn devboy_format_pipeline::telemetry::TelemetryError::from(source: core::io::error::Error) -> Self
 impl core::convert::From<serde_json::error::Error> for devboy_format_pipeline::telemetry::TelemetryError
 pub fn devboy_format_pipeline::telemetry::TelemetryError::from(source: serde_json::error::Error) -> Self
-impl core::convert::From<std::io::error::Error> for devboy_format_pipeline::telemetry::TelemetryError
-pub fn devboy_format_pipeline::telemetry::TelemetryError::from(source: std::io::error::Error) -> Self
 impl core::error::Error for devboy_format_pipeline::telemetry::TelemetryError
 pub fn devboy_format_pipeline::telemetry::TelemetryError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_format_pipeline::telemetry::TelemetryError
