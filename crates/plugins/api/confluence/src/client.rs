@@ -813,11 +813,15 @@ struct ConfluenceBody {
     #[serde(default)]
     view: Option<ConfluenceBodyValue>,
     #[serde(default)]
+    representation: Option<String>,
+    #[serde(default)]
     value: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluenceBodyValue {
+    #[serde(default)]
+    representation: Option<String>,
     #[serde(default)]
     value: Option<String>,
 }
@@ -1017,12 +1021,12 @@ fn display_name(user: Option<&ConfluenceUser>) -> Option<String> {
     })
 }
 
-fn body_value(body: &ConfluenceBody) -> Option<String> {
-    body.view
-        .as_ref()
-        .and_then(|value| value.value.clone())
-        .or_else(|| body.storage.as_ref().and_then(|value| value.value.clone()))
-        .or_else(|| body.value.clone())
+fn normalize_body_content(value: Option<&str>, representation: Option<&str>) -> Option<String> {
+    let value = value?;
+    match representation.map(str::trim).filter(|value| !value.is_empty()) {
+        Some("storage") | Some("view") => Some(confluence_storage_to_markdown(value)),
+        _ => Some(value.to_string()),
+    }
 }
 
 fn adf_body_value(body: &ConfluenceBody) -> Option<&Value> {
@@ -1040,10 +1044,28 @@ fn page_content_markdown(page: &ConfluencePage) -> String {
             page.body
                 .as_ref()
                 .and_then(|body| body.storage.as_ref())
-                .and_then(|storage| storage.value.as_deref())
-                .map(confluence_storage_to_markdown)
+                .and_then(|storage| {
+                    normalize_body_content(
+                        storage.value.as_deref(),
+                        storage.representation.as_deref().or(Some("storage")),
+                    )
+                })
         })
-        .or_else(|| page.body.as_ref().and_then(body_value))
+        .or_else(|| {
+            page.body.as_ref().and_then(|body| {
+                body.view.as_ref().and_then(|view| {
+                    normalize_body_content(
+                        view.value.as_deref(),
+                        view.representation.as_deref().or(Some("view")),
+                    )
+                })
+            })
+        })
+        .or_else(|| {
+            page.body.as_ref().and_then(|body| {
+                normalize_body_content(body.value.as_deref(), body.representation.as_deref())
+            })
+        })
         .unwrap_or_default()
 }
 
