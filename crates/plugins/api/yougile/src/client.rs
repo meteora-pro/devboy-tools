@@ -693,6 +693,8 @@ impl IssueProvider for YouGileClient {
                 }
                 "closed" => {
                     body.insert("completed".to_string(), json!(true));
+                    body.insert("archived".to_string(), json!(false));
+                    body.insert("deleted".to_string(), json!(false));
                 }
                 _ => {}
             }
@@ -1871,6 +1873,97 @@ mod tests {
         assert_eq!(issue.key, "DEV-12");
         assert_eq!(issue.state, "open");
         assert_eq!(issue.status.as_deref(), Some("To Do"));
+    }
+
+    #[tokio::test]
+    async fn update_issue_state_closed_clears_cancelled_flags() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/columns")
+                    .query_param("boardId", "board-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        { "id": "col-1", "title": "To Do", "boardId": "board-1" }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api-v2/task-list")
+                    .query_param("columnId", "col-1")
+                    .query_param("limit", "1000")
+                    .query_param("offset", "0")
+                    .query_param("includeDeleted", "true");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "paging": { "limit": 1000, "offset": 0, "next": false },
+                    "content": [
+                        {
+                            "id": "task-1",
+                            "title": "Updated task",
+                            "timestamp": 1710000000000_u64,
+                            "columnId": "col-1",
+                            "completed": false,
+                            "archived": true,
+                            "deleted": false,
+                            "idTaskProject": "DEV-11"
+                        }
+                    ]
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(PUT)
+                    .path("/api-v2/tasks/task-1")
+                    .json_body_obj(&serde_json::json!({
+                        "completed": true,
+                        "archived": false,
+                        "deleted": false
+                    }));
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1"
+                }));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api-v2/tasks/task-1");
+                then.status(200).json_body_obj(&serde_json::json!({
+                    "id": "task-1",
+                    "title": "Updated task",
+                    "timestamp": 1710000000000_u64,
+                    "columnId": "col-1",
+                    "completed": true,
+                    "archived": false,
+                    "deleted": false,
+                    "idTaskProject": "DEV-11"
+                }));
+            })
+            .await;
+
+        let client = YouGileClient::with_base_url(
+            format!("{}/api-v2", server.base_url()),
+            "board-1",
+            SecretString::from("token".to_owned()),
+        );
+        let issue = client
+            .update_issue(
+                "yougile#task-1",
+                UpdateIssueInput {
+                    state: Some("closed".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(issue.state, "closed");
     }
 
     #[tokio::test]
