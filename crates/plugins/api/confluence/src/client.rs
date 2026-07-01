@@ -60,9 +60,9 @@ pub enum ConfluenceAuth {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConfluenceOAuthTokens {
-    pub access_token: String,
+    pub access_token: SecretString,
     #[serde(default)]
-    pub refresh_token: Option<String>,
+    pub refresh_token: Option<SecretString>,
     #[serde(default)]
     pub expires_in: Option<u64>,
     #[serde(default)]
