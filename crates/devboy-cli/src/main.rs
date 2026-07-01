@@ -20,7 +20,6 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -3382,6 +3381,42 @@ fn maybe_store_secret(
     Ok(())
 }
 
+#[cfg(windows)]
+fn generate_oauth_state() -> Result<String> {
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", "[guid]::NewGuid().ToString('N')"])
+        .output()
+        .context("Failed to invoke PowerShell for OAuth state generation")?;
+    if !output.status.success() {
+        anyhow::bail!("PowerShell failed to generate OAuth state");
+    }
+
+    let state = String::from_utf8(output.stdout).context("OAuth state was not valid UTF-8")?;
+    Ok(format!("devboy-{}", state.trim()))
+}
+
+#[cfg(not(windows))]
+fn generate_oauth_state() -> Result<String> {
+    use std::fs::File;
+    use std::io::Read;
+
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut bytes = [0u8; 16];
+    File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .context("Failed to read /dev/urandom for OAuth state generation")?;
+
+    let mut state = String::with_capacity("devboy-".len() + bytes.len() * 2);
+    state.push_str("devboy-");
+    for byte in bytes {
+        state.push(HEX[(byte >> 4) as usize] as char);
+        state.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    Ok(state)
+}
+
 async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Result<()> {
     match command {
         ConfluenceOauthCommands::Url { context, state } => {
@@ -3397,12 +3432,10 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
                 .redirect_uri
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("Confluence redirect_uri is not configured"))?;
-            let state = state.unwrap_or_else(|| {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| format!("devboy-{}", d.as_secs()))
-                    .unwrap_or_else(|_| "devboy".to_string())
-            });
+            let state = match state {
+                Some(state) => state,
+                None => generate_oauth_state()?,
+            };
             let url = ConfluenceClient::oauth_authorize_url(
                 &client_id,
                 &redirect_uri,
@@ -5759,6 +5792,17 @@ mod tests {
             server.active_knowledge_base_providers()[0].provider_name(),
             "confluence"
         );
+    }
+
+    #[test]
+    fn test_generate_oauth_state_uses_expected_shape() {
+        let state = generate_oauth_state().unwrap();
+
+        assert!(state.starts_with("devboy-"));
+        assert_eq!(state.len(), "devboy-".len() + 32);
+        assert!(state["devboy-".len()..]
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase()));
     }
 
     #[test]
