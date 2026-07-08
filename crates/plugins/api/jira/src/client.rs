@@ -33,11 +33,12 @@ use crate::types::{
     AddCommentPayload, CreateIssueFields, CreateIssueLinkPayload, CreateIssuePayload,
     CreateIssueResponse, CreateVersionPayload, IssueKeyRef, IssueLinkTypeName, IssueType,
     JiraAttachment, JiraCloudSearchResponse, JiraComment, JiraCommentsResponse, JiraField,
-    JiraForestModifyResponse, JiraForestResponse, JiraIssue, JiraIssueTypeStatuses, JiraPriority,
-    JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraStructure, JiraStructureListResponse,
-    JiraStructureValuesResponse, JiraStructureView, JiraStructureViewListResponse, JiraTransition,
-    JiraTransitionsResponse, JiraUser, JiraVersionDto, PriorityName, ProjectKey, TransitionId,
-    TransitionPayload, UpdateIssueFields, UpdateIssuePayload, UpdateVersionPayload,
+    JiraForestModifyResponse, JiraForestResponse, JiraIssue, JiraIssueLink, JiraIssueTypeStatuses,
+    JiraPriority, JiraProjectStatus, JiraSearchResponse, JiraStatus, JiraStructure,
+    JiraStructureListResponse, JiraStructureValuesResponse, JiraStructureView,
+    JiraStructureViewListResponse, JiraTransition, JiraTransitionsResponse, JiraUser,
+    JiraVersionDto, PriorityName, ProjectKey, TransitionId, TransitionPayload, UpdateIssueFields,
+    UpdateIssuePayload, UpdateVersionPayload,
 };
 
 /// Jira deployment flavor.
@@ -1640,6 +1641,77 @@ fn parse_jira_key(key: &str) -> &str {
     key.strip_prefix("jira#").unwrap_or(key)
 }
 
+fn jira_link_type_name_and_reversed(link_type: &str) -> (&str, bool) {
+    match link_type {
+        "blocks" => ("Blocks", false),
+        "blocked_by" => ("Blocks", true),
+        "relates_to" => ("Relates", false),
+        "duplicates" => ("Duplicate", false),
+        "duplicated_by" => ("Duplicate", true),
+        "clones" => ("Cloners", false),
+        "cloned_by" => ("Cloners", true),
+        "causes" => ("Causes", false),
+        "caused_by" => ("Causes", true),
+        "implements" => ("Implements", false),
+        "implemented_by" => ("Implements", true),
+        "created_by" => ("Created By", true),
+        "creates" => ("Created By", false),
+        other => (other, false),
+    }
+}
+
+fn jira_link_type_allows_either_direction(link_type: &str, link_type_name: &str) -> bool {
+    if link_type_name == "Relates" {
+        return true;
+    }
+
+    !matches!(
+        link_type,
+        "blocks"
+            | "blocked_by"
+            | "relates_to"
+            | "duplicates"
+            | "duplicated_by"
+            | "clones"
+            | "cloned_by"
+            | "causes"
+            | "caused_by"
+            | "implements"
+            | "implemented_by"
+            | "created_by"
+            | "creates"
+            | "Blocks"
+            | "Duplicate"
+            | "Cloners"
+            | "Causes"
+            | "Implements"
+            | "Created By"
+    )
+}
+
+fn jira_link_matches_target(
+    link: &JiraIssueLink,
+    link_type_name: &str,
+    target_key: &str,
+    reversed: bool,
+    allow_either_direction: bool,
+) -> bool {
+    if link.link_type.name != link_type_name {
+        return false;
+    }
+
+    let outward_key = link.outward_issue.as_ref().map(|issue| issue.key.as_str());
+    let inward_key = link.inward_issue.as_ref().map(|issue| issue.key.as_str());
+
+    if allow_either_direction {
+        outward_key == Some(target_key) || inward_key == Some(target_key)
+    } else if reversed {
+        inward_key == Some(target_key)
+    } else {
+        outward_key == Some(target_key)
+    }
+}
+
 fn map_issue(issue: &JiraIssue, flavor: JiraFlavor, instance_url: &str) -> Issue {
     // Surface every `customfield_*` slot that came back in the
     // payload — keys keep their raw `customfield_NNNNN` form so
@@ -2617,41 +2689,10 @@ impl IssueProvider for JiraClient {
         let source_jira_key = parse_jira_key(source_key).to_string();
         let target_jira_key = parse_jira_key(target_key).to_string();
 
-        // Map snake_case aliases to Jira's canonical link-type names.
-        // Reversed-direction aliases (`*_by`) flip source/target below
-        // so the resulting link reads correctly. Anything not in this
-        // table passes through verbatim — Jira accepts any link type
-        // configured on the instance, including custom names like
-        // `Implements`, `Causes`, `Created By`, `Discovered while
-        // testing` etc., and rejects unknown ones with a 400 that the
-        // caller will surface as-is.
-        let link_type_name = match link_type {
-            "blocks" => "Blocks",
-            "blocked_by" => "Blocks",
-            "relates_to" => "Relates",
-            "duplicates" | "duplicated_by" => "Duplicate",
-            "clones" | "cloned_by" => "Cloners",
-            "causes" | "caused_by" => "Causes",
-            "implements" | "implemented_by" => "Implements",
-            "created_by" | "creates" => "Created By",
-            other => other,
-        };
-
-        // Reversed-direction aliases: source/target swap so the link
-        // reads correctly. Every `*_by` alias above flips direction —
-        // adding a new `*_by` alias must also add it here, otherwise
-        // the link reads backward (e.g. without `created_by` listed,
-        // `link_issues(A, B, "created_by")` would create "A creates B"
-        // instead of "A is created by B"). Codex review on PR #260.
-        let reversed = matches!(
-            link_type,
-            "blocked_by"
-                | "duplicated_by"
-                | "cloned_by"
-                | "caused_by"
-                | "implemented_by"
-                | "created_by"
-        );
+        // Snake_case aliases map to Jira's canonical type names.
+        // Reversed-direction aliases (`*_by`) also flip source/target
+        // so the resulting link reads correctly.
+        let (link_type_name, reversed) = jira_link_type_name_and_reversed(link_type);
         let (outward_key, inward_key) = if reversed {
             (target_jira_key, source_jira_key)
         } else {
@@ -2668,6 +2709,67 @@ impl IssueProvider for JiraClient {
 
         let url = format!("{}/issueLink", self.base_url);
         self.post_no_content(&url, &payload).await?;
+
+        Ok(())
+    }
+
+    async fn unlink_issues(
+        &self,
+        source_key: &str,
+        target_key: &str,
+        link_type: &str,
+    ) -> Result<()> {
+        let source_jira_key = parse_jira_key(source_key).to_string();
+        let target_jira_key = parse_jira_key(target_key).to_string();
+        let (link_type_name, reversed) = jira_link_type_name_and_reversed(link_type);
+        let allow_either_direction =
+            jira_link_type_allows_either_direction(link_type, link_type_name);
+
+        let url = format!(
+            "{}/issue/{}?fields=issuelinks",
+            self.base_url, source_jira_key
+        );
+        let issue: JiraIssue = self.get(&url).await?;
+
+        let link = issue
+            .fields
+            .issuelinks
+            .iter()
+            .find(|link| {
+                jira_link_matches_target(
+                    link,
+                    link_type_name,
+                    &target_jira_key,
+                    reversed,
+                    allow_either_direction,
+                )
+            })
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "Jira link not found: {} -> {} ({})",
+                    source_jira_key, target_jira_key, link_type_name
+                ))
+            })?;
+
+        let link_id = link.id.as_deref().ok_or_else(|| {
+            Error::InvalidData(format!(
+                "Jira link {} -> {} ({}) is missing id",
+                source_jira_key, target_jira_key, link_type_name
+            ))
+        })?;
+
+        let delete_url = format!("{}/issueLink/{}", self.base_url, link_id);
+        let response = self
+            .request(reqwest::Method::DELETE, &delete_url)
+            .send()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let message = response.text().await.unwrap_or_default();
+            return Err(Error::from_status(status.as_u16(), message));
+        }
 
         Ok(())
     }
@@ -6282,6 +6384,153 @@ mod tests {
                 .link_issues("PROJ-1", "PROJ-2", "caused_by")
                 .await
                 .unwrap();
+        }
+
+        fn jira_issue_with_link(link: serde_json::Value) -> serde_json::Value {
+            serde_json::json!({
+                "id": "10001",
+                "key": "PROJ-1",
+                "fields": {
+                    "summary": "Source issue",
+                    "labels": [],
+                    "subtasks": [],
+                    "issuelinks": [link],
+                    "attachment": []
+                }
+            })
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_blocks_deletes_matching_outward_link() {
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200).json_body(jira_issue_with_link(serde_json::json!({
+                    "id": "42",
+                    "type": { "name": "Blocks", "outward": "blocks", "inward": "is blocked by" },
+                    "outwardIssue": {
+                        "id": "10002",
+                        "key": "PROJ-2",
+                        "fields": { "summary": "Target" }
+                    }
+                })));
+            });
+
+            let delete_mock = server.mock(|when, then| {
+                when.method(DELETE).path("/issueLink/42");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .unlink_issues("PROJ-1", "PROJ-2", "blocks")
+                .await
+                .unwrap();
+            get_mock.assert();
+            delete_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_blocked_by_matches_inward_link() {
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200).json_body(jira_issue_with_link(serde_json::json!({
+                    "id": "43",
+                    "type": { "name": "Blocks", "outward": "blocks", "inward": "is blocked by" },
+                    "inwardIssue": {
+                        "id": "10002",
+                        "key": "PROJ-2",
+                        "fields": { "summary": "Blocker" }
+                    }
+                })));
+            });
+
+            let delete_mock = server.mock(|when, then| {
+                when.method(DELETE).path("/issueLink/43");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .unlink_issues("PROJ-1", "PROJ-2", "blocked_by")
+                .await
+                .unwrap();
+            get_mock.assert();
+            delete_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_relates_matches_either_direction() {
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200).json_body(jira_issue_with_link(serde_json::json!({
+                    "id": "44",
+                    "type": { "name": "Relates", "outward": "relates to", "inward": "relates to" },
+                    "inwardIssue": {
+                        "id": "10002",
+                        "key": "PROJ-2",
+                        "fields": { "summary": "Related" }
+                    }
+                })));
+            });
+
+            let delete_mock = server.mock(|when, then| {
+                when.method(DELETE).path("/issueLink/44");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .unlink_issues("PROJ-1", "PROJ-2", "relates_to")
+                .await
+                .unwrap();
+            get_mock.assert();
+            delete_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_custom_type_matches_either_direction() {
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200)
+                    .json_body(jira_issue_with_link(serde_json::json!({
+                        "id": "45",
+                        "type": { "name": "Discovered while testing" },
+                        "inwardIssue": {
+                            "id": "10002",
+                            "key": "PROJ-2",
+                            "fields": { "summary": "Target" }
+                        }
+                    })));
+            });
+
+            let delete_mock = server.mock(|when, then| {
+                when.method(DELETE).path("/issueLink/45");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .unlink_issues("PROJ-1", "PROJ-2", "Discovered while testing")
+                .await
+                .unwrap();
+            get_mock.assert();
+            delete_mock.assert();
         }
 
         /// On Server/DC and Cloud company-managed projects, the
