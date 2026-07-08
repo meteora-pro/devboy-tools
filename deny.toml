@@ -29,7 +29,15 @@ yanked = "deny"
 # `paste` is unmaintained but still functional and pulled in transitively
 # by egui/eframe (no published successor). Tracked upstream; revisit when
 # egui drops the dependency.
-ignore = ["RUSTSEC-2024-0436"]
+#
+# `RUSTSEC-2026-0194` / `RUSTSEC-2026-0195` remain via `wayland-scanner`
+# 0.31.10, which is currently the published release on the 0.31 line used
+# transitively by the optional native GUI stack. That `quick-xml` usage is
+# build-time proc-macro parsing of trusted Wayland protocol XML, not runtime
+# parsing of untrusted user input. Keep runtime XML consumers on patched
+# versions and drop these ignores once the upstream Wayland stack moves to
+# `quick-xml >= 0.41.0`.
+ignore = ["RUSTSEC-2024-0436", "RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
 
 # ---------------------------------------------------------------------------
 # Licenses
