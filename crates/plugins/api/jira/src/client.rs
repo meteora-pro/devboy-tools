@@ -6533,6 +6533,80 @@ mod tests {
             delete_mock.assert();
         }
 
+        #[tokio::test]
+        async fn test_unlink_issues_returns_not_found_when_matching_link_missing() {
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200)
+                    .json_body(jira_issue_with_link(serde_json::json!({
+                        "id": "46",
+                        "type": { "name": "Blocks", "outward": "blocks", "inward": "is blocked by" },
+                        "outwardIssue": {
+                            "id": "10003",
+                            "key": "PROJ-3",
+                            "fields": { "summary": "Different target" }
+                        }
+                    })));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .unlink_issues("PROJ-1", "PROJ-2", "blocks")
+                .await
+                .expect_err("missing link should return an error");
+
+            get_mock.assert();
+            match err {
+                Error::NotFound(message) => {
+                    assert!(message.contains("PROJ-1"));
+                    assert!(message.contains("PROJ-2"));
+                    assert!(message.contains("Blocks"));
+                }
+                other => panic!("expected NotFound error, got {other:?}"),
+            }
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_returns_invalid_data_when_link_id_missing() {
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200)
+                    .json_body(jira_issue_with_link(serde_json::json!({
+                        "type": { "name": "Blocks", "outward": "blocks", "inward": "is blocked by" },
+                        "outwardIssue": {
+                            "id": "10002",
+                            "key": "PROJ-2",
+                            "fields": { "summary": "Target" }
+                        }
+                    })));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .unlink_issues("PROJ-1", "PROJ-2", "blocks")
+                .await
+                .expect_err("missing Jira link id should return an error");
+
+            get_mock.assert();
+            match err {
+                Error::InvalidData(message) => {
+                    assert!(message.contains("PROJ-1"));
+                    assert!(message.contains("PROJ-2"));
+                    assert!(message.contains("Blocks"));
+                    assert!(message.contains("missing id"));
+                }
+                other => panic!("expected InvalidData error, got {other:?}"),
+            }
+        }
+
         /// On Server/DC and Cloud company-managed projects, the
         /// parent epic is in the `Epic Link` customfield rather than
         /// in `fields.parent`. `get_issue_relations` populates
