@@ -445,6 +445,7 @@ mod tests {
                     tool_prefix: Some("cloud".to_string()),
                     transport: "streamable-http".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -493,6 +494,7 @@ mod tests {
                     tool_prefix: None,
                     transport: "streamable-http".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -520,6 +522,7 @@ mod tests {
                     tool_prefix: None,
                     transport: "grpc".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -548,6 +551,7 @@ mod tests {
                     tool_prefix: None,
                     transport: "streamable-http".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -583,6 +587,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;
@@ -599,6 +604,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;
@@ -618,6 +624,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;
@@ -654,6 +661,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;

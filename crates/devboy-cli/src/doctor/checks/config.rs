@@ -484,6 +484,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }],
             ..Default::default()
         };

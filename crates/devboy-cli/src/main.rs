@@ -1241,6 +1241,7 @@ async fn handle_init_command(
             tool_prefix: None,
             transport,
             routing: None,
+            oauth: None,
         });
     }
 
@@ -3501,6 +3502,7 @@ fn handle_proxy_add(
         tool_prefix: None,
         transport: transport_str.to_string(),
         routing: None,
+        oauth: None,
     };
 
     config.proxy_mcp_servers.push(proxy);
@@ -5494,6 +5496,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
@@ -5520,6 +5523,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "sse".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
@@ -5550,6 +5554,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
