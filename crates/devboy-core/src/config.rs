@@ -199,6 +199,10 @@ pub struct ProxyOAuthConfig {
     /// `WWW-Authenticate` challenge if unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorization_server: Option<String>,
+    /// Token endpoint, cached from discovery at `devboy login` time so the proxy
+    /// refreshes without re-running discovery on every startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint: Option<String>,
 }
 
 fn default_transport_sse() -> String {

@@ -2712,6 +2712,15 @@ async fn cmd_login(server_name: &str) -> Result<()> {
         }
     };
 
+    // Cache client_id + token_endpoint so the proxy refreshes headlessly later.
+    {
+        let mut oc = config.proxy_mcp_servers[idx].oauth.clone().unwrap_or_default();
+        oc.client_id = Some(client_id.clone());
+        oc.token_endpoint = Some(meta.token_endpoint.clone());
+        config.proxy_mcp_servers[idx].oauth = Some(oc);
+        config.save().context("Failed to persist oauth config")?;
+    }
+
     // 3. Device authorization request.
     let device_ep = meta
         .device_authorization_endpoint
@@ -3679,6 +3688,44 @@ fn handle_proxy_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Build an OAuth token holder for an `auth_type = "oauth2"` proxy, loading the
+/// stored tokens + cached endpoints. Returns `Ok(None)` for non-oauth2 proxies;
+/// an error means the proxy isn't logged in yet (`devboy login <name>`).
+fn build_oauth_auth(
+    proxy_cfg: &ProxyMcpServerConfig,
+) -> Result<Option<Arc<devboy_mcp::oauth_auth::OAuthAuth>>> {
+    if proxy_cfg.auth_type != "oauth2" {
+        return Ok(None);
+    }
+    let hint = format!("run: devboy login {}", proxy_cfg.name);
+    let oc = proxy_cfg
+        .oauth
+        .as_ref()
+        .with_context(|| format!("proxy '{}' has no [oauth] config — {hint}", proxy_cfg.name))?;
+    let client_id = oc
+        .client_id
+        .clone()
+        .with_context(|| format!("proxy '{}' not logged in — {hint}", proxy_cfg.name))?;
+    let token_endpoint = oc
+        .token_endpoint
+        .clone()
+        .with_context(|| format!("proxy '{}' missing token_endpoint — {hint}", proxy_cfg.name))?;
+    let store: Arc<dyn CredentialStore> = Arc::from(get_credential_store());
+    let key = format!("proxy.{}.oauth", proxy_cfg.name);
+    let secret = store
+        .get(&key)?
+        .with_context(|| format!("proxy '{}' not logged in — {hint}", proxy_cfg.name))?;
+    let tokens: devboy_core::oauth::OAuthTokens = serde_json::from_str(secret.expose_secret())
+        .context("stored OAuth tokens are corrupt; re-login")?;
+    Ok(Some(Arc::new(devboy_mcp::oauth_auth::OAuthAuth::new(
+        tokens,
+        client_id,
+        token_endpoint,
+        key,
+        store,
+    ))))
+}
+
 async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> ProxyManager {
     let mut proxy_manager = ProxyManager::new();
     for proxy_cfg in &config.proxy_mcp_servers {
@@ -3693,6 +3740,16 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
 
         let transport = ProxyTransport::parse(&proxy_cfg.transport);
 
+        // For oauth2 upstreams, build the auto-refreshing token holder. Skip a
+        // proxy that isn't logged in rather than failing the whole manager.
+        let oauth = match build_oauth_auth(proxy_cfg) {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!("proxy '{}': {}", proxy_cfg.name, e);
+                continue;
+            }
+        };
+
         match McpProxyClient::connect(
             &proxy_cfg.name,
             &url,
@@ -3700,7 +3757,7 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
             token.as_ref(),
             &proxy_cfg.auth_type,
             transport,
-            None,
+            oauth,
         )
         .await
         {
