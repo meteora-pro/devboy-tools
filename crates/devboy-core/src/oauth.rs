@@ -10,6 +10,7 @@
 //! - Dynamic registration (RFC 7591), the device grant (RFC 8628) and refresh
 //!   (RFC 6749 §6) build on the [`AuthServerMetadata`] discovered here.
 
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -315,6 +316,44 @@ pub async fn refresh(
     }
 }
 
+/// A persisted OAuth token set for one proxy upstream. Serialized as JSON into
+/// the credential store under a per-server key (e.g. `proxy.<name>.oauth`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthTokens {
+    pub access_token: String,
+    pub refresh_token: String,
+    /// Absolute UTC instant the access token expires.
+    pub expires_at: DateTime<Utc>,
+}
+
+impl OAuthTokens {
+    /// Build from a token response, computing `expires_at` from `expires_in`
+    /// relative to `now`. Falls back to `prev_refresh` when the response omits
+    /// `refresh_token` (defensive — the DevBoy AS always rotates and re-sends it).
+    pub fn from_response(
+        resp: TokenResponse,
+        now: DateTime<Utc>,
+        prev_refresh: Option<&str>,
+    ) -> Result<Self, OAuthError> {
+        let refresh_token = resp
+            .refresh_token
+            .or_else(|| prev_refresh.map(str::to_string))
+            .ok_or_else(|| OAuthError::Malformed("token response has no refresh_token".into()))?;
+        let ttl = resp.expires_in.unwrap_or(3600).max(0);
+        Ok(Self {
+            access_token: resp.access_token,
+            refresh_token,
+            expires_at: now + Duration::seconds(ttl),
+        })
+    }
+
+    /// True when the access token is expired or within `skew` of expiry — the
+    /// signal for a pre-flight refresh.
+    pub fn is_near_expiry(&self, now: DateTime<Utc>, skew: Duration) -> bool {
+        self.expires_at <= now + skew
+    }
+}
+
 /// Extract the `error` code from an RFC 6749 §5.2 error response body.
 pub(crate) fn parse_oauth_error(body: &str) -> Option<String> {
     #[derive(Deserialize)]
@@ -495,5 +534,72 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, OAuthError::Oauth(c) if c == "invalid_grant"));
+    }
+
+    fn epoch() -> DateTime<Utc> {
+        DateTime::from_timestamp(1_700_000_000, 0).unwrap()
+    }
+
+    #[test]
+    fn oauth_tokens_from_response_computes_expiry() {
+        let resp = TokenResponse {
+            access_token: "at".into(),
+            refresh_token: Some("rt".into()),
+            expires_in: Some(3600),
+            token_type: Some("Bearer".into()),
+        };
+        let t = OAuthTokens::from_response(resp, epoch(), None).unwrap();
+        assert_eq!(t.access_token, "at");
+        assert_eq!(t.refresh_token, "rt");
+        assert_eq!(t.expires_at, epoch() + Duration::seconds(3600));
+    }
+
+    #[test]
+    fn oauth_tokens_falls_back_to_prev_refresh() {
+        let resp = TokenResponse {
+            access_token: "at".into(),
+            refresh_token: None,
+            expires_in: Some(60),
+            token_type: None,
+        };
+        let t = OAuthTokens::from_response(resp, epoch(), Some("old-rt")).unwrap();
+        assert_eq!(t.refresh_token, "old-rt");
+    }
+
+    #[test]
+    fn oauth_tokens_no_refresh_anywhere_errors() {
+        let resp = TokenResponse {
+            access_token: "at".into(),
+            refresh_token: None,
+            expires_in: Some(60),
+            token_type: None,
+        };
+        assert!(OAuthTokens::from_response(resp, epoch(), None).is_err());
+    }
+
+    #[test]
+    fn oauth_tokens_near_expiry() {
+        let t = OAuthTokens {
+            access_token: "at".into(),
+            refresh_token: "rt".into(),
+            expires_at: epoch() + Duration::seconds(100),
+        };
+        // 50s before expiry, 60s skew → near expiry
+        assert!(t.is_near_expiry(epoch() + Duration::seconds(50), Duration::seconds(60)));
+        // 10s in, 60s skew → not near yet
+        assert!(!t.is_near_expiry(epoch() + Duration::seconds(10), Duration::seconds(60)));
+    }
+
+    #[test]
+    fn oauth_tokens_json_roundtrip() {
+        let t = OAuthTokens {
+            access_token: "at".into(),
+            refresh_token: "rt".into(),
+            expires_at: epoch(),
+        };
+        let json = serde_json::to_string(&t).unwrap();
+        let back: OAuthTokens = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.access_token, "at");
+        assert_eq!(back.expires_at, epoch());
     }
 }
