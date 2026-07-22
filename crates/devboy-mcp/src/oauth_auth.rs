@@ -1,0 +1,156 @@
+//! Per-upstream OAuth token holder with transparent, single-flight refresh
+//! (issue #306). Wired into the proxy request path so `auth_type = "oauth2"`
+//! upstreams inject a fresh Bearer per request and recover from 401s by
+//! refreshing — no manual re-login until the refresh token itself expires.
+
+use std::sync::Arc;
+
+use chrono::{Duration, Utc};
+use devboy_core::oauth::{self, OAuthError, OAuthTokens};
+use devboy_storage::CredentialStore;
+use secrecy::SecretString;
+use tokio::sync::{Mutex, RwLock};
+
+/// Refresh this many seconds before the access token actually expires.
+const EXPIRY_SKEW_SECS: i64 = 60;
+
+/// Holds the live OAuth token set for one proxy upstream and refreshes it
+/// transparently. The DevBoy AS **rotates** refresh_tokens, so:
+/// - refreshes are serialized behind [`OAuthAuth::gate`] (single-flight):
+///   concurrent 401s trigger exactly one refresh;
+/// - the rotated pair is persisted to the credential store *before* the
+///   in-memory swap, so a crash mid-refresh never strands a spent token.
+pub struct OAuthAuth {
+    tokens: RwLock<OAuthTokens>,
+    client_id: String,
+    token_endpoint: String,
+    gate: Mutex<()>,
+    store_key: String,
+    http: reqwest::Client,
+    store: Arc<dyn CredentialStore>,
+}
+
+impl OAuthAuth {
+    pub fn new(
+        tokens: OAuthTokens,
+        client_id: String,
+        token_endpoint: String,
+        store_key: String,
+        store: Arc<dyn CredentialStore>,
+    ) -> Self {
+        Self {
+            tokens: RwLock::new(tokens),
+            client_id,
+            token_endpoint,
+            gate: Mutex::new(()),
+            store_key,
+            http: reqwest::Client::new(),
+            store,
+        }
+    }
+
+    /// Access token for a request's `Authorization` header. Refreshes pre-flight
+    /// when the current token is within the expiry skew.
+    pub async fn access_token(&self) -> Result<String, OAuthError> {
+        let (near, seen) = {
+            let t = self.tokens.read().await;
+            (
+                t.is_near_expiry(Utc::now(), Duration::seconds(EXPIRY_SKEW_SECS)),
+                t.access_token.clone(),
+            )
+        };
+        if near {
+            self.refresh(&seen).await?;
+        }
+        Ok(self.tokens.read().await.access_token.clone())
+    }
+
+    /// Refresh unless another task already rotated past `seen` (single-flight
+    /// double-check via the access token). Call on a 401 with the token that was
+    /// actually sent. Persists the rotated pair before swapping it in memory.
+    pub async fn refresh(&self, seen: &str) -> Result<(), OAuthError> {
+        let _g = self.gate.lock().await;
+        // Double-check: a concurrent task may have refreshed while we waited on
+        // the gate — if the live access token already moved past `seen`, we're
+        // done (and must NOT spend the — now rotated — refresh token again).
+        if self.tokens.read().await.access_token != seen {
+            return Ok(());
+        }
+        let old_refresh = self.tokens.read().await.refresh_token.clone();
+        let resp = oauth::refresh(
+            &self.http,
+            &self.token_endpoint,
+            &old_refresh,
+            &self.client_id,
+        )
+        .await?;
+        let new = OAuthTokens::from_response(resp, Utc::now(), Some(&old_refresh))?;
+        // Persist FIRST — the old refresh_token is now deactivated server-side,
+        // so the new pair must reach durable storage before anything else.
+        let json = serde_json::to_string(&new).map_err(|e| OAuthError::Malformed(e.to_string()))?;
+        self.store
+            .store(&self.store_key, &SecretString::from(json))
+            .map_err(|e| OAuthError::Http(format!("persist tokens: {e}")))?;
+        *self.tokens.write().await = new;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use devboy_storage::MemoryStore;
+    use httpmock::prelude::*;
+    use secrecy::ExposeSecret;
+
+    fn tokens(access: &str, expires_at: chrono::DateTime<Utc>) -> OAuthTokens {
+        OAuthTokens {
+            access_token: access.into(),
+            refresh_token: "rt-old".into(),
+            expires_at,
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_rotates_and_persists_before_swap() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/token");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#);
+            })
+            .await;
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let auth = OAuthAuth::new(
+            tokens("at-old", Utc::now()),
+            "cli".into(),
+            format!("{}/token", server.base_url()),
+            "proxy.x.oauth".into(),
+            store.clone(),
+        );
+        auth.refresh("at-old").await.unwrap();
+        assert_eq!(auth.access_token().await.unwrap(), "at-new");
+        // rotated pair reached the store
+        let saved = store.get("proxy.x.oauth").unwrap().unwrap();
+        assert!(saved.expose_secret().contains("rt-new"));
+    }
+
+    #[tokio::test]
+    async fn refresh_double_check_skips_when_already_rotated() {
+        // token far from expiry, endpoint unreachable — if the double-check
+        // fails to short-circuit, the bogus URL makes the test error out.
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let auth = OAuthAuth::new(
+            tokens("at-current", Utc::now() + Duration::seconds(3600)),
+            "cli".into(),
+            "http://127.0.0.1:1/token".into(),
+            "k".into(),
+            store,
+        );
+        // seen != current access → treated as already-refreshed → no HTTP call
+        auth.refresh("at-stale").await.unwrap();
+        assert_eq!(auth.access_token().await.unwrap(), "at-current");
+    }
+}

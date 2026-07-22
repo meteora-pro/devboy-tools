@@ -30,6 +30,7 @@ pub mod handlers;
 pub mod layered;
 pub mod prefetch_adapter;
 pub mod protocol;
+pub mod oauth_auth;
 pub mod proxy;
 pub mod proxy_secrets;
 pub mod routing;
