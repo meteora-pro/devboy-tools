@@ -277,6 +277,44 @@ pub async fn poll_device_token_once(
     }
 }
 
+/// RFC 6749 §6 refresh-token grant — exchange a refresh_token for a fresh set.
+///
+/// The DevBoy AS **rotates** the refresh_token: the response carries a new one
+/// and the old is deactivated. Callers therefore MUST (1) persist the returned
+/// pair immediately and (2) serialize refreshes (single-flight) so two requests
+/// never race on the same — now dead — refresh_token. An `invalid_grant` error
+/// means the refresh_token is spent/revoked → the caller should re-run login.
+pub async fn refresh(
+    http: &reqwest::Client,
+    token_endpoint: &str,
+    refresh_token: &str,
+    client_id: &str,
+) -> Result<TokenResponse, OAuthError> {
+    let form = [
+        ("grant_type", GRANT_REFRESH_TOKEN),
+        ("refresh_token", refresh_token),
+        ("client_id", client_id),
+    ];
+    let resp = http
+        .post(token_endpoint)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| OAuthError::Http(e.to_string()))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| OAuthError::Http(e.to_string()))?;
+    if status.is_success() {
+        return serde_json::from_str(&body).map_err(|e| OAuthError::Malformed(e.to_string()));
+    }
+    match parse_oauth_error(&body) {
+        Some(code) => Err(OAuthError::Oauth(code)),
+        None => Err(OAuthError::Oauth(format!("HTTP {status}: {body}"))),
+    }
+}
+
 /// Extract the `error` code from an RFC 6749 §5.2 error response body.
 pub(crate) fn parse_oauth_error(body: &str) -> Option<String> {
     #[derive(Deserialize)]
@@ -417,5 +455,45 @@ mod tests {
             Some("slow_down")
         );
         assert!(parse_oauth_error("not json").is_none());
+    }
+
+    #[tokio::test]
+    async fn refresh_returns_rotated_pair_on_success() {
+        use httpmock::prelude::*;
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/token");
+                then.status(200).header("content-type", "application/json").body(
+                    r#"{"access_token":"new-at","refresh_token":"new-rt","expires_in":7776000,"token_type":"Bearer"}"#,
+                );
+            })
+            .await;
+        let http = reqwest::Client::new();
+        let t = refresh(&http, &format!("{}/token", server.base_url()), "old-rt", "cli-x")
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(t.access_token, "new-at");
+        assert_eq!(t.refresh_token.as_deref(), Some("new-rt")); // rotated
+    }
+
+    #[tokio::test]
+    async fn refresh_invalid_grant_surfaces_error() {
+        use httpmock::prelude::*;
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/token");
+                then.status(400)
+                    .header("content-type", "application/json")
+                    .body(r#"{"error":"invalid_grant"}"#);
+            })
+            .await;
+        let http = reqwest::Client::new();
+        let err = refresh(&http, &format!("{}/token", server.base_url()), "spent", "cli-x")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, OAuthError::Oauth(c) if c == "invalid_grant"));
     }
 }
