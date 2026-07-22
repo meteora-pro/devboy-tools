@@ -174,6 +174,118 @@ pub async fn register_client(
     Ok(resp.client_id)
 }
 
+/// RFC 8628 §3.2 device authorization response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceAuthResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    #[serde(default)]
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: i64,
+    /// Minimum seconds between polls. RFC 8628 §3.2 default is 5.
+    #[serde(default = "default_interval")]
+    pub interval: u64,
+}
+
+fn default_interval() -> u64 {
+    5
+}
+
+/// RFC 6749 §5.1 successful token response (device_code + refresh grants).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenResponse {
+    pub access_token: String,
+    #[serde(default)]
+    pub refresh_token: Option<String>,
+    /// Access-token lifetime in seconds (used to compute `expires_at`).
+    #[serde(default)]
+    pub expires_in: Option<i64>,
+    #[serde(default)]
+    pub token_type: Option<String>,
+}
+
+/// One device-token poll outcome (RFC 8628 §3.5).
+#[derive(Debug)]
+pub enum DevicePollOutcome {
+    /// Not yet approved — keep polling at the current interval.
+    Pending,
+    /// Polled too fast — the client must lengthen the interval by 5s.
+    SlowDown,
+    /// User approved — tokens issued.
+    Granted(TokenResponse),
+}
+
+/// POST the RFC 8628 §3.1 device authorization request (form-encoded).
+pub async fn request_device_authorization(
+    http: &reqwest::Client,
+    device_endpoint: &str,
+    client_id: &str,
+    scope: Option<&str>,
+) -> Result<DeviceAuthResponse, OAuthError> {
+    let mut form: Vec<(&str, &str)> = vec![("client_id", client_id)];
+    if let Some(s) = scope {
+        form.push(("scope", s));
+    }
+    http.post(device_endpoint)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| OAuthError::Http(e.to_string()))?
+        .error_for_status()
+        .map_err(|e| OAuthError::Http(e.to_string()))?
+        .json()
+        .await
+        .map_err(|e| OAuthError::Malformed(e.to_string()))
+}
+
+/// Poll the token endpoint once with the device_code grant (RFC 8628 §3.4/§3.5).
+/// `authorization_pending`/`slow_down` map to non-terminal outcomes; other error
+/// codes (`access_denied`, `expired_token`, …) surface as [`OAuthError::Oauth`].
+pub async fn poll_device_token_once(
+    http: &reqwest::Client,
+    token_endpoint: &str,
+    device_code: &str,
+    client_id: &str,
+) -> Result<DevicePollOutcome, OAuthError> {
+    let form = [
+        ("grant_type", GRANT_DEVICE_CODE),
+        ("device_code", device_code),
+        ("client_id", client_id),
+    ];
+    let resp = http
+        .post(token_endpoint)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| OAuthError::Http(e.to_string()))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| OAuthError::Http(e.to_string()))?;
+    if status.is_success() {
+        let tokens: TokenResponse =
+            serde_json::from_str(&body).map_err(|e| OAuthError::Malformed(e.to_string()))?;
+        return Ok(DevicePollOutcome::Granted(tokens));
+    }
+    match parse_oauth_error(&body).as_deref() {
+        Some("authorization_pending") => Ok(DevicePollOutcome::Pending),
+        Some("slow_down") => Ok(DevicePollOutcome::SlowDown),
+        Some(other) => Err(OAuthError::Oauth(other.to_string())),
+        None => Err(OAuthError::Oauth(format!("HTTP {status}: {body}"))),
+    }
+}
+
+/// Extract the `error` code from an RFC 6749 §5.2 error response body.
+pub(crate) fn parse_oauth_error(body: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct ErrBody {
+        error: String,
+    }
+    serde_json::from_str::<ErrBody>(body).ok().map(|e| e.error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +368,54 @@ mod tests {
         let json = r#"{"client_id": "cli-xyz", "client_id_issued_at": 123, "client_secret": null}"#;
         let r: ClientRegistrationResponse = serde_json::from_str(json).unwrap();
         assert_eq!(r.client_id, "cli-xyz");
+    }
+
+    #[test]
+    fn device_auth_response_deserializes_with_defaults() {
+        let json = r#"{
+            "device_code": "dc123",
+            "user_code": "WDJB-MJHT",
+            "verification_uri": "https://as/device",
+            "verification_uri_complete": "https://as/device?user_code=WDJB-MJHT",
+            "expires_in": 900,
+            "interval": 5
+        }"#;
+        let d: DeviceAuthResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(d.user_code, "WDJB-MJHT");
+        assert_eq!(d.interval, 5);
+        assert_eq!(
+            d.verification_uri_complete.as_deref(),
+            Some("https://as/device?user_code=WDJB-MJHT")
+        );
+    }
+
+    #[test]
+    fn device_auth_interval_defaults_to_5() {
+        let json = r#"{"device_code":"d","user_code":"U","verification_uri":"https://as/d","expires_in":600}"#;
+        let d: DeviceAuthResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(d.interval, 5);
+        assert!(d.verification_uri_complete.is_none());
+    }
+
+    #[test]
+    fn token_response_deserializes() {
+        let json = r#"{"access_token":"at","refresh_token":"rt","expires_in":7776000,"token_type":"Bearer"}"#;
+        let t: TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(t.access_token, "at");
+        assert_eq!(t.refresh_token.as_deref(), Some("rt"));
+        assert_eq!(t.expires_in, Some(7776000));
+    }
+
+    #[test]
+    fn parse_oauth_error_extracts_code() {
+        assert_eq!(
+            parse_oauth_error(r#"{"error":"authorization_pending"}"#).as_deref(),
+            Some("authorization_pending")
+        );
+        assert_eq!(
+            parse_oauth_error(r#"{"error":"slow_down","error_description":"…"}"#).as_deref(),
+            Some("slow_down")
+        );
+        assert!(parse_oauth_error("not json").is_none());
     }
 }
