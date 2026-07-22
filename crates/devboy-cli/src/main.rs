@@ -328,6 +328,16 @@ enum Commands {
         command: TraceCommands,
     },
 
+    /// Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628).
+    ///
+    /// Discovers the authorization server from the upstream's `WWW-Authenticate`
+    /// challenge, registers a client if needed (RFC 7591), prints a code + URL to
+    /// approve in a browser, then stores auto-refreshing tokens.
+    Login {
+        /// Name of the `[[proxy_mcp_servers]]` entry to authorize.
+        server: String,
+    },
+
     /// Run diagnostic checks for the local DevBoy setup
     Doctor {
         /// Output machine-readable JSON
@@ -960,6 +970,10 @@ async fn main() -> Result<()> {
 
             Some(Commands::Config { command }) => {
                 handle_config_command(command)?;
+            }
+
+            Some(Commands::Login { server }) => {
+                cmd_login(&server).await?;
             }
 
             Some(Commands::Context { command }) => {
@@ -2638,6 +2652,117 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
 // =============================================================================
 // Issues Command
 // =============================================================================
+
+/// `devboy login <server>` — OAuth 2.1 device flow (RFC 8628) against a proxy
+/// upstream. Discovers the AS, registers a client if needed, drives the device
+/// grant, and stores auto-refreshing tokens in the credential store.
+async fn cmd_login(server_name: &str) -> Result<()> {
+    use devboy_core::oauth::{self, DevicePollOutcome, OAuthTokens};
+
+    let mut config = Config::load().context("Failed to load config")?;
+    let idx = config
+        .proxy_mcp_servers
+        .iter()
+        .position(|s| s.name == server_name)
+        .with_context(|| format!("No proxy server named '{server_name}' in .devboy.toml"))?;
+    let server = config.proxy_mcp_servers[idx].clone();
+    let http = reqwest::Client::new();
+    let oauth_cfg = server.oauth.clone().unwrap_or_default();
+
+    // 1. Discover authorization-server metadata.
+    let meta = match &oauth_cfg.authorization_server {
+        Some(as_url) => oauth::fetch_as_metadata(&http, as_url).await,
+        None => {
+            // Probe the upstream for its RFC 9728 WWW-Authenticate challenge.
+            let resp = http
+                .post(&server.url)
+                .header("content-type", "application/json")
+                .body("{}")
+                .send()
+                .await
+                .context("Failed to probe upstream for auth challenge")?;
+            let www = resp
+                .headers()
+                .get("www-authenticate")
+                .and_then(|v| v.to_str().ok())
+                .context(
+                    "Upstream returned no WWW-Authenticate; set [proxy_mcp_servers.oauth] authorization_server",
+                )?
+                .to_string();
+            oauth::discover(&http, &www).await
+        }
+    }
+    .map_err(|e| anyhow::anyhow!("OAuth discovery failed: {e}"))?;
+
+    // 2. Register a client if we don't have one yet (persist it for re-login).
+    let client_id = match oauth_cfg.client_id.clone() {
+        Some(id) => id,
+        None => {
+            let reg = meta.registration_endpoint.as_deref().context(
+                "Authorization server has no registration_endpoint; set [proxy_mcp_servers.oauth] client_id",
+            )?;
+            let id = oauth::register_client(&http, reg, "devboy-cli")
+                .await
+                .map_err(|e| anyhow::anyhow!("Client registration failed: {e}"))?;
+            let mut oc = server.oauth.clone().unwrap_or_default();
+            oc.client_id = Some(id.clone());
+            config.proxy_mcp_servers[idx].oauth = Some(oc);
+            config.save().context("Failed to persist client_id")?;
+            id
+        }
+    };
+
+    // 3. Device authorization request.
+    let device_ep = meta
+        .device_authorization_endpoint
+        .as_deref()
+        .context("Authorization server does not advertise a device_authorization_endpoint")?;
+    let scope = oauth_cfg.scopes.as_ref().map(|s| s.join(" "));
+    let da = oauth::request_device_authorization(&http, device_ep, &client_id, scope.as_deref())
+        .await
+        .map_err(|e| anyhow::anyhow!("Device authorization failed: {e}"))?;
+
+    let verify = da
+        .verification_uri_complete
+        .as_deref()
+        .unwrap_or(&da.verification_uri);
+    println!("\nTo authorize '{server_name}', open:\n  {verify}");
+    println!("and confirm the code:  {}\n", da.user_code);
+    println!("Waiting for approval…");
+
+    // 4. Poll the token endpoint until granted (honoring interval / slow_down).
+    let mut interval = da.interval.max(1);
+    let tokens = loop {
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        match oauth::poll_device_token_once(&http, &meta.token_endpoint, &da.device_code, &client_id)
+            .await
+            .map_err(|e| anyhow::anyhow!("Token poll failed: {e}"))?
+        {
+            DevicePollOutcome::Pending => continue,
+            DevicePollOutcome::SlowDown => {
+                interval += 5;
+                continue;
+            }
+            DevicePollOutcome::Granted(resp) => {
+                break OAuthTokens::from_response(resp, chrono::Utc::now(), None)
+                    .map_err(|e| anyhow::anyhow!("Malformed token response: {e}"))?;
+            }
+        }
+    };
+
+    // 5. Persist tokens in the credential store — the proxy auto-refreshes hence.
+    let store = get_credential_store();
+    let json = serde_json::to_string(&tokens).context("Failed to serialize tokens")?;
+    store
+        .store(
+            &format!("proxy.{server_name}.oauth"),
+            &SecretString::from(json),
+        )
+        .context("Failed to store OAuth tokens")?;
+
+    println!("✓ Logged in to '{server_name}'. Tokens stored; the proxy will auto-refresh.");
+    Ok(())
+}
 
 async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
     let (config, _) = load_runtime_config()?;
