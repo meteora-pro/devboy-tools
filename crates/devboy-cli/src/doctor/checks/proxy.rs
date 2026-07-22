@@ -234,6 +234,7 @@ async fn probe_proxy_server(
         token_value,
         auth_type,
         transport,
+        None,
     )
     .await
     {

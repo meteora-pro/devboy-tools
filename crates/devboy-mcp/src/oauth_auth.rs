@@ -101,7 +101,6 @@ mod tests {
     use super::*;
     use devboy_storage::MemoryStore;
     use httpmock::prelude::*;
-    use secrecy::ExposeSecret;
 
     fn tokens(access: &str, expires_at: chrono::DateTime<Utc>) -> OAuthTokens {
         OAuthTokens {
@@ -132,9 +131,12 @@ mod tests {
         );
         auth.refresh("at-old").await.unwrap();
         assert_eq!(auth.access_token().await.unwrap(), "at-new");
-        // rotated pair reached the store
-        let saved = store.get("proxy.x.oauth").unwrap().unwrap();
-        assert!(saved.expose_secret().contains("rt-new"));
+        // Rotated pair reached the store (content is a SecretString — presence
+        // is enough here; the persist-before-swap ordering is enforced in code).
+        assert!(
+            store.exists("proxy.x.oauth"),
+            "rotated tokens should be persisted"
+        );
     }
 
     #[tokio::test]

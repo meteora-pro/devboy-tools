@@ -53,6 +53,10 @@ pub struct McpProxyClient {
     session_id: RwLock<Option<String>>,
     /// Channel to receive SSE responses routed by request id (SSE transport only).
     pending: PendingResponses,
+    /// OAuth 2.1 token holder for `auth_type = "oauth2"` upstreams. When set, the
+    /// Bearer is injected per request (pre-flight + on-401 refresh) instead of
+    /// being baked into `http_client` at connect. `None` for bearer/api_key/none.
+    oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
 }
 
 impl McpProxyClient {
@@ -64,6 +68,7 @@ impl McpProxyClient {
         token: Option<&SecretString>,
         auth_type: &str,
         transport: ProxyTransport,
+        oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
     ) -> devboy_core::Result<Self> {
         let mut headers = HeaderMap::new();
         if let Some(token) = token {
@@ -95,10 +100,10 @@ impl McpProxyClient {
 
         match transport {
             ProxyTransport::Sse => {
-                Self::connect_sse(name, url, &prefix, headers, http_client).await
+                Self::connect_sse(name, url, &prefix, headers, http_client, oauth).await
             }
             ProxyTransport::StreamableHttp => {
-                Self::connect_streamable_http(name, url, &prefix, http_client).await
+                Self::connect_streamable_http(name, url, &prefix, http_client, oauth).await
             }
         }
     }
@@ -110,6 +115,7 @@ impl McpProxyClient {
         prefix: &str,
         headers: HeaderMap,
         http_client: reqwest::Client,
+        oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
     ) -> devboy_core::Result<Self> {
         let sse_url = url.to_string();
         let mut es = EventSource::new(
@@ -168,6 +174,7 @@ impl McpProxyClient {
             transport: ProxyTransport::Sse,
             session_id: RwLock::new(None),
             pending,
+            oauth,
         };
 
         client.initialize().await?;
@@ -181,6 +188,7 @@ impl McpProxyClient {
         url: &str,
         prefix: &str,
         http_client: reqwest::Client,
+        oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
     ) -> devboy_core::Result<Self> {
         let client = Self {
             name: name.to_string(),
@@ -192,6 +200,7 @@ impl McpProxyClient {
             transport: ProxyTransport::StreamableHttp,
             session_id: RwLock::new(None),
             pending: Arc::new(Mutex::new(Vec::new())),
+            oauth,
         };
 
         client.initialize().await?;
@@ -300,31 +309,66 @@ impl McpProxyClient {
             params,
         };
 
-        let mut request = self
-            .http_client
-            .post(&self.post_url)
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json, text/event-stream");
+        // For oauth2 upstreams, fetch a (pre-flight-refreshed) access token to
+        // inject per request; bearer/api_key/none keep the header baked at connect.
+        let mut access: Option<String> = match &self.oauth {
+            Some(auth) => Some(
+                auth.access_token()
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+            ),
+            None => None,
+        };
 
-        // Add session ID for all requests after initialize
-        if method != "initialize" {
-            let session = self.session_id.read().await;
-            if let Some(sid) = session.as_ref() {
-                request = request.header("mcp-session-id", sid);
+        // Send with on-401 refresh-and-retry (once) for oauth2 upstreams.
+        let mut attempt = 0u8;
+        let response = loop {
+            let mut request = self
+                .http_client
+                .post(&self.post_url)
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json, text/event-stream");
+
+            // Add session ID for all requests after initialize
+            if method != "initialize" {
+                let session = self.session_id.read().await;
+                if let Some(sid) = session.as_ref() {
+                    request = request.header("mcp-session-id", sid);
+                }
             }
-        }
+            if let Some(a) = &access {
+                request = request.header(AUTHORIZATION, format!("Bearer {a}"));
+            }
 
-        let response = request.json(&req).send().await.map_err(|e| {
-            tracing::error!(
-                "POST to {} failed: {} (is_timeout={}, is_connect={}, is_request={})",
-                self.post_url,
-                e,
-                e.is_timeout(),
-                e.is_connect(),
-                e.is_request(),
-            );
-            devboy_core::Error::Http(format!("POST failed: {}", e))
-        })?;
+            let response = request.json(&req).send().await.map_err(|e| {
+                tracing::error!(
+                    "POST to {} failed: {} (is_timeout={}, is_connect={}, is_request={})",
+                    self.post_url,
+                    e,
+                    e.is_timeout(),
+                    e.is_connect(),
+                    e.is_request(),
+                );
+                devboy_core::Error::Http(format!("POST failed: {}", e))
+            })?;
+
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                && attempt == 0
+                && let (Some(auth), Some(sent)) = (self.oauth.as_ref(), access.clone())
+            {
+                auth.refresh(&sent)
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("token refresh: {e}")))?;
+                access = Some(
+                    auth.access_token()
+                        .await
+                        .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+                );
+                attempt += 1;
+                continue;
+            }
+            break response;
+        };
 
         // Extract session ID from response headers (set during initialize)
         if method == "initialize"
@@ -885,6 +929,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -906,6 +951,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -936,6 +982,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -960,6 +1007,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -984,6 +1032,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1014,6 +1063,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1040,6 +1090,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1079,6 +1130,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1119,6 +1171,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1154,6 +1207,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1215,6 +1269,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1258,6 +1313,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1294,6 +1350,7 @@ mod tests {
             Some(&token),
             "api_key",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1325,6 +1382,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1368,6 +1426,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1400,6 +1459,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1434,6 +1494,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1462,6 +1523,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -1479,6 +1541,7 @@ mod tests {
             Some(&token),
             "api_key",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -1524,6 +1587,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::Sse,
+            None,
         )
         .await;
 
@@ -1565,6 +1629,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::Sse,
+            None,
         )
         .await;
 
@@ -1591,6 +1656,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::Sse,
+            None,
         )
         .await
         .unwrap();
@@ -1645,6 +1711,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1693,6 +1760,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1734,6 +1802,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1760,6 +1829,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1829,6 +1899,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1840,6 +1911,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1904,6 +1976,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1954,6 +2027,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -2005,6 +2079,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -2072,6 +2147,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();

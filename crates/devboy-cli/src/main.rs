@@ -3700,6 +3700,7 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
             token.as_ref(),
             &proxy_cfg.auth_type,
             transport,
+            None,
         )
         .await
         {
@@ -4242,6 +4243,7 @@ async fn add_env_only_proxies_from_snapshot(
                 token.as_ref(),
                 "bearer",
                 ProxyTransport::StreamableHttp,
+                None,
             )
             .await
             {

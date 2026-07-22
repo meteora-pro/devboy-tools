@@ -112,6 +112,7 @@ async fn end_to_end_routing_over_matched_catalogues() {
         None,
         "none",
         ProxyTransport::StreamableHttp,
+        None,
     )
     .await
     .unwrap();
