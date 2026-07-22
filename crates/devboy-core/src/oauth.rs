@@ -10,7 +10,7 @@
 //! - Dynamic registration (RFC 7591), the device grant (RFC 8628) and refresh
 //!   (RFC 6749 §6) build on the [`AuthServerMetadata`] discovered here.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// RFC 9728 §3.2 — OAuth Protected Resource Metadata (subset we consume).
@@ -128,6 +128,52 @@ pub async fn fetch_as_metadata(
         .map_err(|e| OAuthError::Malformed(e.to_string()))
 }
 
+/// Device + refresh grant type identifiers this client registers for.
+pub const GRANT_DEVICE_CODE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+pub const GRANT_REFRESH_TOKEN: &str = "refresh_token";
+
+/// RFC 7591 §2 dynamic client registration request. We register a **public**
+/// client (no secret, `token_endpoint_auth_method = "none"`) that uses the
+/// device-code and refresh-token grants — exactly what a CLI needs.
+#[derive(Debug, Serialize)]
+struct ClientRegistrationRequest {
+    client_name: String,
+    grant_types: Vec<String>,
+    token_endpoint_auth_method: String,
+}
+
+/// RFC 7591 §3.2.1 registration response (subset — we only need `client_id`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClientRegistrationResponse {
+    pub client_id: String,
+}
+
+/// Register a public device-flow client via RFC 7591 and return its `client_id`.
+/// Callers persist the id into `ProxyOAuthConfig.client_id` so re-login reuses it.
+pub async fn register_client(
+    http: &reqwest::Client,
+    registration_endpoint: &str,
+    client_name: &str,
+) -> Result<String, OAuthError> {
+    let req = ClientRegistrationRequest {
+        client_name: client_name.to_string(),
+        grant_types: vec![GRANT_DEVICE_CODE.to_string(), GRANT_REFRESH_TOKEN.to_string()],
+        token_endpoint_auth_method: "none".to_string(),
+    };
+    let resp: ClientRegistrationResponse = http
+        .post(registration_endpoint)
+        .json(&req)
+        .send()
+        .await
+        .map_err(|e| OAuthError::Http(e.to_string()))?
+        .error_for_status()
+        .map_err(|e| OAuthError::Http(e.to_string()))?
+        .json()
+        .await
+        .map_err(|e| OAuthError::Malformed(e.to_string()))?;
+    Ok(resp.client_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +236,25 @@ mod tests {
         let json = r#"{"authorization_servers": ["https://as.example.com"]}"#;
         let m: ProtectedResourceMetadata = serde_json::from_str(json).unwrap();
         assert_eq!(m.authorization_servers, vec!["https://as.example.com"]);
+    }
+
+    #[test]
+    fn registration_request_is_public_device_client() {
+        let req = ClientRegistrationRequest {
+            client_name: "devboy-cli".into(),
+            grant_types: vec![GRANT_DEVICE_CODE.into(), GRANT_REFRESH_TOKEN.into()],
+            token_endpoint_auth_method: "none".into(),
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["token_endpoint_auth_method"], "none");
+        assert_eq!(v["grant_types"][0], GRANT_DEVICE_CODE);
+        assert_eq!(v["grant_types"][1], "refresh_token");
+    }
+
+    #[test]
+    fn registration_response_deserializes() {
+        let json = r#"{"client_id": "cli-xyz", "client_id_issued_at": 123, "client_secret": null}"#;
+        let r: ClientRegistrationResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(r.client_id, "cli-xyz");
     }
 }
