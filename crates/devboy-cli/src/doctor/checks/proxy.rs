@@ -111,7 +111,54 @@ fn normalized_auth_type(auth_type: &str) -> Option<&'static str> {
         "bearer" => Some("bearer"),
         "api_key" => Some("api_key"),
         "none" => Some("none"),
+        "oauth2" => Some("oauth2"),
         _ => None,
+    }
+}
+
+/// Report the OAuth login state for an `auth_type = "oauth2"` proxy (issue #306).
+/// This is the stdio-side awareness signal: a human — or a coding agent reading
+/// `devboy doctor` — sees whether the proxy is authorized and, if not, the exact
+/// `devboy login <name>` to run. (No live probe: a valid session may still be
+/// mid-flight, and tokens auto-refresh at request time.)
+fn probe_oauth_state(
+    ctx: &DiagnosticContext,
+    proxy: &ProxyMcpServerConfig,
+    auth_type: &str,
+) -> ProxyProbeResult {
+    let key = format!("proxy.{}.oauth", proxy.name);
+    let logged_in = matches!(ctx.credential_store.get(&key), Ok(Some(_)));
+    let has_client = proxy
+        .oauth
+        .as_ref()
+        .and_then(|o| o.client_id.as_deref())
+        .is_some();
+    if logged_in && has_client {
+        ProxyProbeResult {
+            status: CheckStatus::Pass,
+            detail: json!({
+                "name": proxy.name,
+                "url": proxy.url,
+                "auth_type": auth_type,
+                "transport": proxy.transport,
+                "status": "logged_in",
+                "message": "OAuth: logged in; tokens auto-refresh",
+            }),
+            fix_command: None,
+        }
+    } else {
+        ProxyProbeResult {
+            status: CheckStatus::Error,
+            detail: json!({
+                "name": proxy.name,
+                "url": proxy.url,
+                "auth_type": auth_type,
+                "transport": proxy.transport,
+                "status": "needs_login",
+                "message": format!("OAuth proxy '{}' is not logged in", proxy.name),
+            }),
+            fix_command: Some(format!("devboy login {}", proxy.name)),
+        }
     }
 }
 
@@ -170,6 +217,11 @@ async fn probe_proxy_server(
             };
         }
     };
+
+    // OAuth2 proxies carry no token_key — report login state instead of probing.
+    if auth_type == "oauth2" {
+        return probe_oauth_state(ctx, proxy, auth_type);
+    }
 
     let token = match auth_type {
         "none" => None,
