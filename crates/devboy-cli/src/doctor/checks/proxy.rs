@@ -1,7 +1,9 @@
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
 use devboy_core::ProxyMcpServerConfig;
+use devboy_core::oauth::OAuthTokens;
 use devboy_mcp::{McpProxyClient, ProxyTransport};
+use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 use std::time::Instant;
 
@@ -127,7 +129,13 @@ fn probe_oauth_state(
     auth_type: &str,
 ) -> ProxyProbeResult {
     let key = format!("proxy.{}.oauth", proxy.name);
-    let logged_in = matches!(ctx.credential_store.get(&key), Ok(Some(_)));
+    // A present secret isn't enough: the proxy path needs it to deserialize as
+    // OAuthTokens. Treat a corrupt/partial blob as not-logged-in so doctor never
+    // reports a false-positive session.
+    let logged_in = match ctx.credential_store.get(&key) {
+        Ok(Some(secret)) => serde_json::from_str::<OAuthTokens>(secret.expose_secret()).is_ok(),
+        _ => false,
+    };
     let has_client = proxy
         .oauth
         .as_ref()
