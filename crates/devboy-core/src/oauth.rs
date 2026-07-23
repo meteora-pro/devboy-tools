@@ -252,11 +252,17 @@ pub(crate) const GRANT_REFRESH_TOKEN: &str = "refresh_token";
 /// RFC 7591 §2 dynamic client registration request. We register a **public**
 /// client (no secret, `token_endpoint_auth_method = "none"`) that uses the
 /// device-code and refresh-token grants — exactly what a CLI needs.
+///
+/// `redirect_uris` is set to the RFC 6749 out-of-band value: the device grant
+/// never redirects, but RFC 7591 §2 lists the field and some servers reject a
+/// registration without a (non-empty) `redirect_uris`. Sending the OOB URN is
+/// spec-compliant and harmless for servers that ignore it.
 #[derive(Debug, Serialize)]
 struct ClientRegistrationRequest {
     client_name: String,
     grant_types: Vec<String>,
     token_endpoint_auth_method: String,
+    redirect_uris: Vec<String>,
 }
 
 /// RFC 7591 §3.2.1 registration response (subset — we only need `client_id`).
@@ -279,6 +285,7 @@ pub async fn register_client(
             GRANT_REFRESH_TOKEN.to_string(),
         ],
         token_endpoint_auth_method: "none".to_string(),
+        redirect_uris: vec!["urn:ietf:wg:oauth:2.0:oob".to_string()],
     };
     let resp: ClientRegistrationResponse = http
         .post(registration_endpoint)
@@ -646,11 +653,13 @@ mod tests {
             client_name: "devboy-cli".into(),
             grant_types: vec![GRANT_DEVICE_CODE.into(), GRANT_REFRESH_TOKEN.into()],
             token_endpoint_auth_method: "none".into(),
+            redirect_uris: vec!["urn:ietf:wg:oauth:2.0:oob".into()],
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["token_endpoint_auth_method"], "none");
         assert_eq!(v["grant_types"][0], GRANT_DEVICE_CODE);
         assert_eq!(v["grant_types"][1], "refresh_token");
+        assert_eq!(v["redirect_uris"][0], "urn:ietf:wg:oauth:2.0:oob");
     }
 
     #[test]

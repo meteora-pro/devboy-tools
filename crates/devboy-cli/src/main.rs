@@ -2659,7 +2659,10 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
 async fn cmd_login(server_name: &str) -> Result<()> {
     use devboy_core::oauth::{self, DevicePollOutcome, OAuthTokens};
 
-    let mut config = Config::load().context("Failed to load config")?;
+    // Load the SAME config the proxy runtime uses (local .devboy.toml preferred,
+    // global fallback), so `login` finds proxies declared in .devboy.toml and
+    // writes client_id / tokens back to the file `proxy call` actually reads.
+    let (mut config, config_path) = load_runtime_config().context("Failed to load config")?;
     let idx = config
         .proxy_mcp_servers
         .iter()
@@ -2687,10 +2690,15 @@ async fn cmd_login(server_name: &str) -> Result<()> {
         Some(as_url) => oauth::fetch_as_metadata(&http, as_url).await,
         None => {
             // Probe the upstream for its RFC 9728 WWW-Authenticate challenge.
+            // Probe with a well-formed JSON-RPC `initialize` request (plus the
+            // MCP streamable-http Accept header). An empty/invalid body is
+            // rejected by the transport (e.g. 422) *before* the auth layer, so
+            // the RFC 9728 `WWW-Authenticate` challenge never comes back.
             let resp = http
                 .post(&server.url)
                 .header("content-type", "application/json")
-                .body("{}")
+                .header("accept", "application/json, text/event-stream")
+                .body(r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#)
                 .send()
                 .await
                 .context("Failed to probe upstream for auth challenge")?;
@@ -2728,7 +2736,9 @@ async fn cmd_login(server_name: &str) -> Result<()> {
             let mut oc = server.oauth.clone().unwrap_or_default();
             oc.client_id = Some(id.clone());
             config.proxy_mcp_servers[idx].oauth = Some(oc);
-            config.save().context("Failed to persist client_id")?;
+            config
+                .save_to(&config_path)
+                .context("Failed to persist client_id")?;
             id
         }
     };
@@ -2742,7 +2752,9 @@ async fn cmd_login(server_name: &str) -> Result<()> {
         oc.client_id = Some(client_id.clone());
         oc.token_endpoint = Some(meta.token_endpoint.clone());
         config.proxy_mcp_servers[idx].oauth = Some(oc);
-        config.save().context("Failed to persist oauth config")?;
+        config
+            .save_to(&config_path)
+            .context("Failed to persist oauth config")?;
     }
 
     // 3. Device authorization request.
