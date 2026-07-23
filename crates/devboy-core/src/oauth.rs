@@ -83,39 +83,80 @@ pub(crate) fn parse_www_authenticate(value: &str) -> Option<String> {
     (!url.is_empty()).then(|| url.to_string())
 }
 
-/// Guard an outbound discovery URL. RFC 9728 / RFC 8414 metadata must be
-/// fetched over `https` (`http` is tolerated only for loopback dev hosts).
-/// A malicious upstream can put anything in its `WWW-Authenticate` challenge or
-/// its resource metadata; rejecting other schemes/hosts keeps a crafted value
-/// from steering our client at `file://`, an internal address, or another
-/// protocol (SSRF-style).
-pub(crate) fn require_web_url(url: &str) -> Result<(), OAuthError> {
-    if let Some(rest) = url.strip_prefix("https://") {
-        return if rest.split('/').next().unwrap_or("").is_empty() {
-            Err(OAuthError::Oauth(format!(
-                "discovery URL has no host: {url}"
-            )))
-        } else {
-            Ok(())
-        };
+/// Guard an outbound discovery/endpoint URL before we fetch it or POST secrets
+/// to it. Metadata and token endpoints must be reached over `https` (`http` is
+/// tolerated only for a genuine loopback host). A malicious upstream can put
+/// anything in its `WWW-Authenticate` challenge or its advertised metadata, so
+/// this parses the URL properly and rejects: credentials in the authority
+/// (`http://localhost@evil/`), non-http(s) schemes (`file://`, …), and — for
+/// https — IP literals in private/link-local/loopback ranges. That keeps a
+/// crafted value from steering the client at an internal address or a plaintext
+/// endpoint (e.g. exfiltrating a rotating refresh token).
+///
+/// Not caught here: a *hostname* that resolves to a private address (DNS
+/// rebinding). Discovery clients additionally disable redirect-following (so a
+/// single crafted hop can't downgrade the target); connect-time IP pinning is a
+/// documented follow-up.
+pub(crate) fn require_web_url(raw: &str) -> Result<(), OAuthError> {
+    let parsed = url::Url::parse(raw)
+        .map_err(|e| OAuthError::Oauth(format!("invalid discovery URL {raw:?}: {e}")))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(OAuthError::Oauth(format!(
+            "discovery URL must not carry credentials: {raw}"
+        )));
     }
-    if let Some(rest) = url.strip_prefix("http://") {
-        let authority = rest.split('/').next().unwrap_or("");
-        let loopback = authority == "localhost"
-            || authority.starts_with("localhost:")
-            || authority.starts_with("127.")
-            || authority.starts_with("[::1]");
-        return if loopback {
-            Ok(())
-        } else {
-            Err(OAuthError::Oauth(format!(
-                "refusing non-loopback http discovery URL (use https): {url}"
-            )))
-        };
+    let host = parsed
+        .host()
+        .ok_or_else(|| OAuthError::Oauth(format!("discovery URL has no host: {raw}")))?;
+    if parsed.host_str().unwrap_or("").is_empty() {
+        return Err(OAuthError::Oauth(format!(
+            "discovery URL has no host: {raw}"
+        )));
     }
-    Err(OAuthError::Oauth(format!(
-        "refusing discovery URL with non-http(s) scheme: {url}"
-    )))
+    match parsed.scheme() {
+        "https" => {
+            if host_is_private(&host) {
+                return Err(OAuthError::Oauth(format!(
+                    "refusing discovery URL at a private/link-local/loopback address: {raw}"
+                )));
+            }
+            Ok(())
+        }
+        "http" if host_is_loopback(&host) => Ok(()),
+        "http" => Err(OAuthError::Oauth(format!(
+            "refusing non-loopback http discovery URL (use https): {raw}"
+        ))),
+        other => Err(OAuthError::Oauth(format!(
+            "refusing discovery URL with non-http(s) scheme {other:?}: {raw}"
+        ))),
+    }
+}
+
+/// A host that is unambiguously loopback: exact `localhost`, `127.0.0.0/8`, `::1`.
+fn host_is_loopback(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(d) => d.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+    }
+}
+
+/// An IP-literal host in a private, link-local, loopback, or unspecified range.
+/// Domain names return `false` (see the rebinding note on [`require_web_url`]).
+fn host_is_private(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(_) => false,
+        url::Host::Ipv4(ip) => {
+            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+        }
+        url::Host::Ipv6(ip) => {
+            let seg0 = ip.segments()[0];
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || (seg0 & 0xfe00) == 0xfc00 // ULA fc00::/7
+                || (seg0 & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+    }
 }
 
 /// Discover authorization-server metadata for an upstream, starting from its
@@ -145,18 +186,20 @@ pub async fn discover(
     fetch_as_metadata(http, &as_base).await
 }
 
-/// Fetch RFC 8414 authorization-server metadata from
-/// `<issuer>/.well-known/oauth-authorization-server`.
+/// Fetch RFC 8414 authorization-server metadata. Per RFC 8414 §3.1 / RFC 8615
+/// the well-known segment goes *after* the authority and *before* any issuer
+/// path (`https://host/tenant` → `https://host/.well-known/oauth-authorization-server/tenant`),
+/// not naively appended. The advertised `issuer` is verified to match (§3.3),
+/// and every endpoint the AS advertises is scheme/host-guarded before we POST
+/// secrets to it.
 pub async fn fetch_as_metadata(
     http: &reqwest::Client,
     issuer: &str,
 ) -> Result<AuthServerMetadata, OAuthError> {
     require_web_url(issuer)?;
-    let url = format!(
-        "{}/.well-known/oauth-authorization-server",
-        issuer.trim_end_matches('/')
-    );
-    http.get(&url)
+    let well_known = well_known_url(issuer)?;
+    let meta: AuthServerMetadata = http
+        .get(&well_known)
         .send()
         .await
         .map_err(|e| OAuthError::Http(e.to_string()))?
@@ -164,7 +207,42 @@ pub async fn fetch_as_metadata(
         .map_err(|e| OAuthError::Http(e.to_string()))?
         .json()
         .await
-        .map_err(|e| OAuthError::Malformed(e.to_string()))
+        .map_err(|e| OAuthError::Malformed(e.to_string()))?;
+    // RFC 8414 §3.3: the returned issuer MUST match the one we asked about.
+    if meta.issuer.trim_end_matches('/') != issuer.trim_end_matches('/') {
+        return Err(OAuthError::Malformed(format!(
+            "issuer mismatch: requested {issuer:?}, metadata declares {:?}",
+            meta.issuer
+        )));
+    }
+    // Guard every endpoint we may POST secrets to before trusting it.
+    require_web_url(&meta.token_endpoint)?;
+    if let Some(ep) = &meta.device_authorization_endpoint {
+        require_web_url(ep)?;
+    }
+    if let Some(ep) = &meta.registration_endpoint {
+        require_web_url(ep)?;
+    }
+    Ok(meta)
+}
+
+/// Build the RFC 8414 well-known metadata URL for an issuer, inserting the
+/// well-known segment after the authority and preserving any issuer path.
+fn well_known_url(issuer: &str) -> Result<String, OAuthError> {
+    let parsed = url::Url::parse(issuer)
+        .map_err(|e| OAuthError::Oauth(format!("invalid issuer {issuer:?}: {e}")))?;
+    let authority = parsed
+        .host_str()
+        .ok_or_else(|| OAuthError::Oauth(format!("issuer has no host: {issuer}")))?;
+    let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
+    let path = parsed.path().trim_end_matches('/'); // "" or "/tenant"
+    Ok(format!(
+        "{}://{}{}/.well-known/oauth-authorization-server{}",
+        parsed.scheme(),
+        authority,
+        port,
+        path
+    ))
 }
 
 /// Device + refresh grant type identifiers this client registers for.
@@ -455,9 +533,9 @@ mod tests {
 
     #[test]
     fn require_web_url_enforces_https_and_loopback() {
-        // https is always fine
+        // https to a public host is fine
         assert!(require_web_url("https://as.example.com/.well-known/x").is_ok());
-        // http tolerated only for loopback dev hosts
+        // http tolerated only for genuine loopback hosts
         assert!(require_web_url("http://localhost:8080/meta").is_ok());
         assert!(require_web_url("http://127.0.0.1/meta").is_ok());
         assert!(require_web_url("http://[::1]:9000/meta").is_ok());
@@ -468,8 +546,53 @@ mod tests {
         assert!(require_web_url("file:///etc/passwd").is_err());
         assert!(require_web_url("ftp://host/x").is_err());
         assert!(require_web_url("gopher://host").is_err());
-        // https with no host is refused
-        assert!(require_web_url("https:///path").is_err());
+        // unparsable input is rejected
+        assert!(require_web_url("not a url").is_err());
+    }
+
+    #[test]
+    fn require_web_url_blocks_the_reviewed_bypasses() {
+        // https to a private/link-local/loopback IP literal (the guard's whole
+        // point — previously only the scheme was checked).
+        assert!(require_web_url("https://169.254.169.254/latest/meta-data").is_err());
+        assert!(require_web_url("https://10.0.0.5/token").is_err());
+        assert!(require_web_url("https://192.168.1.1/x").is_err());
+        assert!(require_web_url("https://172.16.0.1/x").is_err());
+        assert!(require_web_url("https://127.0.0.1/x").is_err());
+        assert!(require_web_url("https://[::1]/x").is_err());
+        assert!(require_web_url("https://[fd00::1]/x").is_err()); // ULA
+        assert!(require_web_url("https://[fe80::1]/x").is_err()); // link-local
+        // userinfo authority-confusion: real host is evil.com, not localhost.
+        assert!(require_web_url("http://localhost:80@evil.com/x").is_err());
+        assert!(require_web_url("http://localhost@evil.com/x").is_err());
+        assert!(require_web_url("https://as.example.com@evil.com/x").is_err());
+        // look-alike domain that merely starts with "127." is NOT loopback.
+        assert!(require_web_url("http://127.0.0.1.evil.com/x").is_err());
+        assert!(require_web_url("http://localhost.evil.com/x").is_err());
+    }
+
+    #[test]
+    fn well_known_url_is_rfc8414_path_aware() {
+        // hostless issuer → segment right after the authority
+        assert_eq!(
+            well_known_url("https://as.example.com").unwrap(),
+            "https://as.example.com/.well-known/oauth-authorization-server"
+        );
+        // trailing slash normalized
+        assert_eq!(
+            well_known_url("https://as.example.com/").unwrap(),
+            "https://as.example.com/.well-known/oauth-authorization-server"
+        );
+        // path-bearing issuer → well-known BEFORE the path (RFC 8414 §3.1)
+        assert_eq!(
+            well_known_url("https://ex.com/tenant1").unwrap(),
+            "https://ex.com/.well-known/oauth-authorization-server/tenant1"
+        );
+        // port preserved
+        assert_eq!(
+            well_known_url("https://ex.com:8443/t").unwrap(),
+            "https://ex.com:8443/.well-known/oauth-authorization-server/t"
+        );
     }
 
     #[test]

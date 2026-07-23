@@ -2674,7 +2674,12 @@ async fn cmd_login(server_name: &str) -> Result<()> {
             server.auth_type
         );
     }
-    let http = reqwest::Client::new();
+    // No redirect-following: require_web_url guards each URL, but reqwest would
+    // otherwise follow a 302 to an unvalidated (internal/plaintext) host.
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("build oauth discovery http client")?;
     let oauth_cfg = server.oauth.clone().unwrap_or_default();
 
     // 1. Discover authorization-server metadata.
