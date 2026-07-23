@@ -47,7 +47,7 @@ pub mod devboy_mcp::oauth_auth
 pub struct devboy_mcp::oauth_auth::OAuthAuth
 impl devboy_mcp::oauth_auth::OAuthAuth
 pub async fn devboy_mcp::oauth_auth::OAuthAuth::access_token(&self) -> core::result::Result<alloc::string::String, devboy_core::oauth::OAuthError>
-pub fn devboy_mcp::oauth_auth::OAuthAuth::new(tokens: devboy_core::oauth::OAuthTokens, client_id: alloc::string::String, token_endpoint: alloc::string::String, store_key: alloc::string::String, store: alloc::sync::Arc<dyn devboy_storage::CredentialStore>) -> Self
+pub fn devboy_mcp::oauth_auth::OAuthAuth::new(tokens: devboy_core::oauth::OAuthTokens, client_id: alloc::string::String, token_endpoint: alloc::string::String, resource: alloc::string::String, store_key: alloc::string::String, store: alloc::sync::Arc<dyn devboy_storage::CredentialStore>) -> Self
 pub async fn devboy_mcp::oauth_auth::OAuthAuth::refresh(&self, seen: &str) -> core::result::Result<(), devboy_core::oauth::OAuthError>
 impl !core::marker::Freeze for devboy_mcp::oauth_auth::OAuthAuth
 impl core::marker::Send for devboy_mcp::oauth_auth::OAuthAuth

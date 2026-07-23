@@ -2769,9 +2769,18 @@ async fn cmd_login(server_name: &str) -> Result<()> {
         oauth_cfg.scopes.as_ref().map(|s| s.join(" ")).or_else(|| {
             (!meta.scopes_supported.is_empty()).then(|| meta.scopes_supported.join(" "))
         });
-    let da = oauth::request_device_authorization(&http, device_ep, &client_id, scope.as_deref())
-        .await
-        .map_err(|e| anyhow::anyhow!("Device authorization failed: {e}"))?;
+    // RFC 8707 resource indicator: the MCP server we're authorizing against, so
+    // the AS binds the token's audience to it and the resource can validate it.
+    let resource = server.url.as_str();
+    let da = oauth::request_device_authorization(
+        &http,
+        device_ep,
+        &client_id,
+        scope.as_deref(),
+        Some(resource),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Device authorization failed: {e}"))?;
 
     let verify = da
         .verification_uri_complete
@@ -2800,6 +2809,7 @@ async fn cmd_login(server_name: &str) -> Result<()> {
             &meta.token_endpoint,
             &da.device_code,
             &client_id,
+            Some(resource),
         )
         .await
         .map_err(|e| anyhow::anyhow!("Token poll failed: {e}"))?
@@ -3778,6 +3788,7 @@ fn build_oauth_auth(
         tokens,
         client_id,
         token_endpoint,
+        proxy_cfg.url.clone(), // RFC 8707 resource indicator for refresh
         key,
         store,
     ))))

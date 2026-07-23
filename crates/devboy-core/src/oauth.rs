@@ -349,10 +349,16 @@ pub async fn request_device_authorization(
     device_endpoint: &str,
     client_id: &str,
     scope: Option<&str>,
+    resource: Option<&str>,
 ) -> Result<DeviceAuthResponse, OAuthError> {
     let mut form: Vec<(&str, &str)> = vec![("client_id", client_id)];
     if let Some(s) = scope {
         form.push(("scope", s));
+    }
+    // RFC 8707 resource indicator — binds the issued token's audience to the
+    // MCP server so the resource can validate it (MCP authorization spec).
+    if let Some(r) = resource {
+        form.push(("resource", r));
     }
     http.post(device_endpoint)
         .form(&form)
@@ -374,12 +380,16 @@ pub async fn poll_device_token_once(
     token_endpoint: &str,
     device_code: &str,
     client_id: &str,
+    resource: Option<&str>,
 ) -> Result<DevicePollOutcome, OAuthError> {
-    let form = [
+    let mut form: Vec<(&str, &str)> = vec![
         ("grant_type", GRANT_DEVICE_CODE),
         ("device_code", device_code),
         ("client_id", client_id),
     ];
+    if let Some(r) = resource {
+        form.push(("resource", r));
+    }
     let resp = http
         .post(token_endpoint)
         .form(&form)
@@ -418,12 +428,18 @@ pub async fn refresh(
     token_endpoint: &str,
     refresh_token: &str,
     client_id: &str,
+    resource: Option<&str>,
 ) -> Result<TokenResponse, OAuthError> {
-    let form = [
+    let mut form: Vec<(&str, &str)> = vec![
         ("grant_type", GRANT_REFRESH_TOKEN),
         ("refresh_token", refresh_token),
         ("client_id", client_id),
     ];
+    // RFC 8707 resource indicator — keep the refreshed token bound to the same
+    // MCP server audience.
+    if let Some(r) = resource {
+        form.push(("resource", r));
+    }
     let resp = http
         .post(token_endpoint)
         .form(&form)
@@ -739,6 +755,7 @@ mod tests {
             &format!("{}/token", server.base_url()),
             "old-rt",
             "cli-x",
+            None,
         )
         .await
         .unwrap();
@@ -768,6 +785,7 @@ mod tests {
             &format!("{}/token", server.base_url()),
             "spent",
             "cli-x",
+            None,
         )
         .await
         .unwrap_err();

@@ -24,6 +24,9 @@ pub struct OAuthAuth {
     tokens: RwLock<OAuthTokens>,
     client_id: String,
     token_endpoint: String,
+    /// RFC 8707 resource indicator (the MCP server URL) — sent on refresh so the
+    /// rotated token keeps the same audience.
+    resource: String,
     gate: Mutex<()>,
     store_key: String,
     http: reqwest::Client,
@@ -35,6 +38,7 @@ impl OAuthAuth {
         tokens: OAuthTokens,
         client_id: String,
         token_endpoint: String,
+        resource: String,
         store_key: String,
         store: Arc<dyn CredentialStore>,
     ) -> Self {
@@ -42,6 +46,7 @@ impl OAuthAuth {
             tokens: RwLock::new(tokens),
             client_id,
             token_endpoint,
+            resource,
             gate: Mutex::new(()),
             store_key,
             // No redirect-following: the token endpoint carries the rotating
@@ -117,6 +122,7 @@ impl OAuthAuth {
             &self.token_endpoint,
             &our_refresh,
             &self.client_id,
+            Some(&self.resource),
         )
         .await
         {
@@ -192,6 +198,7 @@ mod tests {
             tokens("at-old", Utc::now()),
             "cli".into(),
             format!("{}/token", server.base_url()),
+            "https://rs.example/mcp".into(),
             "proxy.x.oauth".into(),
             store.clone(),
         );
@@ -229,6 +236,7 @@ mod tests {
             tokens("at-old", Utc::now()), // in-memory refresh is "rt-old"
             "cli".into(),
             "http://127.0.0.1:1/token".into(), // unreachable — must not be hit
+            "https://rs.example/mcp".into(),
             "proxy.x.oauth".into(),
             store,
         );
@@ -245,6 +253,7 @@ mod tests {
             tokens("at-current", Utc::now() + Duration::seconds(3600)),
             "cli".into(),
             "http://127.0.0.1:1/token".into(),
+            "https://rs.example/mcp".into(),
             "k".into(),
             store,
         );
@@ -277,6 +286,7 @@ mod tests {
             tokens("at-old", Utc::now() + Duration::seconds(3600)),
             "cli".into(),
             format!("{}/token", server.base_url()),
+            "https://rs.example/mcp".into(),
             "proxy.x.oauth".into(),
             store,
         );

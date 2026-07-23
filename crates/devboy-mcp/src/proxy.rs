@@ -2384,6 +2384,7 @@ mod tests {
             },
             "cli".into(),
             format!("{}/token", upstream.base_url()),
+            "https://rs.example/mcp".into(),
             "proxy.x.oauth".into(),
             store,
         ));
