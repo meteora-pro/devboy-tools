@@ -2689,14 +2689,22 @@ async fn cmd_login(server_name: &str) -> Result<()> {
                 .send()
                 .await
                 .context("Failed to probe upstream for auth challenge")?;
+            // A server may return several challenges across multiple
+            // `WWW-Authenticate` headers (RFC 7235); the Bearer one carrying
+            // `resource_metadata` need not be first. Join them all so discovery
+            // sees every challenge, not just the first header value.
             let www = resp
                 .headers()
-                .get("www-authenticate")
-                .and_then(|v| v.to_str().ok())
-                .context(
-                    "Upstream returned no WWW-Authenticate; set [proxy_mcp_servers.oauth] authorization_server",
-                )?
-                .to_string();
+                .get_all("www-authenticate")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if www.is_empty() {
+                anyhow::bail!(
+                    "Upstream returned no WWW-Authenticate; set [proxy_mcp_servers.oauth] authorization_server"
+                );
+            }
             oauth::discover(&http, &www).await
         }
     }
@@ -2737,7 +2745,13 @@ async fn cmd_login(server_name: &str) -> Result<()> {
         .device_authorization_endpoint
         .as_deref()
         .context("Authorization server does not advertise a device_authorization_endpoint")?;
-    let scope = oauth_cfg.scopes.as_ref().map(|s| s.join(" "));
+    // Prefer configured scopes; otherwise fall back to the scopes the AS
+    // advertises (`scopes_supported`), matching ProxyOAuthConfig's documented
+    // behavior. Omit `scope` entirely only when neither is available.
+    let scope =
+        oauth_cfg.scopes.as_ref().map(|s| s.join(" ")).or_else(|| {
+            (!meta.scopes_supported.is_empty()).then(|| meta.scopes_supported.join(" "))
+        });
     let da = oauth::request_device_authorization(&http, device_ep, &client_id, scope.as_deref())
         .await
         .map_err(|e| anyhow::anyhow!("Device authorization failed: {e}"))?;

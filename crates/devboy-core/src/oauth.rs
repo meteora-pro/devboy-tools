@@ -83,6 +83,41 @@ pub(crate) fn parse_www_authenticate(value: &str) -> Option<String> {
     (!url.is_empty()).then(|| url.to_string())
 }
 
+/// Guard an outbound discovery URL. RFC 9728 / RFC 8414 metadata must be
+/// fetched over `https` (`http` is tolerated only for loopback dev hosts).
+/// A malicious upstream can put anything in its `WWW-Authenticate` challenge or
+/// its resource metadata; rejecting other schemes/hosts keeps a crafted value
+/// from steering our client at `file://`, an internal address, or another
+/// protocol (SSRF-style).
+pub(crate) fn require_web_url(url: &str) -> Result<(), OAuthError> {
+    if let Some(rest) = url.strip_prefix("https://") {
+        return if rest.split('/').next().unwrap_or("").is_empty() {
+            Err(OAuthError::Oauth(format!(
+                "discovery URL has no host: {url}"
+            )))
+        } else {
+            Ok(())
+        };
+    }
+    if let Some(rest) = url.strip_prefix("http://") {
+        let authority = rest.split('/').next().unwrap_or("");
+        let loopback = authority == "localhost"
+            || authority.starts_with("localhost:")
+            || authority.starts_with("127.")
+            || authority.starts_with("[::1]");
+        return if loopback {
+            Ok(())
+        } else {
+            Err(OAuthError::Oauth(format!(
+                "refusing non-loopback http discovery URL (use https): {url}"
+            )))
+        };
+    }
+    Err(OAuthError::Oauth(format!(
+        "refusing discovery URL with non-http(s) scheme: {url}"
+    )))
+}
+
 /// Discover authorization-server metadata for an upstream, starting from its
 /// `WWW-Authenticate` challenge (RFC 9728 → RFC 8414).
 pub async fn discover(
@@ -91,6 +126,7 @@ pub async fn discover(
 ) -> Result<AuthServerMetadata, OAuthError> {
     let resource_meta_url =
         parse_www_authenticate(www_authenticate).ok_or(OAuthError::NoResourceMetadata)?;
+    require_web_url(&resource_meta_url)?;
     let prm: ProtectedResourceMetadata = http
         .get(&resource_meta_url)
         .send()
@@ -115,6 +151,7 @@ pub async fn fetch_as_metadata(
     http: &reqwest::Client,
     issuer: &str,
 ) -> Result<AuthServerMetadata, OAuthError> {
+    require_web_url(issuer)?;
     let url = format!(
         "{}/.well-known/oauth-authorization-server",
         issuer.trim_end_matches('/')
@@ -414,6 +451,25 @@ mod tests {
     #[test]
     fn parse_www_authenticate_absent() {
         assert!(parse_www_authenticate("Bearer realm=\"x\"").is_none());
+    }
+
+    #[test]
+    fn require_web_url_enforces_https_and_loopback() {
+        // https is always fine
+        assert!(require_web_url("https://as.example.com/.well-known/x").is_ok());
+        // http tolerated only for loopback dev hosts
+        assert!(require_web_url("http://localhost:8080/meta").is_ok());
+        assert!(require_web_url("http://127.0.0.1/meta").is_ok());
+        assert!(require_web_url("http://[::1]:9000/meta").is_ok());
+        // non-loopback http is refused (must be https)
+        assert!(require_web_url("http://evil.internal/meta").is_err());
+        assert!(require_web_url("http://169.254.169.254/latest/meta-data").is_err());
+        // non-web schemes are refused outright (SSRF surface)
+        assert!(require_web_url("file:///etc/passwd").is_err());
+        assert!(require_web_url("ftp://host/x").is_err());
+        assert!(require_web_url("gopher://host").is_err());
+        // https with no host is refused
+        assert!(require_web_url("https:///path").is_err());
     }
 
     #[test]
