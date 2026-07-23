@@ -2722,7 +2722,10 @@ async fn cmd_login(server_name: &str) -> Result<()> {
 
     // Cache client_id + token_endpoint so the proxy refreshes headlessly later.
     {
-        let mut oc = config.proxy_mcp_servers[idx].oauth.clone().unwrap_or_default();
+        let mut oc = config.proxy_mcp_servers[idx]
+            .oauth
+            .clone()
+            .unwrap_or_default();
         oc.client_id = Some(client_id.clone());
         oc.token_endpoint = Some(meta.token_endpoint.clone());
         config.proxy_mcp_servers[idx].oauth = Some(oc);
@@ -2751,9 +2754,14 @@ async fn cmd_login(server_name: &str) -> Result<()> {
     let mut interval = da.interval.max(1);
     let tokens = loop {
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
-        match oauth::poll_device_token_once(&http, &meta.token_endpoint, &da.device_code, &client_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("Token poll failed: {e}"))?
+        match oauth::poll_device_token_once(
+            &http,
+            &meta.token_endpoint,
+            &da.device_code,
+            &client_id,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Token poll failed: {e}"))?
         {
             DevicePollOutcome::Pending => continue,
             DevicePollOutcome::SlowDown => {

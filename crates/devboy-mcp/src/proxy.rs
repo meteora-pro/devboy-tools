@@ -341,7 +341,10 @@ impl McpProxyClient {
                     )));
                 }
                 let body = resp.text().await.unwrap_or_default();
-                return Err(devboy_core::Error::Http(format!("HTTP {}: {}", status, body)));
+                return Err(devboy_core::Error::Http(format!(
+                    "HTTP {}: {}",
+                    status, body
+                )));
             }
             break;
         }

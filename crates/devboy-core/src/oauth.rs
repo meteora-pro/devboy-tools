@@ -11,6 +11,7 @@
 //!   (RFC 6749 §6) build on the [`AuthServerMetadata`] discovered here.
 
 use chrono::{DateTime, Duration, Utc};
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -68,7 +69,7 @@ pub enum OAuthError {
 /// Extract the `resource_metadata` URL from an RFC 9728 `WWW-Authenticate`
 /// challenge value, e.g. `Bearer resource_metadata="https://…/.well-known/…"`.
 /// Handles quoted and bare forms and ignores surrounding params (`realm`, …).
-pub fn parse_www_authenticate(value: &str) -> Option<String> {
+pub(crate) fn parse_www_authenticate(value: &str) -> Option<String> {
     let idx = value.find("resource_metadata")?;
     let rest = value[idx + "resource_metadata".len()..]
         .trim_start()
@@ -130,8 +131,8 @@ pub async fn fetch_as_metadata(
 }
 
 /// Device + refresh grant type identifiers this client registers for.
-pub const GRANT_DEVICE_CODE: &str = "urn:ietf:params:oauth:grant-type:device_code";
-pub const GRANT_REFRESH_TOKEN: &str = "refresh_token";
+pub(crate) const GRANT_DEVICE_CODE: &str = "urn:ietf:params:oauth:grant-type:device_code";
+pub(crate) const GRANT_REFRESH_TOKEN: &str = "refresh_token";
 
 /// RFC 7591 §2 dynamic client registration request. We register a **public**
 /// client (no secret, `token_endpoint_auth_method = "none"`) that uses the
@@ -158,7 +159,10 @@ pub async fn register_client(
 ) -> Result<String, OAuthError> {
     let req = ClientRegistrationRequest {
         client_name: client_name.to_string(),
-        grant_types: vec![GRANT_DEVICE_CODE.to_string(), GRANT_REFRESH_TOKEN.to_string()],
+        grant_types: vec![
+            GRANT_DEVICE_CODE.to_string(),
+            GRANT_REFRESH_TOKEN.to_string(),
+        ],
         token_endpoint_auth_method: "none".to_string(),
     };
     let resp: ClientRegistrationResponse = http
@@ -196,9 +200,9 @@ fn default_interval() -> u64 {
 /// RFC 6749 §5.1 successful token response (device_code + refresh grants).
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenResponse {
-    pub access_token: String,
+    pub access_token: SecretString,
     #[serde(default)]
-    pub refresh_token: Option<String>,
+    pub refresh_token: Option<SecretString>,
     /// Access-token lifetime in seconds (used to compute `expires_at`).
     #[serde(default)]
     pub expires_in: Option<i64>,
@@ -316,12 +320,30 @@ pub async fn refresh(
     }
 }
 
+/// serde helpers for `SecretString` fields that must round-trip through the
+/// (keychain-protected) JSON blob. Exposing a secret to serialize it is done
+/// explicitly here rather than via a blanket `SerializableSecret` impl, so the
+/// only place tokens become plaintext is this well-scoped boundary.
+mod secret_serde {
+    use secrecy::{ExposeSecret, SecretString};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(s: &SecretString, ser: S) -> Result<S::Ok, S::Error> {
+        ser.serialize_str(s.expose_secret())
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<SecretString, D::Error> {
+        Ok(SecretString::from(String::deserialize(de)?))
+    }
+}
+
 /// A persisted OAuth token set for one proxy upstream. Serialized as JSON into
 /// the credential store under a per-server key (e.g. `proxy.<name>.oauth`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {
-    pub access_token: String,
-    pub refresh_token: String,
+    #[serde(with = "secret_serde")]
+    pub access_token: SecretString,
+    #[serde(with = "secret_serde")]
+    pub refresh_token: SecretString,
     /// Absolute UTC instant the access token expires.
     pub expires_at: DateTime<Utc>,
 }
@@ -337,7 +359,7 @@ impl OAuthTokens {
     ) -> Result<Self, OAuthError> {
         let refresh_token = resp
             .refresh_token
-            .or_else(|| prev_refresh.map(str::to_string))
+            .or_else(|| prev_refresh.map(|s| SecretString::from(s.to_string())))
             .ok_or_else(|| OAuthError::Malformed("token response has no refresh_token".into()))?;
         let ttl = resp.expires_in.unwrap_or(3600).max(0);
         Ok(Self {
@@ -366,6 +388,7 @@ pub(crate) fn parse_oauth_error(body: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secrecy::ExposeSecret;
 
     #[test]
     fn parse_www_authenticate_quoted() {
@@ -478,8 +501,11 @@ mod tests {
     fn token_response_deserializes() {
         let json = r#"{"access_token":"at","refresh_token":"rt","expires_in":7776000,"token_type":"Bearer"}"#;
         let t: TokenResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(t.access_token, "at");
-        assert_eq!(t.refresh_token.as_deref(), Some("rt"));
+        assert_eq!(t.access_token.expose_secret(), "at");
+        assert_eq!(
+            t.refresh_token.as_ref().map(|s| s.expose_secret()),
+            Some("rt")
+        );
         assert_eq!(t.expires_in, Some(7776000));
     }
 
@@ -509,12 +535,20 @@ mod tests {
             })
             .await;
         let http = reqwest::Client::new();
-        let t = refresh(&http, &format!("{}/token", server.base_url()), "old-rt", "cli-x")
-            .await
-            .unwrap();
+        let t = refresh(
+            &http,
+            &format!("{}/token", server.base_url()),
+            "old-rt",
+            "cli-x",
+        )
+        .await
+        .unwrap();
         m.assert_async().await;
-        assert_eq!(t.access_token, "new-at");
-        assert_eq!(t.refresh_token.as_deref(), Some("new-rt")); // rotated
+        assert_eq!(t.access_token.expose_secret(), "new-at");
+        assert_eq!(
+            t.refresh_token.as_ref().map(|s| s.expose_secret()),
+            Some("new-rt")
+        ); // rotated
     }
 
     #[tokio::test]
@@ -530,9 +564,14 @@ mod tests {
             })
             .await;
         let http = reqwest::Client::new();
-        let err = refresh(&http, &format!("{}/token", server.base_url()), "spent", "cli-x")
-            .await
-            .unwrap_err();
+        let err = refresh(
+            &http,
+            &format!("{}/token", server.base_url()),
+            "spent",
+            "cli-x",
+        )
+        .await
+        .unwrap_err();
         assert!(matches!(err, OAuthError::Oauth(c) if c == "invalid_grant"));
     }
 
@@ -549,8 +588,8 @@ mod tests {
             token_type: Some("Bearer".into()),
         };
         let t = OAuthTokens::from_response(resp, epoch(), None).unwrap();
-        assert_eq!(t.access_token, "at");
-        assert_eq!(t.refresh_token, "rt");
+        assert_eq!(t.access_token.expose_secret(), "at");
+        assert_eq!(t.refresh_token.expose_secret(), "rt");
         assert_eq!(t.expires_at, epoch() + Duration::seconds(3600));
     }
 
@@ -563,7 +602,7 @@ mod tests {
             token_type: None,
         };
         let t = OAuthTokens::from_response(resp, epoch(), Some("old-rt")).unwrap();
-        assert_eq!(t.refresh_token, "old-rt");
+        assert_eq!(t.refresh_token.expose_secret(), "old-rt");
     }
 
     #[test]
@@ -599,7 +638,7 @@ mod tests {
         };
         let json = serde_json::to_string(&t).unwrap();
         let back: OAuthTokens = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.access_token, "at");
+        assert_eq!(back.access_token.expose_secret(), "at");
         assert_eq!(back.expires_at, epoch());
     }
 }

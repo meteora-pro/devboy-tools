@@ -8,7 +8,7 @@ use std::sync::Arc;
 use chrono::{Duration, Utc};
 use devboy_core::oauth::{self, OAuthError, OAuthTokens};
 use devboy_storage::CredentialStore;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::{Mutex, RwLock};
 
 /// Refresh this many seconds before the access token actually expires.
@@ -16,8 +16,8 @@ const EXPIRY_SKEW_SECS: i64 = 60;
 
 /// Holds the live OAuth token set for one proxy upstream and refreshes it
 /// transparently. The DevBoy AS **rotates** refresh_tokens, so:
-/// - refreshes are serialized behind [`OAuthAuth::gate`] (single-flight):
-///   concurrent 401s trigger exactly one refresh;
+/// - refreshes are serialized behind a single-flight mutex: concurrent 401s
+///   trigger exactly one refresh;
 /// - the rotated pair is persisted to the credential store *before* the
 ///   in-memory swap, so a crash mid-refresh never strands a spent token.
 pub struct OAuthAuth {
@@ -56,13 +56,19 @@ impl OAuthAuth {
             let t = self.tokens.read().await;
             (
                 t.is_near_expiry(Utc::now(), Duration::seconds(EXPIRY_SKEW_SECS)),
-                t.access_token.clone(),
+                t.access_token.expose_secret().to_string(),
             )
         };
         if near {
             self.refresh(&seen).await?;
         }
-        Ok(self.tokens.read().await.access_token.clone())
+        Ok(self
+            .tokens
+            .read()
+            .await
+            .access_token
+            .expose_secret()
+            .to_string())
     }
 
     /// Refresh unless another task already rotated past `seen` (single-flight
@@ -73,10 +79,16 @@ impl OAuthAuth {
         // Double-check: a concurrent task may have refreshed while we waited on
         // the gate — if the live access token already moved past `seen`, we're
         // done (and must NOT spend the — now rotated — refresh token again).
-        if self.tokens.read().await.access_token != seen {
+        if self.tokens.read().await.access_token.expose_secret() != seen {
             return Ok(());
         }
-        let old_refresh = self.tokens.read().await.refresh_token.clone();
+        let old_refresh = self
+            .tokens
+            .read()
+            .await
+            .refresh_token
+            .expose_secret()
+            .to_string();
         let resp = oauth::refresh(
             &self.http,
             &self.token_endpoint,
@@ -84,7 +96,7 @@ impl OAuthAuth {
             &self.client_id,
         )
         .await?;
-        let new = OAuthTokens::from_response(resp, Utc::now(), Some(&old_refresh))?;
+        let new = OAuthTokens::from_response(resp, Utc::now(), Some(old_refresh.as_str()))?;
         // Persist FIRST — the old refresh_token is now deactivated server-side,
         // so the new pair must reach durable storage before the in-memory swap.
         // If persist fails we return Err without swapping: the old refresh is
@@ -122,7 +134,9 @@ mod tests {
                 when.method(POST).path("/token");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .body(r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#);
+                    .body(
+                        r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#,
+                    );
             })
             .await;
         let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
@@ -173,7 +187,9 @@ mod tests {
                 when.method(POST).path("/token");
                 then.status(200)
                     .header("content-type", "application/json")
-                    .body(r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#);
+                    .body(
+                        r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#,
+                    );
             })
             .await;
         let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
