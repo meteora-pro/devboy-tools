@@ -118,6 +118,21 @@ impl McpProxyClient {
         oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
     ) -> devboy_core::Result<Self> {
         let sse_url = url.to_string();
+        // For oauth2, seed the SSE GET stream with the current access token.
+        // NOTE: this header is set once at connect; if the token later refreshes,
+        // a dropped stream that reqwest-eventsource auto-reconnects would carry a
+        // stale token. Per-request POST auth (in request_sse) always uses a fresh
+        // token; full stream-reconnect-on-refresh is a documented follow-up.
+        let mut headers = headers;
+        if let Some(auth) = &oauth {
+            let access = auth
+                .access_token()
+                .await
+                .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?;
+            let val = HeaderValue::from_str(&format!("Bearer {access}"))
+                .map_err(|e| devboy_core::Error::Http(format!("Invalid token: {e}")))?;
+            headers.insert(AUTHORIZATION, val);
+        }
         let mut es = EventSource::new(
             reqwest::Client::builder()
                 .default_headers(headers)
@@ -274,18 +289,51 @@ impl McpProxyClient {
             params,
         };
 
+        // For oauth2, inject a (pre-flight-refreshed) Bearer per POST.
+        let mut access: Option<String> = match &self.oauth {
+            Some(auth) => Some(
+                auth.access_token()
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+            ),
+            None => None,
+        };
+
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().await;
             pending.push((id, tx));
         }
 
-        self.http_client
-            .post(&self.post_url)
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| devboy_core::Error::Http(format!("POST failed: {}", e)))?;
+        // POST with on-401 refresh-and-retry (once) for oauth2 upstreams. The
+        // response itself arrives asynchronously on the SSE stream via `rx`.
+        let mut attempt = 0u8;
+        loop {
+            let mut request = self.http_client.post(&self.post_url).json(&req);
+            if let Some(a) = &access {
+                request = request.header(AUTHORIZATION, format!("Bearer {a}"));
+            }
+            let resp = request
+                .send()
+                .await
+                .map_err(|e| devboy_core::Error::Http(format!("POST failed: {}", e)))?;
+            if resp.status() == reqwest::StatusCode::UNAUTHORIZED
+                && attempt == 0
+                && let (Some(auth), Some(sent)) = (self.oauth.as_ref(), access.clone())
+            {
+                auth.refresh(&sent)
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("token refresh: {e}")))?;
+                access = Some(
+                    auth.access_token()
+                        .await
+                        .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+                );
+                attempt += 1;
+                continue;
+            }
+            break;
+        }
 
         let resp = tokio::time::timeout(Duration::from_secs(30), rx)
             .await
