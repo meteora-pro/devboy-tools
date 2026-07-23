@@ -86,7 +86,11 @@ impl OAuthAuth {
         .await?;
         let new = OAuthTokens::from_response(resp, Utc::now(), Some(&old_refresh))?;
         // Persist FIRST — the old refresh_token is now deactivated server-side,
-        // so the new pair must reach durable storage before anything else.
+        // so the new pair must reach durable storage before the in-memory swap.
+        // If persist fails we return Err without swapping: the old refresh is
+        // already dead upstream, so the next refresh hits `invalid_grant` and
+        // surfaces a re-login prompt. No silent corruption, but the session is
+        // lost — acceptable for a rare keychain-write failure.
         let json = serde_json::to_string(&new).map_err(|e| OAuthError::Malformed(e.to_string()))?;
         self.store
             .store(&self.store_key, &SecretString::from(json))

@@ -332,6 +332,17 @@ impl McpProxyClient {
                 attempt += 1;
                 continue;
             }
+            if !resp.status().is_success() {
+                let status = resp.status();
+                if status == reqwest::StatusCode::UNAUTHORIZED && self.oauth.is_some() {
+                    return Err(devboy_core::Error::Http(format!(
+                        "authorization failed for '{}' after token refresh — run: devboy login {}",
+                        self.name, self.name
+                    )));
+                }
+                let body = resp.text().await.unwrap_or_default();
+                return Err(devboy_core::Error::Http(format!("HTTP {}: {}", status, body)));
+            }
             break;
         }
 
@@ -431,6 +442,12 @@ impl McpProxyClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::UNAUTHORIZED && self.oauth.is_some() {
+                return Err(devboy_core::Error::Http(format!(
+                    "authorization failed for '{}' after token refresh — run: devboy login {}",
+                    self.name, self.name
+                )));
+            }
             return Err(devboy_core::Error::Http(format!(
                 "HTTP {}: {}",
                 status, body

@@ -2666,6 +2666,14 @@ async fn cmd_login(server_name: &str) -> Result<()> {
         .position(|s| s.name == server_name)
         .with_context(|| format!("No proxy server named '{server_name}' in .devboy.toml"))?;
     let server = config.proxy_mcp_servers[idx].clone();
+    if server.auth_type != "oauth2" {
+        anyhow::bail!(
+            "proxy '{}' is auth_type = \"{}\", not \"oauth2\" — `devboy login` only \
+             applies to oauth2 proxies (bearer/api_key use `devboy config set-secret`)",
+            server.name,
+            server.auth_type
+        );
+    }
     let http = reqwest::Client::new();
     let oauth_cfg = server.oauth.clone().unwrap_or_default();
 
