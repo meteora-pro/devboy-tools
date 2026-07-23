@@ -159,4 +159,35 @@ mod tests {
         auth.refresh("at-stale").await.unwrap();
         assert_eq!(auth.access_token().await.unwrap(), "at-current");
     }
+
+    #[tokio::test]
+    async fn on_401_sequence_yields_a_fresh_bearer() {
+        // Mirrors exactly what request_http/request_sse do on a 401:
+        //   sent = access_token();  // pre-flight (token valid → unchanged)
+        //   ...POST returns 401...
+        //   refresh(sent);          // single-flight refresh
+        //   retry_bearer = access_token();  // now the rotated token
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(POST).path("/token");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#);
+            })
+            .await;
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let auth = OAuthAuth::new(
+            // valid, far from expiry → no pre-flight refresh, mirrors a live 401
+            tokens("at-old", Utc::now() + Duration::seconds(3600)),
+            "cli".into(),
+            format!("{}/token", server.base_url()),
+            "proxy.x.oauth".into(),
+            store,
+        );
+        let sent = auth.access_token().await.unwrap();
+        assert_eq!(sent, "at-old"); // pre-flight leaves the valid token alone
+        auth.refresh(&sent).await.unwrap(); // the 401 path
+        assert_eq!(auth.access_token().await.unwrap(), "at-new"); // retry uses rotated token
+    }
 }
