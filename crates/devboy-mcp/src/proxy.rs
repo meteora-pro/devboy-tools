@@ -2336,4 +2336,74 @@ mod tests {
             .expect("complete response should parse before EOF, ignoring trailing notifications");
         assert!(matches!(resp.id, RequestId::Number(99)));
     }
+
+    // =========================================================================
+    // OAuth2 request path — refresh + retry on 401 (issue #306)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn oauth2_streamable_refreshes_and_retries_on_401() {
+        use crate::oauth_auth::OAuthAuth;
+        use chrono::{Duration, Utc};
+        use devboy_core::oauth::OAuthTokens;
+        use devboy_storage::{CredentialStore, MemoryStore};
+        use std::sync::Arc;
+
+        let upstream = MockServer::start();
+        setup_mock_upstream(&upstream, sample_tools()); // initialize + tools/list → 200
+        // tools/call always 401 → exercises the pre-flight-valid → 401 → refresh
+        // → single-retry path end-to-end through request_http.
+        let call_mock = upstream.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/call""#);
+            then.status(401);
+        });
+        // The refresh's token endpoint.
+        let token_mock = upstream.mock(|when, then| {
+            when.method(POST).path("/token");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#);
+        });
+
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let auth = Arc::new(OAuthAuth::new(
+            OAuthTokens {
+                access_token: "at-old".into(),
+                refresh_token: "rt-old".into(),
+                // valid, far from expiry → no pre-flight refresh; the 401 drives it
+                expires_at: Utc::now() + Duration::seconds(3600),
+            },
+            "cli".into(),
+            format!("{}/token", upstream.base_url()),
+            "proxy.x.oauth".into(),
+            store,
+        ));
+
+        let client = McpProxyClient::connect(
+            "up",
+            &format!("{}/mcp", upstream.base_url()),
+            None,
+            None,
+            "oauth2",
+            ProxyTransport::StreamableHttp,
+            Some(auth),
+        )
+        .await
+        .expect("connect handshake should succeed with a valid initial token");
+
+        let err = client
+            .call_tool("get_issues", Some(serde_json::json!({})))
+            .await
+            .expect_err("a persistent 401 must surface as an error");
+
+        // Exactly one refresh (single-flight) and exactly one retry of the call.
+        token_mock.assert_calls(1);
+        call_mock.assert_calls(2);
+        assert!(
+            err.to_string().contains("devboy login"),
+            "persistent 401 should surface an actionable re-login hint, got: {err}"
+        );
+    }
 }
