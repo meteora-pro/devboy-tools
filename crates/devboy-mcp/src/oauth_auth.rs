@@ -76,32 +76,66 @@ impl OAuthAuth {
             .to_string())
     }
 
-    /// Refresh unless another task already rotated past `seen` (single-flight
-    /// double-check via the access token). Call on a 401 with the token that was
-    /// actually sent. Persists the rotated pair before swapping it in memory.
+    /// Refresh the token pair — single-flight AND store-reconciled.
+    ///
+    /// The DevBoy AS rotates the refresh token, and a multi-agent setup runs
+    /// several `devboy` processes (one proxy per agent) against the **same**
+    /// store key. So under the gate we first reconcile with the credential
+    /// store, keyed on the *refresh* token (holds even if the AS reissues the
+    /// same access token): if another task or process already rotated, we adopt
+    /// its persisted pair instead of spending our now-dead refresh token and
+    /// killing the session. Only if nobody moved do we refresh, persisting
+    /// before the in-memory swap. Call on a 401 with the access token actually
+    /// sent, or pre-flight near expiry.
     pub async fn refresh(&self, seen: &str) -> Result<(), OAuthError> {
         let _g = self.gate.lock().await;
-        // Double-check: a concurrent task may have refreshed while we waited on
-        // the gate — if the live access token already moved past `seen`, we're
-        // done (and must NOT spend the — now rotated — refresh token again).
-        if self.tokens.read().await.access_token.expose_secret() != seen {
-            return Ok(());
-        }
-        let old_refresh = self
+
+        let our_refresh = self
             .tokens
             .read()
             .await
             .refresh_token
             .expose_secret()
             .to_string();
-        let resp = oauth::refresh(
+        // (1) Cross-task / cross-process reconcile: another holder of this store
+        //     key already rotated. Adopt their pair; never re-spend our refresh.
+        if let Some(stored) = self.load_stored()
+            && stored.refresh_token.expose_secret() != our_refresh
+        {
+            *self.tokens.write().await = stored;
+            return Ok(());
+        }
+        // (2) Same-process double-check: a concurrent task refreshed in memory
+        //     while we waited on the gate (access token already moved past seen).
+        if self.tokens.read().await.access_token.expose_secret() != seen {
+            return Ok(());
+        }
+
+        // (3) We own the refresh.
+        let resp = match oauth::refresh(
             &self.http,
             &self.token_endpoint,
-            &old_refresh,
+            &our_refresh,
             &self.client_id,
         )
-        .await?;
-        let new = OAuthTokens::from_response(resp, Utc::now(), Some(old_refresh.as_str()))?;
+        .await
+        {
+            Ok(resp) => resp,
+            // Lost a simultaneous cross-process race: our refresh token was
+            // spent by the winner. Adopt what it persisted rather than surfacing
+            // a spurious re-login prompt.
+            Err(OAuthError::Oauth(ref code)) if code.contains("invalid_grant") => {
+                if let Some(stored) = self.load_stored()
+                    && stored.refresh_token.expose_secret() != our_refresh
+                {
+                    *self.tokens.write().await = stored;
+                    return Ok(());
+                }
+                return Err(OAuthError::Oauth(code.clone()));
+            }
+            Err(e) => return Err(e),
+        };
+        let new = OAuthTokens::from_response(resp, Utc::now(), Some(our_refresh.as_str()))?;
         // Persist FIRST — the old refresh_token is now deactivated server-side,
         // so the new pair must reach durable storage before the in-memory swap.
         // If persist fails we return Err without swapping: the old refresh is
@@ -114,6 +148,15 @@ impl OAuthAuth {
             .map_err(|e| OAuthError::Http(format!("persist tokens: {e}")))?;
         *self.tokens.write().await = new;
         Ok(())
+    }
+
+    /// Reload the persisted token set, if present and well-formed. Used under
+    /// the gate to reconcile with other tasks/processes on the same store key.
+    fn load_stored(&self) -> Option<OAuthTokens> {
+        match self.store.get(&self.store_key) {
+            Ok(Some(secret)) => serde_json::from_str::<OAuthTokens>(secret.expose_secret()).ok(),
+            _ => None,
+        }
     }
 }
 
@@ -160,6 +203,37 @@ mod tests {
             store.exists("proxy.x.oauth"),
             "rotated tokens should be persisted"
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_adopts_store_when_another_process_already_rotated() {
+        // The store already holds a newer pair (as if another devboy process
+        // sharing this key rotated). The endpoint is unreachable, so if refresh
+        // tried the network it would error — it must instead adopt the stored
+        // pair, keyed on the refresh token (works even though the access token
+        // also differs). Covers the cross-process rotation race + the
+        // same-access-token double-check gap.
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let newer = OAuthTokens {
+            access_token: "at-fromstore".into(),
+            refresh_token: "rt-newer".into(),
+            expires_at: Utc::now() + Duration::seconds(3600),
+        };
+        store
+            .store(
+                "proxy.x.oauth",
+                &SecretString::from(serde_json::to_string(&newer).unwrap()),
+            )
+            .unwrap();
+        let auth = OAuthAuth::new(
+            tokens("at-old", Utc::now()), // in-memory refresh is "rt-old"
+            "cli".into(),
+            "http://127.0.0.1:1/token".into(), // unreachable — must not be hit
+            "proxy.x.oauth".into(),
+            store,
+        );
+        auth.refresh("at-old").await.unwrap();
+        assert_eq!(auth.access_token().await.unwrap(), "at-fromstore");
     }
 
     #[tokio::test]
