@@ -385,8 +385,10 @@ pub async fn poll_device_token_once(
         .await
         .map_err(|e| OAuthError::Http(e.to_string()))?;
     if status.is_success() {
-        let tokens: TokenResponse =
-            serde_json::from_str(&body).map_err(|e| OAuthError::Malformed(e.to_string()))?;
+        let tokens: TokenResponse = serde_json::from_str(&body).map_err(|_| {
+            // Don't fold the raw body into the error — it carries the tokens.
+            OAuthError::Malformed("authorization server returned a malformed token response".into())
+        })?;
         return Ok(DevicePollOutcome::Granted(tokens));
     }
     match parse_oauth_error(&body).as_deref() {
@@ -427,7 +429,10 @@ pub async fn refresh(
         .await
         .map_err(|e| OAuthError::Http(e.to_string()))?;
     if status.is_success() {
-        return serde_json::from_str(&body).map_err(|e| OAuthError::Malformed(e.to_string()));
+        // Don't fold the raw body into the error — it carries the tokens.
+        return serde_json::from_str(&body).map_err(|_| {
+            OAuthError::Malformed("authorization server returned a malformed token response".into())
+        });
     }
     match parse_oauth_error(&body) {
         Some(code) => Err(OAuthError::Oauth(code)),
@@ -476,7 +481,13 @@ impl OAuthTokens {
             .refresh_token
             .or_else(|| prev_refresh.map(|s| SecretString::from(s.to_string())))
             .ok_or_else(|| OAuthError::Malformed("token response has no refresh_token".into()))?;
-        let ttl = resp.expires_in.unwrap_or(3600).max(0);
+        // Clamp the advertised lifetime. A malicious/buggy AS can send
+        // `expires_in = i64::MAX` (a valid JSON integer), and `now + Duration`
+        // panics on overflow — which in `OAuthAuth::refresh` would abort the
+        // running MCP proxy on a live tool call. 400 days is far beyond any real
+        // access-token lifetime; capping only means we refresh a little sooner.
+        const MAX_TTL_SECS: i64 = 400 * 24 * 60 * 60;
+        let ttl = resp.expires_in.unwrap_or(3600).clamp(0, MAX_TTL_SECS);
         Ok(Self {
             access_token: resp.access_token,
             refresh_token,
@@ -770,6 +781,22 @@ mod tests {
         assert_eq!(t.access_token.expose_secret(), "at");
         assert_eq!(t.refresh_token.expose_secret(), "rt");
         assert_eq!(t.expires_at, epoch() + Duration::seconds(3600));
+    }
+
+    #[test]
+    fn from_response_clamps_out_of_range_expires_in() {
+        // A hostile AS sends expires_in = i64::MAX (valid JSON). Previously
+        // `now + Duration::seconds(i64::MAX)` panicked; now it clamps.
+        let resp = TokenResponse {
+            access_token: "at".into(),
+            refresh_token: Some("rt".into()),
+            expires_in: Some(i64::MAX),
+            token_type: Some("Bearer".into()),
+        };
+        let t = OAuthTokens::from_response(resp, epoch(), None).expect("must not panic");
+        // Clamped to <= 400 days, so the timestamp is well within range.
+        assert!(t.expires_at <= epoch() + Duration::days(400));
+        assert!(t.expires_at > epoch());
     }
 
     #[test]
