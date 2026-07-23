@@ -136,11 +136,13 @@ fn probe_oauth_state(
         Ok(Some(secret)) => serde_json::from_str::<OAuthTokens>(secret.expose_secret()).is_ok(),
         _ => false,
     };
+    // Match build_oauth_auth's actual requirements: both client_id AND
+    // token_endpoint must be cached, else the proxy manager skips this server
+    // despite a stored token blob — doctor must not show green in that case.
     let has_client = proxy
         .oauth
         .as_ref()
-        .and_then(|o| o.client_id.as_deref())
-        .is_some();
+        .is_some_and(|o| o.client_id.is_some() && o.token_endpoint.is_some());
     if logged_in && has_client {
         ProxyProbeResult {
             status: CheckStatus::Pass,

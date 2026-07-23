@@ -307,46 +307,53 @@ impl McpProxyClient {
 
         // POST with on-401 refresh-and-retry (once) for oauth2 upstreams. The
         // response itself arrives asynchronously on the SSE stream via `rx`.
-        let mut attempt = 0u8;
-        loop {
-            let mut request = self.http_client.post(&self.post_url).json(&req);
-            if let Some(a) = &access {
-                request = request.header(AUTHORIZATION, format!("Bearer {a}"));
-            }
-            let resp = request
-                .send()
-                .await
-                .map_err(|e| devboy_core::Error::Http(format!("POST failed: {}", e)))?;
-            if resp.status() == reqwest::StatusCode::UNAUTHORIZED
-                && attempt == 0
-                && let (Some(auth), Some(sent)) = (self.oauth.as_ref(), access.clone())
-            {
-                auth.refresh(&sent)
-                    .await
-                    .map_err(|e| devboy_core::Error::Http(format!("token refresh: {e}")))?;
-                access = Some(
-                    auth.access_token()
-                        .await
-                        .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
-                );
-                attempt += 1;
-                continue;
-            }
-            if !resp.status().is_success() {
-                let status = resp.status();
-                if status == reqwest::StatusCode::UNAUTHORIZED && self.oauth.is_some() {
-                    return Err(devboy_core::Error::Http(format!(
-                        "authorization failed for '{}' after token refresh — run: devboy login {}",
-                        self.name, self.name
-                    )));
+        // Wrapped so any early error removes the pending registration instead of
+        // leaking it — the SSE listener only reaps an entry when a matching
+        // response arrives, which never happens for a failed POST.
+        let post_result: devboy_core::Result<()> = async {
+            let mut attempt = 0u8;
+            loop {
+                let mut request = self.http_client.post(&self.post_url).json(&req);
+                if let Some(a) = &access {
+                    request = request.header(AUTHORIZATION, format!("Bearer {a}"));
                 }
-                let body = resp.text().await.unwrap_or_default();
-                return Err(devboy_core::Error::Http(format!(
-                    "HTTP {}: {}",
-                    status, body
-                )));
+                let resp = request
+                    .send()
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("POST failed: {}", e)))?;
+                if resp.status() == reqwest::StatusCode::UNAUTHORIZED
+                    && attempt == 0
+                    && let (Some(auth), Some(sent)) = (self.oauth.as_ref(), access.clone())
+                {
+                    auth.refresh(&sent)
+                        .await
+                        .map_err(|e| devboy_core::Error::Http(format!("token refresh: {e}")))?;
+                    access = Some(
+                        auth.access_token()
+                            .await
+                            .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+                    );
+                    attempt += 1;
+                    continue;
+                }
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    if status == reqwest::StatusCode::UNAUTHORIZED && self.oauth.is_some() {
+                        return Err(devboy_core::Error::Http(format!(
+                            "authorization failed for '{}' after token refresh — run: devboy login {}",
+                            self.name, self.name
+                        )));
+                    }
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(devboy_core::Error::Http(format!("HTTP {}: {}", status, body)));
+                }
+                return Ok(());
             }
-            break;
+        }
+        .await;
+        if let Err(e) = post_result {
+            self.pending.lock().await.retain(|(pid, _)| *pid != id);
+            return Err(e);
         }
 
         let resp = tokio::time::timeout(Duration::from_secs(30), rx)

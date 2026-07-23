@@ -2771,7 +2771,17 @@ async fn cmd_login(server_name: &str) -> Result<()> {
 
     // 4. Poll the token endpoint until granted (honoring interval / slow_down).
     let mut interval = da.interval.max(1);
+    // Bound the wait by the device code's advertised lifetime, so a misbehaving
+    // AS that keeps answering `authorization_pending` can't hang the CLI forever.
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(da.expires_in.max(0) as u64);
     let tokens = loop {
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "Device code expired after {}s without approval — run `devboy login {server_name}` again",
+                da.expires_in
+            );
+        }
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
         match oauth::poll_device_token_once(
             &http,
