@@ -4,6 +4,17 @@ All notable changes to `devboy-tools` are recorded here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed — crates.io publishing policy (#308)
+
+- crates.io now ships **only the reusable libraries**. `devboy-cli` (the app
+  binary) and `devboy-mcp` are `publish = false` — they hard-depend on the
+  internal secrets plugins, so they're distributed via npm (`@devboy-tools/cli`)
+  + prebuilt release binaries, not `cargo install`. The release now derives its
+  publish set + order from `cargo metadata` (no hardcoded crate list) and a
+  `cargo publish --workspace --dry-run` CI gate catches packaging / metadata /
+  unpublishable-dependency errors before tagging — fixing the chronic
+  crates.io release failures.
+
 ## [0.32.0] - 2026-07-25
 
 ### Security / Dependencies

@@ -1,7 +1,11 @@
 [package]
 name = "devboy-cli"
-description = "Command-line interface for devboy-tools — `devboy` binary. Primary distribution is npm (@devboy-tools/cli); `cargo install devboy-cli` is the secondary channel."
+description = "Command-line interface for devboy-tools — the `devboy` binary. Distributed via npm (@devboy-tools/cli) and prebuilt release binaries."
 version.workspace = true
+# Not a crates.io library: this is the app binary and it hard-depends on the
+# internal secrets plugins (publish = false). crates.io ships only the reusable
+# libraries (see #308). Distribution is npm + release binaries.
+publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
