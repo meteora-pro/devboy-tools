@@ -39,7 +39,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.31.1"
+version = "0.32.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/meteora-pro/devboy-tools"
@@ -128,34 +128,34 @@ secrecy = { version = "0.10", features = ["serde"] }
 # Internal workspace crates — `version` lets crates.io resolve them when
 # the package is published; `path` keeps local builds resolving in-tree.
 # Keep `version` synced with `[workspace.package].version`.
-devboy-core = { version = "0.31.1", path = "crates/devboy-core" }
-devboy-storage = { version = "0.31.1", path = "crates/devboy-storage" }
-devboy-token-catalog = { version = "0.31.1", path = "crates/devboy-token-catalog" }
-devboy-assets = { version = "0.31.1", path = "crates/devboy-assets" }
-devboy-executor = { version = "0.31.1", path = "crates/devboy-executor" }
-devboy-mcp = { version = "0.31.1", path = "crates/devboy-mcp" }
-devboy-skills = { version = "0.31.1", path = "crates/devboy-skills" }
-devboy-format-pipeline = { version = "0.31.1", path = "crates/plugins/format-pipeline" }
-devboy-gitlab = { version = "0.31.1", path = "crates/plugins/api/gitlab" }
-devboy-github = { version = "0.31.1", path = "crates/plugins/api/github" }
-devboy-clickup = { version = "0.31.1", path = "crates/plugins/api/clickup" }
-devboy-jira = { version = "0.31.1", path = "crates/plugins/api/jira" }
-devboy-confluence = { version = "0.31.1", path = "crates/plugins/api/confluence" }
-devboy-fireflies = { version = "0.31.1", path = "crates/plugins/api/fireflies" }
-devboy-slack = { version = "0.31.1", path = "crates/plugins/api/slack" }
-devboy-telegram = { version = "0.31.1", path = "crates/plugins/api/telegram" }
+devboy-core = { version = "0.32.0", path = "crates/devboy-core" }
+devboy-storage = { version = "0.32.0", path = "crates/devboy-storage" }
+devboy-token-catalog = { version = "0.32.0", path = "crates/devboy-token-catalog" }
+devboy-assets = { version = "0.32.0", path = "crates/devboy-assets" }
+devboy-executor = { version = "0.32.0", path = "crates/devboy-executor" }
+devboy-mcp = { version = "0.32.0", path = "crates/devboy-mcp" }
+devboy-skills = { version = "0.32.0", path = "crates/devboy-skills" }
+devboy-format-pipeline = { version = "0.32.0", path = "crates/plugins/format-pipeline" }
+devboy-gitlab = { version = "0.32.0", path = "crates/plugins/api/gitlab" }
+devboy-github = { version = "0.32.0", path = "crates/plugins/api/github" }
+devboy-clickup = { version = "0.32.0", path = "crates/plugins/api/clickup" }
+devboy-jira = { version = "0.32.0", path = "crates/plugins/api/jira" }
+devboy-confluence = { version = "0.32.0", path = "crates/plugins/api/confluence" }
+devboy-fireflies = { version = "0.32.0", path = "crates/plugins/api/fireflies" }
+devboy-slack = { version = "0.32.0", path = "crates/plugins/api/slack" }
+devboy-telegram = { version = "0.32.0", path = "crates/plugins/api/telegram" }
 
 # Secret framework crates (epic #247)
-devboy-vault-crypto = { version = "0.31.1", path = "crates/devboy-vault-crypto" }
-devboy-secret-patterns = { version = "0.31.1", path = "crates/devboy-secret-patterns" }
-devboy-secrets-agent = { version = "0.31.1", path = "crates/devboy-secrets-agent" }
-devboy-secrets-ui = { version = "0.31.1", path = "crates/devboy-secrets-ui" }
-devboy-secret-keychain = { version = "0.31.1", path = "crates/plugins/secrets/keychain" }
-devboy-secret-local-vault = { version = "0.31.1", path = "crates/plugins/secrets/local-vault" }
-devboy-secret-1password = { version = "0.31.1", path = "crates/plugins/secrets/1password" }
-devboy-secret-vault = { version = "0.31.1", path = "crates/plugins/secrets/vault" }
-devboy-secret-env-store = { version = "0.31.1", path = "crates/plugins/secrets/env-store" }
-devboy-secret-kdbx = { version = "0.31.1", path = "crates/plugins/secrets/kdbx" }
+devboy-vault-crypto = { version = "0.32.0", path = "crates/devboy-vault-crypto" }
+devboy-secret-patterns = { version = "0.32.0", path = "crates/devboy-secret-patterns" }
+devboy-secrets-agent = { version = "0.32.0", path = "crates/devboy-secrets-agent" }
+devboy-secrets-ui = { version = "0.32.0", path = "crates/devboy-secrets-ui" }
+devboy-secret-keychain = { version = "0.32.0", path = "crates/plugins/secrets/keychain" }
+devboy-secret-local-vault = { version = "0.32.0", path = "crates/plugins/secrets/local-vault" }
+devboy-secret-1password = { version = "0.32.0", path = "crates/plugins/secrets/1password" }
+devboy-secret-vault = { version = "0.32.0", path = "crates/plugins/secrets/vault" }
+devboy-secret-env-store = { version = "0.32.0", path = "crates/plugins/secrets/env-store" }
+devboy-secret-kdbx = { version = "0.32.0", path = "crates/plugins/secrets/kdbx" }
 
 [profile.release]
 lto = true

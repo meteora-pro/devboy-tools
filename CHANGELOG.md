@@ -4,6 +4,27 @@ All notable changes to `devboy-tools` are recorded here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-07-25
+
+### Added — OAuth 2.1 for proxy MCP upstreams (#307)
+
+`auth_type = "oauth2"` proxies now authenticate via the OAuth 2.1 **device
+authorization grant** (RFC 8628): `devboy login <server>` discovers the
+authorization server from the upstream's `WWW-Authenticate` challenge
+(RFC 9728 → RFC 8414), registers a public client (RFC 7591), prints a code +
+URL to approve in a browser, and stores **auto-refreshing** tokens.
+
+- Per-request Bearer injection + **refresh-on-401** (single retry) on both
+  streamable-http and SSE transports; single-flight, store-reconciled refresh
+  that survives the DevBoy AS's rotating refresh tokens.
+- **RFC 8707 resource-indicator** audience binding — the token is scoped to the
+  MCP server it was issued for.
+- SSRF-guarded discovery: only `https`, or `http` to a genuine loopback host;
+  IPv6-safe `.well-known` construction; no redirect-following on the token
+  endpoint.
+- `devboy doctor` reports oauth2 login state by verifying the stored blob
+  deserializes as `OAuthTokens` (not mere secret presence).
+
 ### Added — Secret management framework (epic #247)
 
 End-to-end first-party secret-management framework per [ADR-020](docs/architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md), [ADR-021](docs/architecture/adr/ADR-021-secret-source-router.md), and [ADR-023](docs/architecture/adr/ADR-023-secret-store-ux-layer.md). Single PR (#255) shipped 67 atomic tasks across 19 phases.
