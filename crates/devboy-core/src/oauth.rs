@@ -231,9 +231,17 @@ pub async fn fetch_as_metadata(
 fn well_known_url(issuer: &str) -> Result<String, OAuthError> {
     let parsed = url::Url::parse(issuer)
         .map_err(|e| OAuthError::Oauth(format!("invalid issuer {issuer:?}: {e}")))?;
-    let authority = parsed
-        .host_str()
-        .ok_or_else(|| OAuthError::Oauth(format!("issuer has no host: {issuer}")))?;
+    // Bracket IPv6 literals: `host_str()` returns "::1" (unbracketed), which
+    // would build a malformed authority ("http://::1:8080/..."). RFC 3986 wants
+    // "[::1]". `require_web_url` permits http loopback IPv6 for local dev, so
+    // this path is reachable.
+    let authority = match parsed
+        .host()
+        .ok_or_else(|| OAuthError::Oauth(format!("issuer has no host: {issuer}")))?
+    {
+        url::Host::Ipv6(addr) => format!("[{addr}]"),
+        host => host.to_string(),
+    };
     let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
     let path = parsed.path().trim_end_matches('/'); // "" or "/tenant"
     Ok(format!(
@@ -626,6 +634,12 @@ mod tests {
         assert_eq!(
             well_known_url("https://ex.com:8443/t").unwrap(),
             "https://ex.com:8443/.well-known/oauth-authorization-server/t"
+        );
+        // IPv6 loopback issuer (allowed for http by require_web_url) → the
+        // authority must stay bracketed, else the URL is malformed.
+        assert_eq!(
+            well_known_url("http://[::1]:8080").unwrap(),
+            "http://[::1]:8080/.well-known/oauth-authorization-server"
         );
     }
 

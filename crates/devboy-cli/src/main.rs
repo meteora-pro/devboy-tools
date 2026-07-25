@@ -2694,11 +2694,26 @@ async fn cmd_login(server_name: &str) -> Result<()> {
             // MCP streamable-http Accept header). An empty/invalid body is
             // rejected by the transport (e.g. 422) *before* the auth layer, so
             // the RFC 9728 `WWW-Authenticate` challenge never comes back.
+            // Send a *complete* MCP initialize (protocolVersion/capabilities/
+            // clientInfo) — a server may validate the params before the auth
+            // layer and 422 an empty body, swallowing the WWW-Authenticate
+            // challenge. Mirrors the real handshake in devboy-mcp proxy.
+            let probe_body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": { "name": "devboy-cli", "version": env!("CARGO_PKG_VERSION") }
+                }
+            })
+            .to_string();
             let resp = http
                 .post(&server.url)
                 .header("content-type", "application/json")
                 .header("accept", "application/json, text/event-stream")
-                .body(r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}"#)
+                .body(probe_body)
                 .send()
                 .await
                 .context("Failed to probe upstream for auth challenge")?;

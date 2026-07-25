@@ -27,8 +27,9 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 # `paste` is unmaintained but still functional and pulled in transitively
-# by egui/eframe (no published successor). Tracked upstream; revisit when
-# egui drops the dependency.
+# by ratatui (the TUI for devboy-cli / devboy-secrets-ui; no published
+# successor). Compile-time proc-macro only — no runtime exposure. Tracked
+# upstream; revisit when ratatui drops the dependency.
 #
 # quick-xml RUSTSEC-2026-0194 / -0195 — DoS (quadratic runtime / unbounded
 # namespace allocation) via *maliciously-crafted* XML, patched in >= 0.41.0.

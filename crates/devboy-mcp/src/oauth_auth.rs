@@ -51,10 +51,14 @@ impl OAuthAuth {
             store_key,
             // No redirect-following: the token endpoint carries the rotating
             // refresh token, so a 302 must never silently move it to another host.
+            // No fallback to `reqwest::Client::new()` — that re-enables the
+            // default redirect policy (the exact regression we guard against).
+            // `.build()` only fails on catastrophic TLS-backend init, where
+            // `Client::new()` panics anyway, so expect() is strictly safer here.
             http: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+                .expect("build no-redirect oauth http client"),
             store,
         }
     }
