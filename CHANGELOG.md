@@ -4,15 +4,16 @@ All notable changes to `devboy-tools` are recorded here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-07-25
+
 ### Security / Dependencies
 
-- Eliminate all RustSec advisory ignores (#308). Upgrade `ratatui` 0.29 → 0.30
-  (drops the unmaintained `paste`, RUSTSEC-2024-0436), and `keepass` 0.12 → 0.13
-  + `wayland-scanner` → 0.31.11 (both now pull `quick-xml >= 0.41`, fixing the
-  RUSTSEC-2026-0194 / -0195 DoS advisories). `deny.toml` `[advisories].ignore`
-  is now empty. No first-party API/behavior changes.
-
-## [0.32.0] - 2026-07-25
+- Eliminate all RustSec advisory ignores (#308). Bump `ratatui` 0.29 → 0.30
+  (drops the unmaintained `paste`, RUSTSEC-2024-0436) and `keepass` 0.12 → 0.13
+  (which requires `quick-xml >= 0.41`); `wayland-scanner` (transitive, via
+  eframe) now resolves to >= 0.31.11, also on `quick-xml >= 0.41` — together
+  fixing the RUSTSEC-2026-0194 / -0195 DoS advisories. `deny.toml`
+  `[advisories].ignore` is now empty. No first-party API/behavior changes.
 
 ### Added — OAuth 2.1 for proxy MCP upstreams (#307)
 
