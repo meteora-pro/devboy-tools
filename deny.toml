@@ -27,9 +27,26 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 # `paste` is unmaintained but still functional and pulled in transitively
-# by egui/eframe (no published successor). Tracked upstream; revisit when
-# egui drops the dependency.
-ignore = ["RUSTSEC-2024-0436"]
+# by ratatui (the TUI for devboy-cli / devboy-secrets-ui; no published
+# successor). Compile-time proc-macro only — no runtime exposure. Tracked
+# upstream; revisit when ratatui drops the dependency.
+#
+# quick-xml RUSTSEC-2026-0194 / -0195 — DoS (quadratic runtime / unbounded
+# namespace allocation) via *maliciously-crafted* XML, patched in >= 0.41.0.
+# Not reachable in our threat model: quick-xml enters only via
+#   - `keepass` (kdbx backend) — parses the user's own local `.kdbx` password
+#     database, a trusted local file the user supplies, never network input;
+#   - `wayland-scanner` — a build-time proc-macro parsing trusted Wayland
+#     protocol XML at compile time (Linux GUI `devboy-secrets-ui-bin` only).
+# No devboy-tools runtime path feeds untrusted XML to quick-xml; the MCP/CLI
+# network surfaces are JSON. Both parents pin older majors (`keepass ^0.40`,
+# `wayland-scanner ^0.39`), so the >= 0.41 bump needs upstream releases.
+# Revisit when keepass / wayland-scanner bump their quick-xml requirement.
+ignore = [
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
 
 # ---------------------------------------------------------------------------
 # Licenses

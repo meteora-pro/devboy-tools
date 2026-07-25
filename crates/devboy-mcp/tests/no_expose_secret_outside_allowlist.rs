@@ -48,6 +48,12 @@ const ALLOWED_FILES: &[(&str, &str)] = &[
         "Docs/comments mention the term as part of the gate's \
          documentation.",
     ),
+    (
+        "oauth_auth.rs",
+        "OAuth token holder — exposes the Bearer for the upstream \
+         Authorization header and the refresh_token for the token \
+         endpoint; neither ever reaches a tool response.",
+    ),
 ];
 
 #[test]

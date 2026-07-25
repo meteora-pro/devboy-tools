@@ -53,6 +53,10 @@ pub struct McpProxyClient {
     session_id: RwLock<Option<String>>,
     /// Channel to receive SSE responses routed by request id (SSE transport only).
     pending: PendingResponses,
+    /// OAuth 2.1 token holder for `auth_type = "oauth2"` upstreams. When set, the
+    /// Bearer is injected per request (pre-flight + on-401 refresh) instead of
+    /// being baked into `http_client` at connect. `None` for bearer/api_key/none.
+    oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
 }
 
 impl McpProxyClient {
@@ -64,6 +68,7 @@ impl McpProxyClient {
         token: Option<&SecretString>,
         auth_type: &str,
         transport: ProxyTransport,
+        oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
     ) -> devboy_core::Result<Self> {
         let mut headers = HeaderMap::new();
         if let Some(token) = token {
@@ -95,10 +100,10 @@ impl McpProxyClient {
 
         match transport {
             ProxyTransport::Sse => {
-                Self::connect_sse(name, url, &prefix, headers, http_client).await
+                Self::connect_sse(name, url, &prefix, headers, http_client, oauth).await
             }
             ProxyTransport::StreamableHttp => {
-                Self::connect_streamable_http(name, url, &prefix, http_client).await
+                Self::connect_streamable_http(name, url, &prefix, http_client, oauth).await
             }
         }
     }
@@ -110,8 +115,24 @@ impl McpProxyClient {
         prefix: &str,
         headers: HeaderMap,
         http_client: reqwest::Client,
+        oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
     ) -> devboy_core::Result<Self> {
         let sse_url = url.to_string();
+        // For oauth2, seed the SSE GET stream with the current access token.
+        // NOTE: this header is set once at connect; if the token later refreshes,
+        // a dropped stream that reqwest-eventsource auto-reconnects would carry a
+        // stale token. Per-request POST auth (in request_sse) always uses a fresh
+        // token; full stream-reconnect-on-refresh is a documented follow-up.
+        let mut headers = headers;
+        if let Some(auth) = &oauth {
+            let access = auth
+                .access_token()
+                .await
+                .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?;
+            let val = HeaderValue::from_str(&format!("Bearer {access}"))
+                .map_err(|e| devboy_core::Error::Http(format!("Invalid token: {e}")))?;
+            headers.insert(AUTHORIZATION, val);
+        }
         let mut es = EventSource::new(
             reqwest::Client::builder()
                 .default_headers(headers)
@@ -168,6 +189,7 @@ impl McpProxyClient {
             transport: ProxyTransport::Sse,
             session_id: RwLock::new(None),
             pending,
+            oauth,
         };
 
         client.initialize().await?;
@@ -181,6 +203,7 @@ impl McpProxyClient {
         url: &str,
         prefix: &str,
         http_client: reqwest::Client,
+        oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
     ) -> devboy_core::Result<Self> {
         let client = Self {
             name: name.to_string(),
@@ -192,6 +215,7 @@ impl McpProxyClient {
             transport: ProxyTransport::StreamableHttp,
             session_id: RwLock::new(None),
             pending: Arc::new(Mutex::new(Vec::new())),
+            oauth,
         };
 
         client.initialize().await?;
@@ -265,18 +289,72 @@ impl McpProxyClient {
             params,
         };
 
+        // For oauth2, inject a (pre-flight-refreshed) Bearer per POST.
+        let mut access: Option<String> = match &self.oauth {
+            Some(auth) => Some(
+                auth.access_token()
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+            ),
+            None => None,
+        };
+
         let (tx, rx) = oneshot::channel();
         {
             let mut pending = self.pending.lock().await;
             pending.push((id, tx));
         }
 
-        self.http_client
-            .post(&self.post_url)
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| devboy_core::Error::Http(format!("POST failed: {}", e)))?;
+        // POST with on-401 refresh-and-retry (once) for oauth2 upstreams. The
+        // response itself arrives asynchronously on the SSE stream via `rx`.
+        // Wrapped so any early error removes the pending registration instead of
+        // leaking it — the SSE listener only reaps an entry when a matching
+        // response arrives, which never happens for a failed POST.
+        let post_result: devboy_core::Result<()> = async {
+            let mut attempt = 0u8;
+            loop {
+                let mut request = self.http_client.post(&self.post_url).json(&req);
+                if let Some(a) = &access {
+                    request = request.header(AUTHORIZATION, format!("Bearer {a}"));
+                }
+                let resp = request
+                    .send()
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("POST failed: {}", e)))?;
+                if resp.status() == reqwest::StatusCode::UNAUTHORIZED
+                    && attempt == 0
+                    && let (Some(auth), Some(sent)) = (self.oauth.as_ref(), access.clone())
+                {
+                    auth.refresh(&sent)
+                        .await
+                        .map_err(|e| devboy_core::Error::Http(format!("token refresh: {e}")))?;
+                    access = Some(
+                        auth.access_token()
+                            .await
+                            .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+                    );
+                    attempt += 1;
+                    continue;
+                }
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    if status == reqwest::StatusCode::UNAUTHORIZED && self.oauth.is_some() {
+                        return Err(devboy_core::Error::Http(format!(
+                            "authorization failed for '{}' after token refresh — run: devboy login {}",
+                            self.name, self.name
+                        )));
+                    }
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(devboy_core::Error::Http(format!("HTTP {}: {}", status, body)));
+                }
+                return Ok(());
+            }
+        }
+        .await;
+        if let Err(e) = post_result {
+            self.pending.lock().await.retain(|(pid, _)| *pid != id);
+            return Err(e);
+        }
 
         let resp = tokio::time::timeout(Duration::from_secs(30), rx)
             .await
@@ -300,31 +378,66 @@ impl McpProxyClient {
             params,
         };
 
-        let mut request = self
-            .http_client
-            .post(&self.post_url)
-            .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "application/json, text/event-stream");
+        // For oauth2 upstreams, fetch a (pre-flight-refreshed) access token to
+        // inject per request; bearer/api_key/none keep the header baked at connect.
+        let mut access: Option<String> = match &self.oauth {
+            Some(auth) => Some(
+                auth.access_token()
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+            ),
+            None => None,
+        };
 
-        // Add session ID for all requests after initialize
-        if method != "initialize" {
-            let session = self.session_id.read().await;
-            if let Some(sid) = session.as_ref() {
-                request = request.header("mcp-session-id", sid);
+        // Send with on-401 refresh-and-retry (once) for oauth2 upstreams.
+        let mut attempt = 0u8;
+        let response = loop {
+            let mut request = self
+                .http_client
+                .post(&self.post_url)
+                .header(CONTENT_TYPE, "application/json")
+                .header(ACCEPT, "application/json, text/event-stream");
+
+            // Add session ID for all requests after initialize
+            if method != "initialize" {
+                let session = self.session_id.read().await;
+                if let Some(sid) = session.as_ref() {
+                    request = request.header("mcp-session-id", sid);
+                }
             }
-        }
+            if let Some(a) = &access {
+                request = request.header(AUTHORIZATION, format!("Bearer {a}"));
+            }
 
-        let response = request.json(&req).send().await.map_err(|e| {
-            tracing::error!(
-                "POST to {} failed: {} (is_timeout={}, is_connect={}, is_request={})",
-                self.post_url,
-                e,
-                e.is_timeout(),
-                e.is_connect(),
-                e.is_request(),
-            );
-            devboy_core::Error::Http(format!("POST failed: {}", e))
-        })?;
+            let response = request.json(&req).send().await.map_err(|e| {
+                tracing::error!(
+                    "POST to {} failed: {} (is_timeout={}, is_connect={}, is_request={})",
+                    self.post_url,
+                    e,
+                    e.is_timeout(),
+                    e.is_connect(),
+                    e.is_request(),
+                );
+                devboy_core::Error::Http(format!("POST failed: {}", e))
+            })?;
+
+            if response.status() == reqwest::StatusCode::UNAUTHORIZED
+                && attempt == 0
+                && let (Some(auth), Some(sent)) = (self.oauth.as_ref(), access.clone())
+            {
+                auth.refresh(&sent)
+                    .await
+                    .map_err(|e| devboy_core::Error::Http(format!("token refresh: {e}")))?;
+                access = Some(
+                    auth.access_token()
+                        .await
+                        .map_err(|e| devboy_core::Error::Http(format!("oauth: {e}")))?,
+                );
+                attempt += 1;
+                continue;
+            }
+            break response;
+        };
 
         // Extract session ID from response headers (set during initialize)
         if method == "initialize"
@@ -339,6 +452,12 @@ impl McpProxyClient {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            if status == reqwest::StatusCode::UNAUTHORIZED && self.oauth.is_some() {
+                return Err(devboy_core::Error::Http(format!(
+                    "authorization failed for '{}' after token refresh — run: devboy login {}",
+                    self.name, self.name
+                )));
+            }
             return Err(devboy_core::Error::Http(format!(
                 "HTTP {}: {}",
                 status, body
@@ -885,6 +1004,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -906,6 +1026,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -936,6 +1057,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -960,6 +1082,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -984,6 +1107,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1014,6 +1138,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1040,6 +1165,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1079,6 +1205,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1119,6 +1246,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1154,6 +1282,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1215,6 +1344,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1258,6 +1388,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1294,6 +1425,7 @@ mod tests {
             Some(&token),
             "api_key",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1325,6 +1457,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1368,6 +1501,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1400,6 +1534,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1434,6 +1569,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1462,6 +1598,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -1479,6 +1616,7 @@ mod tests {
             Some(&token),
             "api_key",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await;
 
@@ -1524,6 +1662,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::Sse,
+            None,
         )
         .await;
 
@@ -1565,6 +1704,7 @@ mod tests {
             Some(&token),
             "bearer",
             ProxyTransport::Sse,
+            None,
         )
         .await;
 
@@ -1591,6 +1731,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::Sse,
+            None,
         )
         .await
         .unwrap();
@@ -1645,6 +1786,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1693,6 +1835,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1734,6 +1877,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1760,6 +1904,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1829,6 +1974,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1840,6 +1986,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1904,6 +2051,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -1954,6 +2102,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -2005,6 +2154,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -2072,6 +2222,7 @@ mod tests {
             None,
             "none",
             ProxyTransport::StreamableHttp,
+            None,
         )
         .await
         .unwrap();
@@ -2191,5 +2342,76 @@ mod tests {
             .await
             .expect("complete response should parse before EOF, ignoring trailing notifications");
         assert!(matches!(resp.id, RequestId::Number(99)));
+    }
+
+    // =========================================================================
+    // OAuth2 request path — refresh + retry on 401 (issue #306)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn oauth2_streamable_refreshes_and_retries_on_401() {
+        use crate::oauth_auth::OAuthAuth;
+        use chrono::{Duration, Utc};
+        use devboy_core::oauth::OAuthTokens;
+        use devboy_storage::{CredentialStore, MemoryStore};
+        use std::sync::Arc;
+
+        let upstream = MockServer::start();
+        setup_mock_upstream(&upstream, sample_tools()); // initialize + tools/list → 200
+        // tools/call always 401 → exercises the pre-flight-valid → 401 → refresh
+        // → single-retry path end-to-end through request_http.
+        let call_mock = upstream.mock(|when, then| {
+            when.method(POST)
+                .path("/mcp")
+                .body_includes(r#""method":"tools/call""#);
+            then.status(401);
+        });
+        // The refresh's token endpoint.
+        let token_mock = upstream.mock(|when, then| {
+            when.method(POST).path("/token");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"access_token":"at-new","refresh_token":"rt-new","expires_in":3600}"#);
+        });
+
+        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let auth = Arc::new(OAuthAuth::new(
+            OAuthTokens {
+                access_token: "at-old".into(),
+                refresh_token: "rt-old".into(),
+                // valid, far from expiry → no pre-flight refresh; the 401 drives it
+                expires_at: Utc::now() + Duration::seconds(3600),
+            },
+            "cli".into(),
+            format!("{}/token", upstream.base_url()),
+            "https://rs.example/mcp".into(),
+            "proxy.x.oauth".into(),
+            store,
+        ));
+
+        let client = McpProxyClient::connect(
+            "up",
+            &format!("{}/mcp", upstream.base_url()),
+            None,
+            None,
+            "oauth2",
+            ProxyTransport::StreamableHttp,
+            Some(auth),
+        )
+        .await
+        .expect("connect handshake should succeed with a valid initial token");
+
+        let err = client
+            .call_tool("get_issues", Some(serde_json::json!({})))
+            .await
+            .expect_err("a persistent 401 must surface as an error");
+
+        // Exactly one refresh (single-flight) and exactly one retry of the call.
+        token_mock.assert_calls(1);
+        call_mock.assert_calls(2);
+        assert!(
+            err.to_string().contains("devboy login"),
+            "persistent 401 should surface an actionable re-login hint, got: {err}"
+        );
     }
 }
