@@ -60,6 +60,18 @@ pub enum JiraScope {
     MultiProject { keys: Vec<String> },
 }
 
+/// Scope for Linear API calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LinearScope {
+    /// Single Linear team
+    Team {
+        /// Team UUID.
+        id: String,
+        /// Optional human-readable team key.
+        key: Option<String>,
+    },
+}
+
 /// Scope for Confluence API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConfluenceScope {
@@ -139,6 +151,12 @@ pub enum ProviderConfig {
         flavor: Option<devboy_jira::JiraFlavor>,
         extra: HashMap<String, serde_json::Value>,
     },
+    Linear {
+        base_url: String,
+        access_token: SecretString,
+        scope: LinearScope,
+        extra: HashMap<String, serde_json::Value>,
+    },
     Confluence {
         base_url: String,
         auth: ConfluenceAuthConfig,
@@ -183,6 +201,7 @@ impl ProviderConfig {
             Self::GitHub { .. } => "github",
             Self::ClickUp { .. } => "clickup",
             Self::Jira { .. } => "jira",
+            Self::Linear { .. } => "linear",
             Self::Confluence { .. } => "confluence",
             Self::Fireflies { .. } => "fireflies",
             Self::Slack { .. } => "slack",
@@ -327,6 +346,20 @@ mod tests {
             extra: HashMap::new(),
         };
         assert_eq!(config.provider_name(), "jira");
+    }
+
+    #[test]
+    fn test_provider_name_linear() {
+        let config = ProviderConfig::Linear {
+            base_url: "https://api.linear.app/graphql".into(),
+            access_token: token("lin_api_x"),
+            scope: LinearScope::Team {
+                id: "team-1".into(),
+                key: Some("ENG".into()),
+            },
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "linear");
     }
 
     #[test]

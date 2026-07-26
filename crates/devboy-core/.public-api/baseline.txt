@@ -616,6 +616,7 @@ pub devboy_core::config::Config::format_pipeline: core::option::Option<devboy_co
 pub devboy_core::config::Config::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::config::Config::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::config::Config::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::config::Config::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::config::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::config::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::config::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
@@ -692,6 +693,7 @@ pub devboy_core::config::ContextConfig::fireflies: core::option::Option<devboy_c
 pub devboy_core::config::ContextConfig::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::config::ContextConfig::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::config::ContextConfig::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::config::ContextConfig::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::config::ContextConfig::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::config::ContextConfig::telegram: core::option::Option<devboy_core::config::TelegramConfig>
 impl devboy_core::config::ContextConfig
@@ -810,6 +812,25 @@ impl core::marker::Unpin for devboy_core::config::JiraConfig
 impl core::marker::UnsafeUnpin for devboy_core::config::JiraConfig
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::JiraConfig
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::JiraConfig
+pub struct devboy_core::config::LinearConfig
+pub devboy_core::config::LinearConfig::team_id: alloc::string::String
+pub devboy_core::config::LinearConfig::team_key: core::option::Option<alloc::string::String>
+pub devboy_core::config::LinearConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::clone(&self) -> devboy_core::config::LinearConfig
+impl core::fmt::Debug for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::LinearConfig
+impl core::marker::Send for devboy_core::config::LinearConfig
+impl core::marker::Sync for devboy_core::config::LinearConfig
+impl core::marker::Unpin for devboy_core::config::LinearConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::LinearConfig
 pub struct devboy_core::config::ProxyConfig
 pub devboy_core::config::ProxyConfig::routing: devboy_core::config::ProxyRoutingConfig
 pub devboy_core::config::ProxyConfig::secrets: devboy_core::config::ProxySecretsConfig
@@ -4581,6 +4602,7 @@ pub devboy_core::Config::format_pipeline: core::option::Option<devboy_core::conf
 pub devboy_core::Config::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::Config::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::Config::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::Config::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
@@ -4687,6 +4709,7 @@ pub devboy_core::ContextConfig::fireflies: core::option::Option<devboy_core::con
 pub devboy_core::ContextConfig::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::ContextConfig::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::ContextConfig::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::ContextConfig::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::ContextConfig::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::ContextConfig::telegram: core::option::Option<devboy_core::config::TelegramConfig>
 impl devboy_core::config::ContextConfig
@@ -5551,6 +5574,25 @@ impl core::marker::Unpin for devboy_core::types::KbSpace
 impl core::marker::UnsafeUnpin for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::KbSpace
+pub struct devboy_core::LinearConfig
+pub devboy_core::LinearConfig::team_id: alloc::string::String
+pub devboy_core::LinearConfig::team_key: core::option::Option<alloc::string::String>
+pub devboy_core::LinearConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::clone(&self) -> devboy_core::config::LinearConfig
+impl core::fmt::Debug for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::LinearConfig
+impl core::marker::Send for devboy_core::config::LinearConfig
+impl core::marker::Sync for devboy_core::config::LinearConfig
+impl core::marker::Unpin for devboy_core::config::LinearConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::LinearConfig
 pub struct devboy_core::ListCustomFieldsParams
 pub devboy_core::ListCustomFieldsParams::issue_type: core::option::Option<alloc::string::String>
 pub devboy_core::ListCustomFieldsParams::limit: core::option::Option<u32>
