@@ -8,6 +8,7 @@
 #![deny(rustdoc::private_intra_doc_links)]
 #![deny(rustdoc::invalid_html_tags)]
 mod client;
+pub mod comment_format;
 pub mod enricher;
 pub mod liveness;
 pub mod metadata;

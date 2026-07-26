@@ -43,6 +43,19 @@ impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::layered::SessionPi
 impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::layered::SessionPipeline
 pub fn devboy_mcp::layered::extract_file_path(args: core::option::Option<&serde_json::value::Value>) -> core::option::Option<alloc::string::String>
 pub fn devboy_mcp::layered::is_mutating_tool(name: &str) -> bool
+pub mod devboy_mcp::oauth_auth
+pub struct devboy_mcp::oauth_auth::OAuthAuth
+impl devboy_mcp::oauth_auth::OAuthAuth
+pub async fn devboy_mcp::oauth_auth::OAuthAuth::access_token(&self) -> core::result::Result<alloc::string::String, devboy_core::oauth::OAuthError>
+pub fn devboy_mcp::oauth_auth::OAuthAuth::new(tokens: devboy_core::oauth::OAuthTokens, client_id: alloc::string::String, token_endpoint: alloc::string::String, resource: alloc::string::String, store_key: alloc::string::String, store: alloc::sync::Arc<dyn devboy_storage::CredentialStore>) -> Self
+pub async fn devboy_mcp::oauth_auth::OAuthAuth::refresh(&self, seen: &str) -> core::result::Result<(), devboy_core::oauth::OAuthError>
+impl !core::marker::Freeze for devboy_mcp::oauth_auth::OAuthAuth
+impl core::marker::Send for devboy_mcp::oauth_auth::OAuthAuth
+impl core::marker::Sync for devboy_mcp::oauth_auth::OAuthAuth
+impl core::marker::Unpin for devboy_mcp::oauth_auth::OAuthAuth
+impl core::marker::UnsafeUnpin for devboy_mcp::oauth_auth::OAuthAuth
+impl !core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::oauth_auth::OAuthAuth
+impl !core::panic::unwind_safe::UnwindSafe for devboy_mcp::oauth_auth::OAuthAuth
 pub mod devboy_mcp::prefetch_adapter
 pub struct devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
 impl devboy_mcp::prefetch_adapter::McpPrefetchDispatcher
@@ -490,7 +503,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy::ProxyTransport
 pub struct devboy_mcp::proxy::McpProxyClient
 impl devboy_mcp::proxy::McpProxyClient
 pub async fn devboy_mcp::proxy::McpProxyClient::call_tool(&self, original_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> devboy_core::error::Result<devboy_mcp::protocol::ToolCallResult>
-pub async fn devboy_mcp::proxy::McpProxyClient::connect(name: &str, url: &str, tool_prefix: core::option::Option<&str>, token: core::option::Option<&secrecy::SecretString>, auth_type: &str, transport: devboy_mcp::proxy::ProxyTransport) -> devboy_core::error::Result<Self>
+pub async fn devboy_mcp::proxy::McpProxyClient::connect(name: &str, url: &str, tool_prefix: core::option::Option<&str>, token: core::option::Option<&secrecy::SecretString>, auth_type: &str, transport: devboy_mcp::proxy::ProxyTransport, oauth: core::option::Option<alloc::sync::Arc<devboy_mcp::oauth_auth::OAuthAuth>>) -> devboy_core::error::Result<Self>
 pub async fn devboy_mcp::proxy::McpProxyClient::fetch_tools(&mut self) -> devboy_core::error::Result<()>
 pub fn devboy_mcp::proxy::McpProxyClient::prefix(&self) -> &str
 pub fn devboy_mcp::proxy::McpProxyClient::prefixed_tools(&self) -> alloc::vec::Vec<devboy_mcp::protocol::ToolDefinition>
@@ -1506,10 +1519,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::transport::Incoming
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::transport::IncomingMessage
 pub struct devboy_mcp::transport::StdioTransport
 impl devboy_mcp::transport::StdioTransport
-pub fn devboy_mcp::transport::StdioTransport::read_message(&mut self) -> std::io::error::Result<core::option::Option<devboy_mcp::transport::IncomingMessage>>
+pub fn devboy_mcp::transport::StdioTransport::read_message(&mut self) -> core::io::error::Result<core::option::Option<devboy_mcp::transport::IncomingMessage>>
 pub fn devboy_mcp::transport::StdioTransport::stdio() -> Self
-pub fn devboy_mcp::transport::StdioTransport::write_notification(&mut self, notification: &devboy_mcp::protocol::JsonRpcNotification) -> std::io::error::Result<()>
-pub fn devboy_mcp::transport::StdioTransport::write_response(&mut self, response: &devboy_mcp::protocol::JsonRpcResponse) -> std::io::error::Result<()>
+pub fn devboy_mcp::transport::StdioTransport::write_notification(&mut self, notification: &devboy_mcp::protocol::JsonRpcNotification) -> core::io::error::Result<()>
+pub fn devboy_mcp::transport::StdioTransport::write_response(&mut self, response: &devboy_mcp::protocol::JsonRpcResponse) -> core::io::error::Result<()>
 impl core::marker::Freeze for devboy_mcp::transport::StdioTransport
 impl core::marker::Send for devboy_mcp::transport::StdioTransport
 impl !core::marker::Sync for devboy_mcp::transport::StdioTransport
@@ -1704,7 +1717,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::signature_match::Match
 pub struct devboy_mcp::McpProxyClient
 impl devboy_mcp::proxy::McpProxyClient
 pub async fn devboy_mcp::proxy::McpProxyClient::call_tool(&self, original_name: &str, arguments: core::option::Option<serde_json::value::Value>) -> devboy_core::error::Result<devboy_mcp::protocol::ToolCallResult>
-pub async fn devboy_mcp::proxy::McpProxyClient::connect(name: &str, url: &str, tool_prefix: core::option::Option<&str>, token: core::option::Option<&secrecy::SecretString>, auth_type: &str, transport: devboy_mcp::proxy::ProxyTransport) -> devboy_core::error::Result<Self>
+pub async fn devboy_mcp::proxy::McpProxyClient::connect(name: &str, url: &str, tool_prefix: core::option::Option<&str>, token: core::option::Option<&secrecy::SecretString>, auth_type: &str, transport: devboy_mcp::proxy::ProxyTransport, oauth: core::option::Option<alloc::sync::Arc<devboy_mcp::oauth_auth::OAuthAuth>>) -> devboy_core::error::Result<Self>
 pub async fn devboy_mcp::proxy::McpProxyClient::fetch_tools(&mut self) -> devboy_core::error::Result<()>
 pub fn devboy_mcp::proxy::McpProxyClient::prefix(&self) -> &str
 pub fn devboy_mcp::proxy::McpProxyClient::prefixed_tools(&self) -> alloc::vec::Vec<devboy_mcp::protocol::ToolDefinition>

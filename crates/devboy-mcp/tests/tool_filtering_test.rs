@@ -43,6 +43,7 @@ impl IssueProvider for ClickUpTestProvider {
             parent: None,
             subtasks: vec![],
             custom_fields: std::collections::HashMap::new(),
+            ..Default::default()
         }]
         .into())
     }
@@ -123,6 +124,7 @@ impl IssueProvider for GitLabTestProvider {
             parent: None,
             subtasks: vec![],
             custom_fields: std::collections::HashMap::new(),
+            ..Default::default()
         }]
         .into())
     }

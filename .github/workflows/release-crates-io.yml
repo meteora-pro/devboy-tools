@@ -56,143 +56,32 @@ jobs:
           cargo check --workspace --all-targets
           cargo test --workspace --no-fail-fast
 
-      # Layer 1 — leaf crates with no internal devboy-* deps. Published
-      # in parallel-safe order (each is independent). `publish_if_new`
-      # makes the step idempotent on partial-retry: if 0.X.Y is already on
-      # crates.io (previous run got far enough), skip silently instead of
-      # failing the whole pipeline.
-      - name: Publish layer 1 (leaf crates — devboy-core + secrets framework leaves)
+      # Publish every publishable library (publish != false) in dependency order,
+      # derived from cargo metadata by scripts/release/crates-publish-order.py.
+      # No hardcoded crate list / manual layers — the set never drifts from reality
+      # (new crates auto-included; the app binary devboy-cli, devboy-mcp and the
+      # internal secrets plugins are publish=false and auto-excluded). See #308.
+      # publish_if_new is idempotent: a version already on crates.io is skipped, so
+      # a re-run after a partial publish completes cleanly.
+      - name: Publish libraries to crates.io (metadata-derived, dep order)
         run: |
           set -euo pipefail
           publish_if_new() {
-            local crate="$1"
-            local version
+            local crate="$1" version
             version="$(cargo metadata --no-deps --format-version 1 \
               | jq -r --arg c "$crate" '.packages[] | select(.name == $c) | .version')"
             echo "::group::publish $crate $version"
             if cargo publish -p "$crate" --no-verify 2>&1 | tee /tmp/publish.log; then
               echo "published"
+            elif grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
+              echo "$crate $version already on crates.io — skipping"
             else
-              # crates.io rejects `cargo publish` on an existing version with
-              # `already uploaded` (status 200/409 depending on registry). Treat
-              # that one shape as success; bubble any other failure up.
-              if grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
-                echo "$crate $version already on crates.io — skipping"
-              else
-                exit 1
-              fi
+              exit 1
             fi
             echo "::endgroup::"
           }
-          for crate in \
-              devboy-core \
-              devboy-secret-patterns \
-              devboy-vault-crypto \
-              devboy-token-catalog ; do
+          while read -r crate; do
+            [ -z "$crate" ] && continue
             publish_if_new "$crate"
-            sleep 10
-          done
-
-      # crates.io index needs ~30 s to make the new version resolvable as a
-      # dependency for the next layer. Hard-coded sleep is the simplest
-      # cross-cutting fix; the dry-run guard caught any pre-release issue.
-      - name: Wait for index propagation
-        run: sleep 30
-
-      # Layer 2 — crates that depend only on Layer 1. Order within the
-      # layer doesn't matter for correctness, but we publish API plugins
-      # before storage/assets so any plugin-side failure surfaces early.
-      # Same `publish_if_new` idempotency as Layer 1 — survives partial
-      # retries.
-      - name: Publish layer 2 (deps on Layer 1 only)
-        run: |
-          set -euo pipefail
-          publish_if_new() {
-            local crate="$1"
-            local version
-            version="$(cargo metadata --no-deps --format-version 1 \
-              | jq -r --arg c "$crate" '.packages[] | select(.name == $c) | .version')"
-            echo "::group::publish $crate $version"
-            if cargo publish -p "$crate" --no-verify 2>&1 | tee /tmp/publish.log; then
-              echo "published"
-            else
-              if grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
-                echo "$crate $version already on crates.io — skipping"
-              else
-                exit 1
-              fi
-            fi
-            echo "::endgroup::"
-          }
-          for crate in \
-              devboy-storage \
-              devboy-assets \
-              devboy-format-pipeline \
-              devboy-gitlab \
-              devboy-github \
-              devboy-jira \
-              devboy-clickup \
-              devboy-confluence \
-              devboy-fireflies \
-              devboy-slack \
-              devboy-telegram ; do
-            publish_if_new "$crate"
-            sleep 20
-          done
-
-      # Layer 3 — depends on Layer 1 + 2.
-      - name: Publish devboy-executor
-        run: |
-          set -euo pipefail
-          if cargo publish -p devboy-executor --no-verify 2>&1 | tee /tmp/publish.log; then
-            :
-          elif grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
-            echo "devboy-executor already on crates.io — skipping"
-          else
-            exit 1
-          fi
-
-      - name: Wait for index propagation
-        run: sleep 30
-
-      # Layer 4 — depends on Layer 3.
-      - name: Publish devboy-mcp
-        run: |
-          set -euo pipefail
-          if cargo publish -p devboy-mcp --no-verify 2>&1 | tee /tmp/publish.log; then
-            :
-          elif grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
-            echo "devboy-mcp already on crates.io — skipping"
-          else
-            exit 1
-          fi
-
-      - name: Wait for index propagation
-        run: sleep 30
-
-      # Layer 5 — depends on devboy-core (independent of executor/mcp chain).
-      - name: Publish devboy-skills
-        run: |
-          set -euo pipefail
-          if cargo publish -p devboy-skills --no-verify 2>&1 | tee /tmp/publish.log; then
-            :
-          elif grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
-            echo "devboy-skills already on crates.io — skipping"
-          else
-            exit 1
-          fi
-
-      - name: Wait for index propagation
-        run: sleep 30
-
-      # Layer 6 — binary, depends on everything above.
-      - name: Publish devboy-cli
-        run: |
-          set -euo pipefail
-          if cargo publish -p devboy-cli --no-verify 2>&1 | tee /tmp/publish.log; then
-            :
-          elif grep -qiE "already (uploaded|exists)|crate version .* is already" /tmp/publish.log; then
-            echo "devboy-cli already on crates.io — skipping"
-          else
-            exit 1
-          fi
+            sleep 15
+          done < <(python3 scripts/release/crates-publish-order.py)

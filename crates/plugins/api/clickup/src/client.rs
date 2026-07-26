@@ -586,6 +586,57 @@ fn map_timestamp(ts: &Option<String>) -> Option<String> {
     ts.as_ref().and_then(|s| epoch_ms_to_iso8601(s))
 }
 
+/// Resolve a select-like custom field's opaque value to its human label
+/// using the `type_config.options` embedded in the task payload.
+/// `drop_down` → the chosen option's name (matched by order index, or by
+/// id when ClickUp returns the option id); `labels` → comma-joined option
+/// names for the selected ids. Returns `None` for non-select fields, empty
+/// option lists, or values that don't resolve (the raw `value` still rides
+/// along on `CustomFieldValue`).
+fn resolve_custom_field_display(cf: &crate::types::ClickUpCustomField) -> Option<String> {
+    let tc = cf.type_config.as_ref()?;
+    if tc.options.is_empty() {
+        return None;
+    }
+    let value = cf.value.as_ref()?;
+    match cf.field_type.as_deref() {
+        Some("drop_down") => {
+            let chosen = match value {
+                // ClickUp returns the selected option's order index (e.g. 0).
+                // Fail cleanly (→ None, raw value kept) rather than truncate
+                // an out-of-range index to a wrong option.
+                serde_json::Value::Number(n) => {
+                    let idx = u32::try_from(n.as_u64()?).ok()?;
+                    tc.options.iter().find(|o| o.orderindex == Some(idx))
+                }
+                // …or, in some configs, the option id directly.
+                serde_json::Value::String(s) => tc
+                    .options
+                    .iter()
+                    .find(|o| o.id.as_deref() == Some(s.as_str())),
+                _ => None,
+            }?;
+            chosen.name.clone()
+        }
+        Some("labels") => {
+            // `labels` value is an array of selected option ids.
+            let names: Vec<String> = value
+                .as_array()?
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|id| {
+                    tc.options
+                        .iter()
+                        .find(|o| o.id.as_deref() == Some(id))
+                        .and_then(|o| o.name.clone())
+                })
+                .collect();
+            (!names.is_empty()).then(|| names.join(", "))
+        }
+        _ => None,
+    }
+}
+
 fn map_task(task: &ClickUpTask) -> Issue {
     // Surface set custom fields keyed by ClickUp's stable field id
     // (matches `get_custom_fields` output across providers). Display
@@ -602,6 +653,10 @@ fn map_task(task: &ClickUpTask) -> Issue {
                     devboy_core::CustomFieldValue {
                         name: cf.name.clone(),
                         value: v.clone(),
+                        // Resolve drop_down/labels indices → human label
+                        // (e.g. 0 → "dev") so agents read the meaning, not
+                        // the opaque id. Raw `value` is kept for writes.
+                        display: resolve_custom_field_display(cf),
                     },
                 )
             })
@@ -616,6 +671,14 @@ fn map_task(task: &ClickUpTask) -> Issue {
             .clone()
             .or_else(|| task.description.clone()),
         state: map_state(task),
+        // DEV-1578: surface the rich ClickUp display status (e.g. "in
+        // progress" / "ready to release" / "complete") + unified category,
+        // alongside the binary `state`.
+        status: Some(task.status.status.clone()),
+        status_category: Some(map_status_category(
+            task.status.status_type.as_deref(),
+            &task.status.status,
+        )),
         source: "clickup".to_string(),
         priority: map_priority(task.priority.as_ref()),
         labels: map_tags(&task.tags),
@@ -1327,8 +1390,25 @@ impl IssueProvider for ClickUpClient {
         } else {
             format!("{}/comment", base_url)
         };
+        // ClickUp's Comments API does not render markdown: `comment_text` is
+        // run through a lossy auto-formatter that fragments backtick spans into
+        // isolated inline-code chips. Send the structured `comment` array
+        // (rich-text runs) so code, lists and prose render cleanly.
+        //
+        // ClickUp renders BOTH fields when present, appending the raw
+        // `comment_text` as a trailing block — so the body must be sent in
+        // exactly one of them. When we have structured blocks, leave
+        // `comment_text` empty (the field is required, but empty avoids the
+        // duplicate); otherwise fall back to plain `comment_text`.
+        let comment = crate::comment_format::markdown_to_comment_blocks(body);
+        let comment_text = if comment.is_empty() {
+            body.to_string()
+        } else {
+            String::new()
+        };
         let request = CreateCommentRequest {
-            comment_text: body.to_string(),
+            comment_text,
+            comment,
         };
 
         // ClickUp POST returns minimal response (id + date), not full comment
@@ -1755,18 +1835,21 @@ mod tests {
                     name: Some("Severity".to_string()),
                     field_type: Some("drop_down".to_string()),
                     value: Some(serde_json::json!("High")),
+                    type_config: None,
                 },
                 crate::types::ClickUpCustomField {
                     id: "cf-2".to_string(),
                     name: Some("Sprint".to_string()),
                     field_type: Some("text".to_string()),
                     value: None, // unset → must be skipped
+                    type_config: None,
                 },
                 crate::types::ClickUpCustomField {
                     id: "cf-3".to_string(),
                     name: None, // anonymous → falls back to id
                     field_type: Some("number".to_string()),
                     value: Some(serde_json::json!(42)),
+                    type_config: None,
                 },
             ],
         };
@@ -1777,12 +1860,199 @@ mod tests {
         let severity = issue.custom_fields.get("cf-1").expect("cf-1 present");
         assert_eq!(severity.name.as_deref(), Some("Severity"));
         assert_eq!(severity.value, serde_json::json!("High"));
+        // No `type_config` options on the payload → nothing to resolve.
+        assert!(severity.display.is_none());
         // Unset value (`cf-2`) is filtered out entirely.
         assert!(!issue.custom_fields.contains_key("cf-2"));
         // Anonymous field (no name) keeps `name: None`.
         let anon = issue.custom_fields.get("cf-3").expect("cf-3 present");
         assert!(anon.name.is_none());
         assert_eq!(anon.value, serde_json::json!(42));
+    }
+
+    /// DEV-1578b: drop_down / labels custom fields must resolve their
+    /// opaque value (order index or option id) to the human label, so the
+    /// agent reads "dev" not `0`. Raw `value` is preserved for writes.
+    #[test]
+    fn test_map_task_resolves_select_custom_fields_to_labels() {
+        let opt = |id: &str, name: &str, idx: u32| crate::types::ClickUpFieldOptionInline {
+            id: Some(id.to_string()),
+            name: Some(name.to_string()),
+            orderindex: Some(idx),
+        };
+        let shipped_opts = || {
+            Some(crate::types::ClickUpFieldTypeConfig {
+                options: vec![
+                    opt("o-dev", "dev", 0),
+                    opt("o-test", "test", 1),
+                    opt("o-prod", "prod", 2),
+                ],
+            })
+        };
+        let task = ClickUpTask {
+            id: "t".to_string(),
+            custom_id: None,
+            name: "T".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/t".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: vec![
+                // drop_down selected by order index 0 → "dev"
+                crate::types::ClickUpCustomField {
+                    id: "shipped".to_string(),
+                    name: Some("Shipped Version".to_string()),
+                    field_type: Some("drop_down".to_string()),
+                    value: Some(serde_json::json!(0)),
+                    type_config: shipped_opts(),
+                },
+                // drop_down selected by option id → "prod"
+                crate::types::ClickUpCustomField {
+                    id: "shipped2".to_string(),
+                    name: Some("Shipped Version".to_string()),
+                    field_type: Some("drop_down".to_string()),
+                    value: Some(serde_json::json!("o-prod")),
+                    type_config: shipped_opts(),
+                },
+                // labels multi-select → joined "backend, infra"
+                crate::types::ClickUpCustomField {
+                    id: "areas".to_string(),
+                    name: Some("Areas".to_string()),
+                    field_type: Some("labels".to_string()),
+                    value: Some(serde_json::json!(["a", "b"])),
+                    type_config: Some(crate::types::ClickUpFieldTypeConfig {
+                        options: vec![
+                            opt("a", "backend", 0),
+                            opt("b", "infra", 1),
+                            opt("c", "frontend", 2),
+                        ],
+                    }),
+                },
+            ],
+        };
+
+        let issue = map_task(&task);
+        let shipped = issue.custom_fields.get("shipped").expect("shipped present");
+        assert_eq!(shipped.value, serde_json::json!(0)); // raw preserved for writes
+        assert_eq!(shipped.display.as_deref(), Some("dev"));
+
+        let shipped2 = issue
+            .custom_fields
+            .get("shipped2")
+            .expect("shipped2 present");
+        assert_eq!(shipped2.display.as_deref(), Some("prod"));
+
+        let areas = issue.custom_fields.get("areas").expect("areas present");
+        assert_eq!(areas.display.as_deref(), Some("backend, infra"));
+    }
+
+    /// DEV-1578b: every non-resolving branch must degrade to `display =
+    /// None` with the raw `value` preserved — never a wrong label, never a
+    /// panic. Covers the u32 out-of-range guard, unmatched order index,
+    /// unmatched option id, empty options, and unmatched labels.
+    #[test]
+    fn test_resolve_custom_field_display_degrades_gracefully() {
+        use crate::types::{ClickUpCustomField, ClickUpFieldOptionInline, ClickUpFieldTypeConfig};
+        let opt = |id: &str, name: &str, idx: u32| ClickUpFieldOptionInline {
+            id: Some(id.to_string()),
+            name: Some(name.to_string()),
+            orderindex: Some(idx),
+        };
+        let field =
+            |id: &str, ty: &str, value: serde_json::Value, opts: Vec<ClickUpFieldOptionInline>| {
+                ClickUpCustomField {
+                    id: id.to_string(),
+                    name: Some(id.to_string()),
+                    field_type: Some(ty.to_string()),
+                    value: Some(value),
+                    type_config: Some(ClickUpFieldTypeConfig { options: opts }),
+                }
+            };
+        let dd_opts = || vec![opt("o-dev", "dev", 0), opt("o-test", "test", 1)];
+        let task = ClickUpTask {
+            id: "t".to_string(),
+            custom_id: None,
+            name: "T".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: "open".to_string(),
+                status_type: Some("open".to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/t".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: vec![
+                // drop_down order index out of u32 range → None (clean, not truncated)
+                field(
+                    "dd_overflow",
+                    "drop_down",
+                    serde_json::json!(4_294_967_296u64),
+                    dd_opts(),
+                ),
+                // drop_down order index with no matching option → None
+                field("dd_no_index", "drop_down", serde_json::json!(99), dd_opts()),
+                // drop_down option id that doesn't exist → None
+                field(
+                    "dd_bad_id",
+                    "drop_down",
+                    serde_json::json!("nope"),
+                    dd_opts(),
+                ),
+                // type_config present but options empty → None
+                field("dd_empty", "drop_down", serde_json::json!(0), vec![]),
+                // labels ids with no matching option → None
+                field(
+                    "lbl_nomatch",
+                    "labels",
+                    serde_json::json!(["zzz"]),
+                    vec![opt("a", "backend", 0)],
+                ),
+            ],
+        };
+
+        let issue = map_task(&task);
+        for key in [
+            "dd_overflow",
+            "dd_no_index",
+            "dd_bad_id",
+            "dd_empty",
+            "lbl_nomatch",
+        ] {
+            let f = issue
+                .custom_fields
+                .get(key)
+                .unwrap_or_else(|| panic!("{key} present"));
+            assert!(
+                f.display.is_none(),
+                "{key} must not resolve, got {:?}",
+                f.display
+            );
+            assert!(!f.value.is_null(), "{key} raw value preserved");
+        }
     }
 
     #[test]
@@ -1847,6 +2117,58 @@ mod tests {
         // Timestamps are now ISO 8601
         assert_eq!(issue.created_at, Some("2024-01-01T00:00:00Z".to_string()));
         assert_eq!(issue.updated_at, Some("2024-01-02T00:00:00Z".to_string()));
+        // DEV-1578: the rich display status + unified category surface alongside `state`.
+        assert_eq!(issue.status, Some("open".to_string()));
+        assert_eq!(issue.status_category, Some("todo".to_string()));
+    }
+
+    /// DEV-1578: custom ClickUp statuses (the ones that drive the team's
+    /// "what's deployed where" board — e.g. "in progress", "review",
+    /// "complete") must surface verbatim in `status`, with a normalized
+    /// `status_category` for cross-provider grouping. The binary `state`
+    /// alone collapses these and loses the promotion stage.
+    #[test]
+    fn test_map_task_surfaces_display_status() {
+        let make = |name: &str, ty: &str| ClickUpTask {
+            id: "t1".to_string(),
+            custom_id: None,
+            name: "Task".to_string(),
+            description: None,
+            text_content: None,
+            status: ClickUpStatus {
+                status: name.to_string(),
+                status_type: Some(ty.to_string()),
+            },
+            priority: None,
+            tags: vec![],
+            assignees: vec![],
+            creator: None,
+            url: "https://app.clickup.com/t/t1".to_string(),
+            date_created: None,
+            date_updated: None,
+            parent: None,
+            subtasks: None,
+            dependencies: None,
+            linked_tasks: None,
+            attachments: Vec::new(),
+            custom_fields: Vec::new(),
+        };
+
+        // Display name is preserved verbatim (not collapsed to open/closed).
+        let in_progress = map_task(&make("in progress", "custom"));
+        assert_eq!(in_progress.status, Some("in progress".to_string()));
+        assert_eq!(in_progress.status_category, Some("in_progress".to_string()));
+        assert_eq!(in_progress.state, "open"); // `state` still binary
+
+        let review = map_task(&make("review", "custom"));
+        assert_eq!(review.status, Some("review".to_string()));
+        assert_eq!(review.status_category, Some("in_progress".to_string()));
+
+        // A "done"-typed status maps to the done category and closed state.
+        let complete = map_task(&make("complete", "closed"));
+        assert_eq!(complete.status, Some("complete".to_string()));
+        assert_eq!(complete.status_category, Some("done".to_string()));
+        assert_eq!(complete.state, "closed");
     }
 
     #[test]
@@ -2572,6 +2894,87 @@ mod tests {
             );
         }
 
+        /// DEV-1578b end-to-end: a task whose drop_down/labels custom fields
+        /// arrive in ClickUp's real wire shape (drop_down `value` = the option
+        /// order index, labels `value` = array of option ids, option defs in
+        /// `type_config.options`) must deserialize and resolve to human labels
+        /// through the full get_issues path. Proves the serde wiring (incl. the
+        /// drop_down `name` / labels `label` option-key alias) matches ClickUp
+        /// — not just the in-memory mapper — and that the agent-facing JSON
+        /// carries the resolved label.
+        #[tokio::test]
+        async fn test_get_issues_resolves_select_field_display() {
+            let server = MockServer::start();
+            let task = serde_json::json!({
+                "id": "t1",
+                "name": "Tracked task",
+                "status": {"status": "in progress", "type": "custom"},
+                "tags": [],
+                "assignees": [],
+                "url": "https://app.clickup.com/t/t1",
+                "date_created": "1704067200000",
+                "date_updated": "1704153600000",
+                "custom_fields": [
+                    {
+                        "id": "8b31f785-shipped",
+                        "name": "Shipped Version",
+                        "type": "drop_down",
+                        "type_config": { "options": [
+                            {"id": "o-dev",  "name": "dev",  "orderindex": 0},
+                            {"id": "o-test", "name": "test", "orderindex": 1},
+                            {"id": "o-prod", "name": "prod", "orderindex": 2}
+                        ]},
+                        "value": 0
+                    },
+                    {
+                        "id": "areas",
+                        "name": "Areas",
+                        "type": "labels",
+                        // ClickUp `labels` options use the `label` key, not `name`.
+                        "type_config": { "options": [
+                            {"id": "a", "label": "backend"},
+                            {"id": "b", "label": "infra"}
+                        ]},
+                        "value": ["a", "b"]
+                    }
+                ]
+            });
+
+            server.mock(|when, then| {
+                when.method(GET).path("/list/12345/task");
+                then.status(200)
+                    .json_body(serde_json::json!({"tasks": [task]}));
+            });
+
+            let client = create_test_client(&server);
+            let issues = client
+                .get_issues(IssueFilter::default())
+                .await
+                .unwrap()
+                .items;
+            let issue = issues.into_iter().next().expect("one issue");
+
+            // Rich display status surfaces (DEV-1578).
+            assert_eq!(issue.status.as_deref(), Some("in progress"));
+            assert_eq!(issue.status_category.as_deref(), Some("in_progress"));
+
+            // drop_down order index 0 → "dev"; raw value preserved for writes.
+            let shipped = issue
+                .custom_fields
+                .get("8b31f785-shipped")
+                .expect("shipped field present");
+            assert_eq!(shipped.value, serde_json::json!(0));
+            assert_eq!(shipped.display.as_deref(), Some("dev"));
+
+            // labels ids → joined labels (validates the `label` serde alias).
+            let areas = issue.custom_fields.get("areas").expect("areas present");
+            assert_eq!(areas.display.as_deref(), Some("backend, infra"));
+
+            // Agent-facing JSON output carries the resolved label.
+            let json = serde_json::to_string(&issue).unwrap();
+            assert!(json.contains("\"display\":\"dev\""), "json = {json}");
+        }
+
         #[tokio::test]
         async fn test_get_issues_with_filters() {
             let server = MockServer::start();
@@ -3199,7 +3602,11 @@ mod tests {
             server.mock(|when, then| {
                 when.method(POST)
                     .path("/task/abc123/comment")
-                    .body_includes("\"comment_text\":\"My comment\"");
+                    // Structured rich-text array drives clean rendering;
+                    // comment_text is emptied so ClickUp doesn't append a
+                    // duplicate raw-text block. See add_comment / comment_format.
+                    .body_includes("\"comment_text\":\"\"")
+                    .body_includes("\"comment\":[{\"text\":\"My comment\"}]");
                 then.status(200).json_body(serde_json::json!({
                     "id": 458315,
                     "hist_id": "26b2d7f1-test",

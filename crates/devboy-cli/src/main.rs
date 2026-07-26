@@ -329,6 +329,16 @@ enum Commands {
         command: TraceCommands,
     },
 
+    /// Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628).
+    ///
+    /// Discovers the authorization server from the upstream's `WWW-Authenticate`
+    /// challenge, registers a client if needed (RFC 7591), prints a code + URL to
+    /// approve in a browser, then stores auto-refreshing tokens.
+    Login {
+        /// Name of the `[[proxy_mcp_servers]]` entry to authorize.
+        server: String,
+    },
+
     /// Run diagnostic checks for the local DevBoy setup
     Doctor {
         /// Output machine-readable JSON
@@ -963,6 +973,10 @@ async fn main() -> Result<()> {
                 handle_config_command(command)?;
             }
 
+            Some(Commands::Login { server }) => {
+                cmd_login(&server).await?;
+            }
+
             Some(Commands::Context { command }) => {
                 handle_context_command(command)?;
             }
@@ -1243,6 +1257,7 @@ async fn handle_init_command(
             tool_prefix: None,
             transport,
             routing: None,
+            oauth: None,
         });
     }
 
@@ -2657,6 +2672,208 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
 // Issues Command
 // =============================================================================
 
+/// `devboy login <server>` — OAuth 2.1 device flow (RFC 8628) against a proxy
+/// upstream. Discovers the AS, registers a client if needed, drives the device
+/// grant, and stores auto-refreshing tokens in the credential store.
+async fn cmd_login(server_name: &str) -> Result<()> {
+    use devboy_core::oauth::{self, DevicePollOutcome, OAuthTokens};
+
+    // Load the SAME config the proxy runtime uses (local .devboy.toml preferred,
+    // global fallback), so `login` finds proxies declared in .devboy.toml and
+    // writes client_id / tokens back to the file `proxy call` actually reads.
+    let (mut config, config_path) = load_runtime_config().context("Failed to load config")?;
+    let idx = config
+        .proxy_mcp_servers
+        .iter()
+        .position(|s| s.name == server_name)
+        .with_context(|| format!("No proxy server named '{server_name}' in .devboy.toml"))?;
+    let server = config.proxy_mcp_servers[idx].clone();
+    if server.auth_type != "oauth2" {
+        anyhow::bail!(
+            "proxy '{}' is auth_type = \"{}\", not \"oauth2\" — `devboy login` only \
+             applies to oauth2 proxies (bearer/api_key use `devboy config set-secret`)",
+            server.name,
+            server.auth_type
+        );
+    }
+    // No redirect-following: require_web_url guards each URL, but reqwest would
+    // otherwise follow a 302 to an unvalidated (internal/plaintext) host.
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("build oauth discovery http client")?;
+    let oauth_cfg = server.oauth.clone().unwrap_or_default();
+
+    // 1. Discover authorization-server metadata.
+    let meta = match &oauth_cfg.authorization_server {
+        Some(as_url) => oauth::fetch_as_metadata(&http, as_url).await,
+        None => {
+            // Probe the upstream for its RFC 9728 WWW-Authenticate challenge.
+            // Probe with a well-formed JSON-RPC `initialize` request (plus the
+            // MCP streamable-http Accept header). An empty/invalid body is
+            // rejected by the transport (e.g. 422) *before* the auth layer, so
+            // the RFC 9728 `WWW-Authenticate` challenge never comes back.
+            // Send a *complete* MCP initialize (protocolVersion/capabilities/
+            // clientInfo) — a server may validate the params before the auth
+            // layer and 422 an empty body, swallowing the WWW-Authenticate
+            // challenge. Mirrors the real handshake in devboy-mcp proxy.
+            let probe_body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": { "name": "devboy-cli", "version": env!("CARGO_PKG_VERSION") }
+                }
+            })
+            .to_string();
+            let resp = http
+                .post(&server.url)
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .body(probe_body)
+                .send()
+                .await
+                .context("Failed to probe upstream for auth challenge")?;
+            // A server may return several challenges across multiple
+            // `WWW-Authenticate` headers (RFC 7235); the Bearer one carrying
+            // `resource_metadata` need not be first. Join them all so discovery
+            // sees every challenge, not just the first header value.
+            let www = resp
+                .headers()
+                .get_all("www-authenticate")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if www.is_empty() {
+                anyhow::bail!(
+                    "Upstream returned no WWW-Authenticate; set [proxy_mcp_servers.oauth] authorization_server"
+                );
+            }
+            oauth::discover(&http, &www).await
+        }
+    }
+    .map_err(|e| anyhow::anyhow!("OAuth discovery failed: {e}"))?;
+
+    // 2. Register a client if we don't have one yet (persist it for re-login).
+    let client_id = match oauth_cfg.client_id.clone() {
+        Some(id) => id,
+        None => {
+            let reg = meta.registration_endpoint.as_deref().context(
+                "Authorization server has no registration_endpoint; set [proxy_mcp_servers.oauth] client_id",
+            )?;
+            let id = oauth::register_client(&http, reg, "devboy-cli")
+                .await
+                .map_err(|e| anyhow::anyhow!("Client registration failed: {e}"))?;
+            let mut oc = server.oauth.clone().unwrap_or_default();
+            oc.client_id = Some(id.clone());
+            config.proxy_mcp_servers[idx].oauth = Some(oc);
+            config
+                .save_to(&config_path)
+                .context("Failed to persist client_id")?;
+            id
+        }
+    };
+
+    // Cache client_id + token_endpoint so the proxy refreshes headlessly later.
+    {
+        let mut oc = config.proxy_mcp_servers[idx]
+            .oauth
+            .clone()
+            .unwrap_or_default();
+        oc.client_id = Some(client_id.clone());
+        oc.token_endpoint = Some(meta.token_endpoint.clone());
+        config.proxy_mcp_servers[idx].oauth = Some(oc);
+        config
+            .save_to(&config_path)
+            .context("Failed to persist oauth config")?;
+    }
+
+    // 3. Device authorization request.
+    let device_ep = meta
+        .device_authorization_endpoint
+        .as_deref()
+        .context("Authorization server does not advertise a device_authorization_endpoint")?;
+    // Prefer configured scopes; otherwise fall back to the scopes the AS
+    // advertises (`scopes_supported`), matching ProxyOAuthConfig's documented
+    // behavior. Omit `scope` entirely only when neither is available.
+    let scope =
+        oauth_cfg.scopes.as_ref().map(|s| s.join(" ")).or_else(|| {
+            (!meta.scopes_supported.is_empty()).then(|| meta.scopes_supported.join(" "))
+        });
+    // RFC 8707 resource indicator: the MCP server we're authorizing against, so
+    // the AS binds the token's audience to it and the resource can validate it.
+    let resource = server.url.as_str();
+    let da = oauth::request_device_authorization(
+        &http,
+        device_ep,
+        &client_id,
+        scope.as_deref(),
+        Some(resource),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Device authorization failed: {e}"))?;
+
+    let verify = da
+        .verification_uri_complete
+        .as_deref()
+        .unwrap_or(&da.verification_uri);
+    println!("\nTo authorize '{server_name}', open:\n  {verify}");
+    println!("and confirm the code:  {}\n", da.user_code);
+    println!("Waiting for approval…");
+
+    // 4. Poll the token endpoint until granted (honoring interval / slow_down).
+    let mut interval = da.interval.max(1);
+    // Bound the wait by the device code's advertised lifetime, so a misbehaving
+    // AS that keeps answering `authorization_pending` can't hang the CLI forever.
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(da.expires_in.max(0) as u64);
+    let tokens = loop {
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "Device code expired after {}s without approval — run `devboy login {server_name}` again",
+                da.expires_in
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        match oauth::poll_device_token_once(
+            &http,
+            &meta.token_endpoint,
+            &da.device_code,
+            &client_id,
+            Some(resource),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Token poll failed: {e}"))?
+        {
+            DevicePollOutcome::Pending => continue,
+            DevicePollOutcome::SlowDown => {
+                interval += 5;
+                continue;
+            }
+            DevicePollOutcome::Granted(resp) => {
+                break OAuthTokens::from_response(resp, chrono::Utc::now(), None)
+                    .map_err(|e| anyhow::anyhow!("Malformed token response: {e}"))?;
+            }
+        }
+    };
+
+    // 5. Persist tokens in the credential store — the proxy auto-refreshes hence.
+    let store = get_credential_store();
+    let json = serde_json::to_string(&tokens).context("Failed to serialize tokens")?;
+    store
+        .store(
+            &format!("proxy.{server_name}.oauth"),
+            &SecretString::from(json),
+        )
+        .context("Failed to store OAuth tokens")?;
+
+    println!("✓ Logged in to '{server_name}'. Tokens stored; the proxy will auto-refresh.");
+    Ok(())
+}
+
 async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
     let (config, _) = load_runtime_config()?;
     let store = get_credential_store();
@@ -3563,6 +3780,7 @@ fn handle_proxy_add(
         tool_prefix: None,
         transport: transport_str.to_string(),
         routing: None,
+        oauth: None,
     };
 
     config.proxy_mcp_servers.push(proxy);
@@ -3614,6 +3832,45 @@ fn handle_proxy_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Build an OAuth token holder for an `auth_type = "oauth2"` proxy, loading the
+/// stored tokens + cached endpoints. Returns `Ok(None)` for non-oauth2 proxies;
+/// an error means the proxy isn't logged in yet (`devboy login <name>`).
+fn build_oauth_auth(
+    proxy_cfg: &ProxyMcpServerConfig,
+) -> Result<Option<Arc<devboy_mcp::oauth_auth::OAuthAuth>>> {
+    if proxy_cfg.auth_type != "oauth2" {
+        return Ok(None);
+    }
+    let hint = format!("run: devboy login {}", proxy_cfg.name);
+    let oc = proxy_cfg
+        .oauth
+        .as_ref()
+        .with_context(|| format!("proxy '{}' has no [oauth] config — {hint}", proxy_cfg.name))?;
+    let client_id = oc
+        .client_id
+        .clone()
+        .with_context(|| format!("proxy '{}' not logged in — {hint}", proxy_cfg.name))?;
+    let token_endpoint = oc
+        .token_endpoint
+        .clone()
+        .with_context(|| format!("proxy '{}' missing token_endpoint — {hint}", proxy_cfg.name))?;
+    let store: Arc<dyn CredentialStore> = Arc::from(get_credential_store());
+    let key = format!("proxy.{}.oauth", proxy_cfg.name);
+    let secret = store
+        .get(&key)?
+        .with_context(|| format!("proxy '{}' not logged in — {hint}", proxy_cfg.name))?;
+    let tokens: devboy_core::oauth::OAuthTokens = serde_json::from_str(secret.expose_secret())
+        .context("stored OAuth tokens are corrupt; re-login")?;
+    Ok(Some(Arc::new(devboy_mcp::oauth_auth::OAuthAuth::new(
+        tokens,
+        client_id,
+        token_endpoint,
+        proxy_cfg.url.clone(), // RFC 8707 resource indicator for refresh
+        key,
+        store,
+    ))))
+}
+
 async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> ProxyManager {
     let mut proxy_manager = ProxyManager::new();
     for proxy_cfg in &config.proxy_mcp_servers {
@@ -3628,6 +3885,16 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
 
         let transport = ProxyTransport::parse(&proxy_cfg.transport);
 
+        // For oauth2 upstreams, build the auto-refreshing token holder. Skip a
+        // proxy that isn't logged in rather than failing the whole manager.
+        let oauth = match build_oauth_auth(proxy_cfg) {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!("proxy '{}': {}", proxy_cfg.name, e);
+                continue;
+            }
+        };
+
         match McpProxyClient::connect(
             &proxy_cfg.name,
             &url,
@@ -3635,6 +3902,7 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
             token.as_ref(),
             &proxy_cfg.auth_type,
             transport,
+            oauth,
         )
         .await
         {
@@ -4217,6 +4485,7 @@ async fn add_env_only_proxies_from_snapshot(
                 token.as_ref(),
                 "bearer",
                 ProxyTransport::StreamableHttp,
+                None,
             )
             .await
             {
@@ -5619,6 +5888,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
@@ -5645,6 +5915,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "sse".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
@@ -5675,6 +5946,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };

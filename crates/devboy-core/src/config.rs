@@ -155,7 +155,7 @@ pub struct ProxyMcpServerConfig {
     pub name: String,
     /// Server URL (SSE or Streamable HTTP endpoint)
     pub url: String,
-    /// Auth type: "bearer", "api_key", "none"
+    /// Auth type: "bearer", "api_key", "none", "oauth2"
     #[serde(default = "default_auth_none")]
     pub auth_type: String,
     /// Keychain key for auth token
@@ -173,6 +173,39 @@ pub struct ProxyMcpServerConfig {
     /// `fallback_on_error` to its default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<ProxyRoutingOverride>,
+    /// OAuth 2.1 settings (used when `auth_type = "oauth2"`). Optional — a minimal
+    /// config sets only `auth_type = "oauth2"` and lets discovery (RFC 9728/8414)
+    /// plus dynamic registration (RFC 7591) fill the rest on first `devboy login`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<ProxyOAuthConfig>,
+}
+
+/// OAuth 2.1 client settings for a proxy upstream (`auth_type = "oauth2"`).
+///
+/// Every field is optional so a minimal config just sets `auth_type = "oauth2"`;
+/// the missing pieces are resolved at `devboy login` time:
+/// - `authorization_server` — discovered from the upstream's RFC 9728
+///   `WWW-Authenticate: Bearer resource_metadata="…"` challenge, then its
+///   RFC 8414 authorization-server metadata;
+/// - `client_id` — obtained via RFC 7591 dynamic client registration and
+///   persisted back;
+/// - `scopes` — default to the server's advertised scopes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProxyOAuthConfig {
+    /// Registered OAuth `client_id`. Obtained via dynamic registration if unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// Requested scopes. Falls back to the server's advertised scopes if unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    /// Authorization Server base URL. Discovered from the upstream's RFC 9728
+    /// `WWW-Authenticate` challenge if unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_server: Option<String>,
+    /// Token endpoint, cached from discovery at `devboy login` time so the proxy
+    /// refreshes without re-running discovery on every startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint: Option<String>,
 }
 
 fn default_transport_sse() -> String {
@@ -2515,6 +2548,48 @@ mod tests {
     }
 
     #[test]
+    fn test_proxy_mcp_server_config_oauth2_full() {
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "devboy-cloud"
+            url = "https://app.devboy.pro/api/mcp"
+            auth_type = "oauth2"
+            transport = "streamable-http"
+
+            [proxy_mcp_servers.oauth]
+            client_id = "cli-abc123"
+            scopes = ["mcp:read", "mcp:write"]
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let proxy = &config.proxy_mcp_servers[0];
+        assert_eq!(proxy.auth_type, "oauth2");
+        let oauth = proxy.oauth.as_ref().expect("oauth block should parse");
+        assert_eq!(oauth.client_id.as_deref(), Some("cli-abc123"));
+        assert_eq!(
+            oauth.scopes,
+            Some(vec!["mcp:read".to_string(), "mcp:write".to_string()])
+        );
+        assert!(oauth.authorization_server.is_none());
+    }
+
+    #[test]
+    fn test_proxy_mcp_server_config_oauth2_minimal() {
+        // Minimal oauth2 config: only `auth_type`, no [oauth] block — discovery
+        // (RFC 9728/8414) + dynamic registration (RFC 7591) fill the rest at login.
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "srv"
+            url = "https://example.com/mcp"
+            auth_type = "oauth2"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let proxy = &config.proxy_mcp_servers[0];
+        assert_eq!(proxy.auth_type, "oauth2");
+        assert!(proxy.oauth.is_none());
+    }
+
+    #[test]
     fn test_proxy_mcp_server_config_multiple() {
         let toml_str = r#"
             [[proxy_mcp_servers]]
@@ -2546,6 +2621,7 @@ mod tests {
                 tool_prefix: Some("tst".to_string()),
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }],
             ..Default::default()
         };
@@ -2571,6 +2647,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "sse".to_string(),
                 routing: None,
+                oauth: None,
             }],
             ..Default::default()
         };

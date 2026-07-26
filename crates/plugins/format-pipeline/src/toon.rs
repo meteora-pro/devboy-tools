@@ -91,6 +91,11 @@ struct IssueStandard<'a> {
     key: &'a str,
     title: &'a str,
     state: &'a str,
+    // DEV-1578: rich display status + category, alongside the binary state
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status_category: Option<&'a str>,
     source: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     priority: Option<&'a str>,
@@ -110,6 +115,8 @@ impl<'a> From<&'a Issue> for IssueStandard<'a> {
             key: &i.key,
             title: &i.title,
             state: &i.state,
+            status: i.status.as_deref(),
+            status_category: i.status_category.as_deref(),
             source: &i.source,
             priority: i.priority.as_deref(),
             labels: &i.labels,
@@ -227,6 +234,7 @@ mod tests {
             parent: None,
             subtasks: vec![],
             custom_fields: std::collections::HashMap::new(),
+            ..Default::default()
         }
     }
 
@@ -273,6 +281,23 @@ mod tests {
         assert!(result.contains("Fix login bug"));
         assert!(!result.contains("2024-01-01")); // no timestamps
         assert!(!result.contains("avatar")); // no avatar
+    }
+
+    // DEV-1578: the rich display status + category must surface in the
+    // Standard TOON view (the level get_issues defaults to), but stay out
+    // of the ultra-compact Minimal view.
+    #[test]
+    fn test_encode_issues_standard_includes_display_status() {
+        let mut issue = sample_issue();
+        issue.status = Some("ready to release".into());
+        issue.status_category = Some("in_progress".into());
+
+        let standard = encode_issues(&[issue.clone()], TrimLevel::Standard).unwrap();
+        assert!(standard.contains("ready to release"));
+        assert!(standard.contains("in_progress"));
+
+        let minimal = encode_issues(&[issue], TrimLevel::Minimal).unwrap();
+        assert!(!minimal.contains("ready to release"));
     }
 
     #[test]
@@ -390,6 +415,7 @@ mod tests {
                 parent: None,
                 subtasks: vec![],
                 custom_fields: std::collections::HashMap::new(),
+                ..Default::default()
             })
             .collect();
 
@@ -430,6 +456,7 @@ mod tests {
             parent: None,
             subtasks: vec![],
             custom_fields: std::collections::HashMap::new(),
+            ..Default::default()
         }).collect();
 
         let full = encode_issues(&issues, TrimLevel::Full).unwrap();

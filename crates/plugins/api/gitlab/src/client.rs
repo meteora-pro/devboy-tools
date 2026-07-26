@@ -463,6 +463,8 @@ fn map_issue(gl_issue: &GitLabIssue, base_url: &str) -> Issue {
         title: gl_issue.title.clone(),
         description: gl_issue.description.clone(),
         state: gl_issue.state.clone(),
+        status: None, // GitLab status is binary (open/closed) → `state` covers it (DEV-1578)
+        status_category: None,
         source: "gitlab".to_string(),
         priority: None, // GitLab doesn't have built-in priority
         labels: gl_issue.labels.clone(),
@@ -541,14 +543,13 @@ fn map_position(gl_position: &GitLabNotePosition) -> Option<CodePosition> {
             .clone()
             .unwrap_or_else(|| gl_position.old_path.clone().unwrap_or_default());
         (path, new_line, "new".to_string())
-    } else if let Some(old_line) = gl_position.old_line {
+    } else {
+        let old_line = gl_position.old_line?;
         let path = gl_position
             .old_path
             .clone()
             .unwrap_or_else(|| gl_position.new_path.clone().unwrap_or_default());
         (path, old_line, "old".to_string())
-    } else {
-        return None;
     };
 
     Some(CodePosition {
