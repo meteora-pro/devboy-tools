@@ -71,7 +71,7 @@ pub enum IndexError {
         path: PathBuf,
         /// Underlying TOML deserialization error.
         #[source]
-        source: Box<toml::de::Error>,
+        source: toml::de::Error,
     },
 
     /// TOML serialization error — surfaced by
@@ -337,7 +337,7 @@ impl GlobalIndex {
     fn from_str_with_path(body: &str, path: &Path) -> Result<Self, IndexError> {
         let raw: RawIndex = toml::from_str(body).map_err(|e| IndexError::Parse {
             path: path.to_path_buf(),
-            source: Box::new(e),
+            source: e,
         })?;
 
         let mut entries = BTreeMap::new();

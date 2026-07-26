@@ -100,7 +100,7 @@ pub enum ManifestError {
     Parse {
         path: PathBuf,
         #[source]
-        source: Box<toml::de::Error>,
+        source: toml::de::Error,
     },
     #[error("executable `{path}` referenced by manifest does not exist")]
     ExecutableMissing { path: PathBuf },
@@ -124,7 +124,7 @@ impl PluginManifest {
     pub fn from_toml_str(body: &str, source_path: &Path) -> Result<Self, ManifestError> {
         let m: PluginManifest = toml::from_str(body).map_err(|e| ManifestError::Parse {
             path: source_path.to_path_buf(),
-            source: Box::new(e),
+            source: e,
         })?;
 
         let from_filename = name_from_filename(source_path)?;
