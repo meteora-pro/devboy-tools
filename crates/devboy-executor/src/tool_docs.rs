@@ -77,6 +77,12 @@ pub fn known_providers() -> Vec<ProviderInfo> {
             conditional_categories: &[],
         },
         ProviderInfo {
+            display_name: "YouGile",
+            key: "yougile",
+            default_categories: &[ToolCategory::IssueTracker],
+            conditional_categories: &[],
+        },
+        ProviderInfo {
             display_name: "Confluence",
             key: "confluence",
             default_categories: &[ToolCategory::KnowledgeBase],
@@ -542,7 +548,7 @@ mod tests {
     use super::*;
     use crate::context::{
         ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-        LinearScope, ProviderConfig, SlackScope, TelegramScope,
+        LinearScope, ProviderConfig, SlackScope, TelegramScope, YouGileScope,
     };
     use devboy_core::ToolEnricher;
     use std::collections::HashMap;
@@ -724,6 +730,12 @@ mod tests {
                 },
                 extra: HashMap::new(),
             },
+            ProviderConfig::YouGile {
+                base_url: "https://yougile.com/api-v2".into(),
+                access_token: "x".into(),
+                scope: YouGileScope::Board { id: "1".into() },
+                extra: HashMap::new(),
+            },
             ProviderConfig::Confluence {
                 base_url: "https://wiki.example.com".into(),
                 auth: ConfluenceAuthConfig::BearerToken { token: "x".into() },
@@ -766,6 +778,7 @@ mod tests {
                 ProviderConfig::ClickUp { .. } => Some("clickup"),
                 ProviderConfig::Jira { .. } => Some("jira"),
                 ProviderConfig::Linear { .. } => Some("linear"),
+                ProviderConfig::YouGile { .. } => Some("yougile"),
                 ProviderConfig::Confluence { .. } => Some("confluence"),
                 ProviderConfig::Fireflies { .. } => Some("fireflies"),
                 ProviderConfig::Slack { .. } => Some("slack"),

@@ -334,7 +334,7 @@ Test provider connection
 
 ###### **Arguments:**
 
-* `<PROVIDER>` — Provider to test (github, gitlab, clickup, jira, slack)
+* `<PROVIDER>` — Provider to test (github, gitlab, clickup, jira, yougile, slack)
 
 
 
