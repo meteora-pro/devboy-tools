@@ -74,6 +74,8 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+# OS CSPRNG for the OAuth `state` parameter (see generate_oauth_state).
+getrandom.workspace = true
 futures.workspace = true
 reqwest = { workspace = true, features = ["json", "rustls-tls", "multipart", "blocking"] }
 dialoguer = "0.11"

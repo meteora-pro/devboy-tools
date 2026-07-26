@@ -3598,31 +3598,19 @@ fn maybe_store_secret(
     Ok(())
 }
 
-#[cfg(windows)]
+/// Generates the OAuth 2.0 `state` parameter — 128 bits from the OS CSPRNG,
+/// hex-encoded behind a `devboy-` marker.
+///
+/// Sourced from `getrandom`, the workspace's designated OS-level CSPRNG, so
+/// one implementation covers every platform: no `/dev/urandom` handling that
+/// breaks on Windows, and no PowerShell subprocess that breaks under a
+/// restrictive execution policy or on installs without it.
 fn generate_oauth_state() -> Result<String> {
-    let output = Command::new("powershell")
-        .args(["-NoProfile", "-Command", "[guid]::NewGuid().ToString('N')"])
-        .output()
-        .context("Failed to invoke PowerShell for OAuth state generation")?;
-    if !output.status.success() {
-        anyhow::bail!("PowerShell failed to generate OAuth state");
-    }
-
-    let state = String::from_utf8(output.stdout).context("OAuth state was not valid UTF-8")?;
-    Ok(format!("devboy-{}", state.trim()))
-}
-
-#[cfg(not(windows))]
-fn generate_oauth_state() -> Result<String> {
-    use std::fs::File;
-    use std::io::Read;
-
     const HEX: &[u8; 16] = b"0123456789abcdef";
 
     let mut bytes = [0u8; 16];
-    File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
-        .context("Failed to read /dev/urandom for OAuth state generation")?;
+    getrandom::getrandom(&mut bytes)
+        .context("Failed to read OS randomness for OAuth state generation")?;
 
     let mut state = String::with_capacity("devboy-".len() + bytes.len() * 2);
     state.push_str("devboy-");
@@ -6074,6 +6062,17 @@ mod tests {
                 .chars()
                 .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
         );
+    }
+
+    #[test]
+    fn test_generate_oauth_state_is_unpredictable() {
+        // The whole point of `state` is CSRF protection, so successive
+        // values must not repeat. The previous implementation derived it
+        // from a UNIX timestamp, which collides for calls within the same
+        // second — exactly what this guards against.
+        let states: std::collections::HashSet<String> =
+            (0..64).map(|_| generate_oauth_state().unwrap()).collect();
+        assert_eq!(states.len(), 64, "generated states must all be distinct");
     }
 
     #[test]
