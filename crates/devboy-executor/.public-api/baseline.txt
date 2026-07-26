@@ -192,6 +192,25 @@ impl core::marker::Unpin for devboy_executor::context::JiraScope
 impl core::marker::UnsafeUnpin for devboy_executor::context::JiraScope
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::JiraScope
 impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::JiraScope
+pub enum devboy_executor::context::LinearScope
+pub devboy_executor::context::LinearScope::Team
+pub devboy_executor::context::LinearScope::Team::id: alloc::string::String
+pub devboy_executor::context::LinearScope::Team::key: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::clone(&self) -> devboy_executor::context::LinearScope
+impl core::fmt::Debug for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::LinearScope
+impl core::marker::Send for devboy_executor::context::LinearScope
+impl core::marker::Sync for devboy_executor::context::LinearScope
+impl core::marker::Unpin for devboy_executor::context::LinearScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::LinearScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::LinearScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::LinearScope
 pub enum devboy_executor::context::ProviderConfig
 pub devboy_executor::context::ProviderConfig::ClickUp
 pub devboy_executor::context::ProviderConfig::ClickUp::access_token: secrecy::SecretString
@@ -226,6 +245,11 @@ pub devboy_executor::context::ProviderConfig::Jira::email: alloc::string::String
 pub devboy_executor::context::ProviderConfig::Jira::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::context::ProviderConfig::Jira::flavor: core::option::Option<devboy_jira::client::JiraFlavor>
 pub devboy_executor::context::ProviderConfig::Jira::scope: devboy_executor::context::JiraScope
+pub devboy_executor::context::ProviderConfig::Linear
+pub devboy_executor::context::ProviderConfig::Linear::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::Linear::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Linear::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::Linear::scope: devboy_executor::context::LinearScope
 pub devboy_executor::context::ProviderConfig::Slack
 pub devboy_executor::context::ProviderConfig::Slack::access_token: secrecy::SecretString
 pub devboy_executor::context::ProviderConfig::Slack::base_url: alloc::string::String
@@ -781,6 +805,11 @@ pub devboy_executor::ProviderConfig::Jira::email: alloc::string::String
 pub devboy_executor::ProviderConfig::Jira::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::ProviderConfig::Jira::flavor: core::option::Option<devboy_jira::client::JiraFlavor>
 pub devboy_executor::ProviderConfig::Jira::scope: devboy_executor::context::JiraScope
+pub devboy_executor::ProviderConfig::Linear
+pub devboy_executor::ProviderConfig::Linear::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::Linear::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::Linear::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::Linear::scope: devboy_executor::context::LinearScope
 pub devboy_executor::ProviderConfig::Slack
 pub devboy_executor::ProviderConfig::Slack::access_token: secrecy::SecretString
 pub devboy_executor::ProviderConfig::Slack::base_url: alloc::string::String

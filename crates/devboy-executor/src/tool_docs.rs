@@ -71,6 +71,12 @@ pub fn known_providers() -> Vec<ProviderInfo> {
             }],
         },
         ProviderInfo {
+            display_name: "Linear",
+            key: "linear",
+            default_categories: &[ToolCategory::IssueTracker],
+            conditional_categories: &[],
+        },
+        ProviderInfo {
             display_name: "YouGile",
             key: "yougile",
             default_categories: &[ToolCategory::IssueTracker],
@@ -542,7 +548,7 @@ mod tests {
     use super::*;
     use crate::context::{
         ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-        ProviderConfig, SlackScope, TelegramScope, YouGileScope,
+        LinearScope, ProviderConfig, SlackScope, TelegramScope, YouGileScope,
     };
     use devboy_core::ToolEnricher;
     use std::collections::HashMap;
@@ -715,6 +721,15 @@ mod tests {
                 flavor: None,
                 extra: HashMap::new(),
             },
+            ProviderConfig::Linear {
+                base_url: "https://api.linear.app/graphql".into(),
+                access_token: "x".into(),
+                scope: LinearScope::Team {
+                    id: "team-1".into(),
+                    key: Some("ENG".into()),
+                },
+                extra: HashMap::new(),
+            },
             ProviderConfig::YouGile {
                 base_url: "https://yougile.com/api-v2".into(),
                 access_token: "x".into(),
@@ -762,6 +777,7 @@ mod tests {
                 ProviderConfig::GitHub { .. } => Some("github"),
                 ProviderConfig::ClickUp { .. } => Some("clickup"),
                 ProviderConfig::Jira { .. } => Some("jira"),
+                ProviderConfig::Linear { .. } => Some("linear"),
                 ProviderConfig::YouGile { .. } => Some("yougile"),
                 ProviderConfig::Confluence { .. } => Some("confluence"),
                 ProviderConfig::Fireflies { .. } => Some("fireflies"),

@@ -28,12 +28,13 @@ use devboy_confluence::{ConfluenceAuth, ConfluenceClient};
 use devboy_core::config::YouGileConfig;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
-    IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
+    IssueFilter, IssueProvider, JiraConfig, LinearConfig, MergeRequestProvider, MrFilter, Provider,
     ProxyMcpServerConfig, SlackConfig, routing_strategy_slug,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
+use devboy_linear::LinearClient;
 use devboy_mcp::protocol::ToolDefinition;
 use devboy_mcp::routing::{ProxyStatus, RoutingEngine};
 use devboy_mcp::signature_match::{ToolCatalogue, build_report};
@@ -1125,6 +1126,7 @@ struct InitOptions {
     gitlab: Option<GitLabConfig>,
     clickup: Option<ClickUpConfig>,
     jira: Option<JiraConfig>,
+    linear: Option<LinearConfig>,
     slack: Option<SlackConfig>,
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
@@ -1854,6 +1856,7 @@ fn build_config(options: &InitOptions) -> Config {
         || options.gitlab.is_some()
         || options.clickup.is_some()
         || options.jira.is_some()
+        || options.linear.is_some()
         || options.slack.is_some()
     {
         let context = ContextConfig {
@@ -1862,6 +1865,7 @@ fn build_config(options: &InitOptions) -> Config {
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
             yougile: None,
+            linear: options.linear.clone(),
             fireflies: None,
             confluence: None,
             slack: options.slack.clone(),
@@ -2435,6 +2439,21 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!("  project_key = {}", jira.project_key);
                 println!("  email = {}", jira.email);
                 if store.exists("jira.token") {
+                    println!("  token = ******* (in keychain)");
+                } else {
+                    println!("  token = (not set)");
+                }
+                println!();
+            }
+
+            if let Some(linear) = &config.linear {
+                println!("[linear]");
+                println!("  url = {}", linear.url);
+                println!("  team_id = {}", linear.team_id);
+                if let Some(team_key) = &linear.team_key {
+                    println!("  team_key = {}", team_key);
+                }
+                if store.exists("linear.token") {
                     println!("  token = ******* (in keychain)");
                 } else {
                     println!("  token = (not set)");
@@ -3166,6 +3185,49 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "linear" => {
+            let linear = config.linear.as_ref().context(
+                "Linear not configured. Run: devboy config set linear.team_id <team_id>",
+            )?;
+
+            let token = store
+                .get("linear.token")
+                .context("Failed to get token")?
+                .context(
+                    "Linear token not set. Run: devboy config set-secret linear.token <lin_api_xxx>",
+                )?;
+
+            println!("Testing Linear connection...");
+            println!("  URL: {}", linear.url);
+            println!("  Team ID: {}", linear.team_id);
+            if let Some(team_key) = &linear.team_key {
+                println!("  Team Key: {}", team_key);
+            }
+
+            let mut client = LinearClient::with_base_url(&linear.url, &linear.team_id, token);
+            if let Some(team_key) = &linear.team_key {
+                client = client.with_team_key(team_key);
+            }
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("Linear connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("Linear connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         "slack" => {
             let slack = config
                 .slack
@@ -3230,7 +3292,7 @@ async fn handle_test_command(provider: &str) -> Result<()> {
 
         _ => {
             println!("Unknown provider: {}", provider);
-            println!("Supported providers: github, gitlab, clickup, jira, slack");
+            println!("Supported providers: github, gitlab, clickup, jira, linear, slack");
         }
     }
 
@@ -4059,6 +4121,10 @@ struct EnvContextBuilder {
     // YouGile
     yougile_url: Option<String>,
     yougile_board_id: Option<String>,
+    // Linear
+    linear_url: Option<String>,
+    linear_team_id: Option<String>,
+    linear_team_key: Option<String>,
     // Slack
     slack_team_id: Option<String>,
     slack_workspace: Option<String>,
@@ -4099,6 +4165,10 @@ impl EnvContextBuilder {
             // YouGile
             ("YOUGILE", "URL") | ("YOUGILE", "BASE_URL") => self.yougile_url = Some(value),
             ("YOUGILE", "BOARD_ID") | ("YOUGILE", "BOARD") => self.yougile_board_id = Some(value),
+            // Linear
+            ("LINEAR", "URL") | ("LINEAR", "BASE_URL") => self.linear_url = Some(value),
+            ("LINEAR", "TEAM_ID") | ("LINEAR", "TEAM") => self.linear_team_id = Some(value),
+            ("LINEAR", "TEAM_KEY") | ("LINEAR", "KEY") => self.linear_team_key = Some(value),
             // Slack
             ("SLACK", "TEAM_ID") | ("SLACK", "TEAM") => self.slack_team_id = Some(value),
             ("SLACK", "WORKSPACE") => self.slack_workspace = Some(value),
@@ -4179,6 +4249,14 @@ impl EnvContextBuilder {
         } else {
             None
         };
+        let linear = self.linear_team_id.as_ref().map(|team_id| LinearConfig {
+            url: self
+                .linear_url
+                .clone()
+                .unwrap_or_else(|| "https://api.linear.app/graphql".to_string()),
+            team_id: team_id.clone(),
+            team_key: self.linear_team_key.clone(),
+        });
 
         let context = ContextConfig {
             github,
@@ -4186,6 +4264,7 @@ impl EnvContextBuilder {
             clickup,
             jira,
             yougile,
+            linear,
             fireflies: None,
             confluence: None,
             slack: if self.slack_team_id.is_some()
@@ -4327,6 +4406,28 @@ fn add_context_providers_from_env(
         } else {
             tracing::warn!(
                 "YouGile configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(linear) = &context.linear {
+        if let Some(token) = get_token_for_context(store, context_name, "linear") {
+            let mut client = LinearClient::with_base_url(&linear.url, &linear.team_id, token);
+            if let Some(team_key) = &linear.team_key {
+                client = client.with_team_key(team_key);
+            }
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Linear provider to env-only context '{}': {} (team {})",
+                context_name,
+                linear.url,
+                linear.team_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Linear configured via env for context '{}' but no token found",
                 context_name
             );
         }
@@ -4599,6 +4700,29 @@ fn add_context_providers(
         } else {
             tracing::warn!(
                 "YouGile configured in context '{}' but no token found (tried contexts.{}.yougile.token then yougile.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(linear) = &context.linear {
+        if let Some(token) = get_token_for_context(store, context_name, "linear") {
+            let mut client = LinearClient::with_base_url(&linear.url, &linear.team_id, token);
+            if let Some(team_key) = &linear.team_key {
+                client = client.with_team_key(team_key);
+            }
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Linear provider to context '{}': {} (team {})",
+                context_name,
+                linear.url,
+                linear.team_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Linear configured in context '{}' but no token found (tried contexts.{}.linear.token then linear.token)",
                 context_name,
                 context_name
             );
