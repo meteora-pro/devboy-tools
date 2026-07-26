@@ -135,7 +135,10 @@ impl YouGileClient {
         let mut offset = 0_u32;
         let mut columns = Vec::new();
 
-        loop {
+        for page_no in 0..=MAX_PAGES {
+            if page_no == MAX_PAGES {
+                return Err(exhausted_pages(MAX_PAGES, "/columns"));
+            }
             let page: YouGileListResponse<YouGileColumn> = self
                 .get_json(
                     "/columns",
@@ -168,7 +171,10 @@ impl YouGileClient {
         let mut offset = 0_u32;
         let mut tasks = Vec::new();
 
-        loop {
+        for page_no in 0..=MAX_PAGES {
+            if page_no == MAX_PAGES {
+                return Err(exhausted_pages(MAX_PAGES, "/task-list"));
+            }
             let mut query = vec![
                 ("columnId", column_id.to_string()),
                 ("limit", "1000".to_string()),
@@ -936,7 +942,30 @@ fn advance_offset(offset: u32, paging: &YouGilePaging, endpoint: &str) -> Result
             "YouGile {endpoint} reported more pages but a page size of 0; refusing to loop forever"
         )));
     }
-    Ok(offset.saturating_add(paging.limit))
+    // `saturating_add` would pin at u32::MAX and keep re-requesting the same
+    // offset forever, so treat an offset that cannot advance as a protocol
+    // error rather than silently spinning.
+    offset.checked_add(paging.limit).ok_or_else(|| {
+        Error::InvalidData(format!(
+            "YouGile {endpoint} paged past the maximum offset ({offset} + {}); \
+             refusing to loop forever",
+            paging.limit
+        ))
+    })
+}
+
+/// Upper bound on pages fetched from one endpoint in a single call.
+///
+/// A server that always answers `next: true` would otherwise keep the loop
+/// running indefinitely even while the offset advances normally. At the 1000
+/// items per page this client requests, the cap is far above any real board.
+const MAX_PAGES: usize = 1_000;
+
+fn exhausted_pages(pages: usize, endpoint: &str) -> Error {
+    Error::InvalidData(format!(
+        "YouGile {endpoint} still reported more pages after {pages} requests; \
+         refusing to loop forever"
+    ))
 }
 
 /// Maps the cross-provider `sort_by` value onto the single timestamp YouGile
@@ -963,14 +992,20 @@ fn validate_sort_by(sort_by: Option<&str>) -> Result<()> {
 /// caller following it would get an empty result set that is indistinguishable
 /// from "this person has no tasks". Fail with an explanation instead.
 fn validate_assignee_filter(assignee: Option<&str>) -> Result<()> {
-    match assignee.map(str::trim).filter(|s| !s.is_empty()) {
-        None => Ok(()),
-        Some(value) if looks_like_uuid(value) => Ok(()),
-        Some(value) => Err(Error::InvalidData(format!(
-            "YouGile filters assignees by user id, but '{value}' is not one; \
-             pass the user's id (a UUID) rather than a name or email"
-        ))),
+    let Some(value) = assignee.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+
+    // Reject only what an id can never be — an email or a multi-word name.
+    // Ids are otherwise treated as opaque: requiring a UUID here would refuse
+    // legitimate identifiers if YouGile ever issues another shape.
+    if value.contains('@') || value.split_whitespace().count() > 1 {
+        return Err(Error::InvalidData(format!(
+            "YouGile filters assignees by user id, and '{value}' looks like a name or email; \
+             pass the user's id instead"
+        )));
     }
+    Ok(())
 }
 
 fn matches_state_category(
@@ -1222,6 +1257,18 @@ mod tests {
             matches!(&err, Error::InvalidData(m) if m.contains("/task-list")),
             "unexpected error: {err:?}"
         );
+
+        // Saturating at u32::MAX would re-request the same offset forever.
+        let huge = YouGilePaging {
+            limit: 10,
+            offset: 0,
+            next: true,
+        };
+        let err = advance_offset(u32::MAX - 1, &huge, "/task-list").unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidData(m) if m.contains("maximum offset")),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
@@ -1241,11 +1288,16 @@ mod tests {
         validate_assignee_filter(None).unwrap();
         validate_assignee_filter(Some("11111111-2222-3333-4444-555555555555")).unwrap();
 
-        let err = validate_assignee_filter(Some("alice@example.com")).unwrap_err();
-        assert!(
-            matches!(&err, Error::InvalidData(m) if m.contains("alice@example.com") && m.contains("user id")),
-            "unexpected error: {err:?}"
-        );
+        // Opaque non-UUID ids must still pass — only names/emails are refused.
+        validate_assignee_filter(Some("usr_12345")).unwrap();
+
+        for bad in ["alice@example.com", "Alice Doe"] {
+            let err = validate_assignee_filter(Some(bad)).unwrap_err();
+            assert!(
+                matches!(&err, Error::InvalidData(m) if m.contains(bad) && m.contains("user id")),
+                "unexpected error for {bad}: {err:?}"
+            );
+        }
     }
 
     #[test]

@@ -3718,7 +3718,13 @@ fn verify_oauth_state(
     provided: Option<&str>,
 ) -> Result<()> {
     let key = get_secret_key(secret_prefix, "oauth_state");
-    let Some(expected) = store.get(&key).ok().flatten() else {
+    // Fail closed: a credential-store read error must not be mistaken for
+    // "no state was issued", which would skip verification entirely.
+    let stored = store
+        .get(&key)
+        .context("Failed to read the issued OAuth state from the credential store")?;
+
+    let Some(expected) = stored else {
         if provided.is_some() {
             tracing::warn!(
                 "No issued OAuth state on record; skipping verification of the supplied --state"
@@ -3735,8 +3741,9 @@ fn verify_oauth_state(
         )
     })?;
 
-    // Constant-time compare: the value is a secret nonce, so avoid leaking a
-    // prefix match through timing.
+    // Compare without an early exit on the first differing byte. The length
+    // is not secret here — it is fixed and public ("devboy-" + 32 hex chars) —
+    // so the length check leaks nothing about the nonce itself.
     let matches = expected.len() == provided.len()
         && expected
             .bytes()
@@ -3744,15 +3751,23 @@ fn verify_oauth_state(
             .fold(0u8, |acc, (a, b)| acc | (a ^ b))
             == 0;
 
-    // One-shot either way — a rejected state must not stay valid for a retry.
-    let _ = store.delete(&key);
-
     if !matches {
+        // Deliberately keep the stored value. Consuming it on failure would
+        // let a single wrong attempt clear the nonce, after which the next
+        // exchange finds nothing stored and skips verification altogether —
+        // turning a rejected attempt into a way to disable the check.
         anyhow::bail!(
             "OAuth state mismatch: the redirect did not come from the authorization request \
              this CLI started. Discard the code and run `oauth url` again."
         );
     }
+
+    // Consume only on success, and surface a failure to do so: this runs
+    // before the code is exchanged, so erroring out here is safe and keeps
+    // the one-shot guarantee honest.
+    store
+        .delete(&key)
+        .context("Verified the OAuth state but failed to consume it; refusing to continue")?;
     Ok(())
 }
 
@@ -6379,8 +6394,17 @@ mod tests {
             err.to_string().contains("state mismatch"),
             "unexpected error: {err}"
         );
-        // A rejected attempt also burns the nonce.
-        assert!(store.get("confluence.oauth_state").unwrap().is_none());
+
+        // Regression: a rejected attempt must NOT consume the nonce. Burning
+        // it would leave nothing stored, and the next exchange would then take
+        // the "no state issued" path and skip verification entirely — one bad
+        // guess would disable the check.
+        assert!(
+            store.get("confluence.oauth_state").unwrap().is_some(),
+            "a rejected state must stay on record"
+        );
+        verify_oauth_state(&store, "confluence", Some("devboy-tampered")).unwrap_err();
+        verify_oauth_state(&store, "confluence", Some("devboy-abc123")).unwrap();
 
         let store = MemoryStore::with_credentials([(
             "confluence.oauth_state".to_string(),
