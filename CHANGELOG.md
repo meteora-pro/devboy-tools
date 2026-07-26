@@ -4,6 +4,47 @@ All notable changes to `devboy-tools` are recorded here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed — crates.io publishing policy (#308)
+
+- crates.io now ships **only the reusable libraries**. `devboy-cli` (the app
+  binary) and `devboy-mcp` are `publish = false` — they hard-depend on the
+  internal secrets plugins, so they're distributed via npm (`@devboy-tools/cli`)
+  + prebuilt release binaries, not `cargo install`. The release now derives its
+  publish set + order from `cargo metadata` (no hardcoded crate list) and a
+  `cargo publish --workspace --dry-run` CI gate catches packaging / metadata /
+  unpublishable-dependency errors before tagging — fixing the chronic
+  crates.io release failures.
+
+## [0.32.0] - 2026-07-25
+
+### Security / Dependencies
+
+- Eliminate all RustSec advisory ignores (#308). Bump `ratatui` 0.29 → 0.30
+  (drops the unmaintained `paste`, RUSTSEC-2024-0436) and `keepass` 0.12 → 0.13
+  (which requires `quick-xml >= 0.41`); `wayland-scanner` (transitive, via
+  eframe) now resolves to >= 0.31.11, also on `quick-xml >= 0.41` — together
+  fixing the RUSTSEC-2026-0194 / -0195 DoS advisories. `deny.toml`
+  `[advisories].ignore` is now empty. No first-party API/behavior changes.
+
+### Added — OAuth 2.1 for proxy MCP upstreams (#307)
+
+`auth_type = "oauth2"` proxies now authenticate via the OAuth 2.1 **device
+authorization grant** (RFC 8628): `devboy login <server>` discovers the
+authorization server from the upstream's `WWW-Authenticate` challenge
+(RFC 9728 → RFC 8414), registers a public client (RFC 7591), prints a code +
+URL to approve in a browser, and stores **auto-refreshing** tokens.
+
+- Per-request Bearer injection + **refresh-on-401** (single retry) on both
+  streamable-http and SSE transports; single-flight, store-reconciled refresh
+  that survives the DevBoy AS's rotating refresh tokens.
+- **RFC 8707 resource-indicator** audience binding — the token is scoped to the
+  MCP server it was issued for.
+- SSRF-guarded discovery: only `https`, or `http` to a genuine loopback host;
+  IPv6-safe `.well-known` construction; no redirect-following on the token
+  endpoint.
+- `devboy doctor` reports oauth2 login state by verifying the stored blob
+  deserializes as `OAuthTokens` (not mere secret presence).
+
 ### Added — Secret management framework (epic #247)
 
 End-to-end first-party secret-management framework per [ADR-020](docs/architecture/adr/ADR-020-secret-manifest-and-alias-resolution.md), [ADR-021](docs/architecture/adr/ADR-021-secret-source-router.md), and [ADR-023](docs/architecture/adr/ADR-023-secret-store-ux-layer.md). Single PR (#255) shipped 67 atomic tasks across 19 phases.

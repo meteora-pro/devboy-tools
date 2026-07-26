@@ -41,7 +41,7 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # the test target carries. Keeping the deps direct and the gate
 # in code is the simplest configuration that keeps both
 # `--no-default-features` and the default build green.
-ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.28"
 # `egui` is fully optional and only activated by the `gui` feature.
 # Unlike `ratatui` (which is referenced by the always-compiled

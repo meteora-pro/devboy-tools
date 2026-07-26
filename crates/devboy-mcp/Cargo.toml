@@ -2,6 +2,9 @@
 name = "devboy-mcp"
 description = "MCP (Model Context Protocol) server for devboy-tools — JSON-RPC 2.0 over stdio, exposing every devboy provider as MCP tools to AI agents."
 version.workspace = true
+# Not a crates.io library: hard-depends on the internal `devboy-secret-kdbx`
+# plugin (publish = false). crates.io ships only the reusable libraries (#308).
+publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
