@@ -15,6 +15,10 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy config get`↴](#devboy-config-get)
 * [`devboy config list`↴](#devboy-config-list)
 * [`devboy config path`↴](#devboy-config-path)
+* [`devboy config confluence-oauth`↴](#devboy-config-confluence-oauth)
+* [`devboy config confluence-oauth url`↴](#devboy-config-confluence-oauth-url)
+* [`devboy config confluence-oauth exchange`↴](#devboy-config-confluence-oauth-exchange)
+* [`devboy config confluence-oauth refresh`↴](#devboy-config-confluence-oauth-refresh)
 * [`devboy context`↴](#devboy-context)
 * [`devboy context list`↴](#devboy-context-list)
 * [`devboy context use`↴](#devboy-context-use)
@@ -196,6 +200,7 @@ Configuration management
 * `get` — Get a configuration value
 * `list` — List all configuration
 * `path` — Show configuration file path
+* `confluence-oauth` — Confluence Cloud OAuth setup helpers
 
 
 
@@ -250,6 +255,63 @@ List all configuration
 Show configuration file path
 
 **Usage:** `devboy config path`
+
+
+
+## `devboy config confluence-oauth`
+
+Confluence Cloud OAuth setup helpers
+
+**Usage:** `devboy config confluence-oauth <COMMAND>`
+
+###### **Subcommands:**
+
+* `url` — Print the Atlassian OAuth 3LO authorization URL
+* `exchange` — Exchange an Atlassian OAuth authorization code for tokens and store them
+* `refresh` — Refresh Atlassian OAuth tokens using the stored refresh token
+
+
+
+## `devboy config confluence-oauth url`
+
+Print the Atlassian OAuth 3LO authorization URL
+
+**Usage:** `devboy config confluence-oauth url [OPTIONS]`
+
+###### **Options:**
+
+* `--context <CONTEXT>` — Optional context name. Defaults to active context, then global config
+* `--state <STATE>` — Optional state override. Generated automatically when omitted
+
+
+
+## `devboy config confluence-oauth exchange`
+
+Exchange an Atlassian OAuth authorization code for tokens and store them
+
+**Usage:** `devboy config confluence-oauth exchange [OPTIONS] --code <CODE>`
+
+###### **Options:**
+
+* `--code <CODE>` — Authorization code returned by Atlassian
+* `--context <CONTEXT>` — Optional context name. Defaults to active context, then global config
+* `--client-secret <CLIENT_SECRET>` — Client secret override. When omitted, reads from keychain
+* `--store-client-secret` — Persist the provided client secret to keychain
+
+
+
+## `devboy config confluence-oauth refresh`
+
+Refresh Atlassian OAuth tokens using the stored refresh token
+
+**Usage:** `devboy config confluence-oauth refresh [OPTIONS]`
+
+###### **Options:**
+
+* `--context <CONTEXT>` — Optional context name. Defaults to active context, then global config
+* `--refresh-token <REFRESH_TOKEN>` — Refresh token override. When omitted, reads from keychain
+* `--client-secret <CLIENT_SECRET>` — Client secret override. When omitted, reads from keychain
+* `--store-client-secret` — Persist the provided client secret to keychain
 
 
 

@@ -327,15 +327,34 @@ pub struct FirefliesConfig {
 pub struct ConfluenceConfig {
     /// Confluence base URL, e.g. `https://wiki.example.com`.
     pub base_url: String,
+    /// Deployment flavor. Defaults to self-hosted when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor: Option<ConfluenceFlavor>,
+    /// Atlassian Cloud site id used by `api.atlassian.com` routes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_id: Option<String>,
     /// Preferred REST API generation when the instance supports multiple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_version: Option<String>,
     /// Username/email for basic auth when that auth mode is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+    /// OAuth app client ID for Atlassian Cloud 3LO.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// OAuth redirect URI registered in the Atlassian app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_uri: Option<String>,
     /// Optional default space hint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfluenceFlavor {
+    SelfHosted,
+    Cloud,
 }
 
 /// Slack provider configuration (messenger).
@@ -404,6 +423,25 @@ pub fn default_slack_required_scopes() -> Vec<String> {
         "chat:write".to_string(),
         "users:read".to_string(),
     ]
+}
+
+fn parse_confluence_flavor(value: &str) -> Result<ConfluenceFlavor> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "self_hosted" | "self-hosted" | "selfhosted" | "server" | "dc" | "data_center"
+        | "data-center" => Ok(ConfluenceFlavor::SelfHosted),
+        "cloud" => Ok(ConfluenceFlavor::Cloud),
+        other => Err(Error::Config(format!(
+            "Unknown Confluence config field value for flavor: {}",
+            other
+        ))),
+    }
+}
+
+fn confluence_flavor_slug(flavor: ConfluenceFlavor) -> String {
+    match flavor {
+        ConfluenceFlavor::SelfHosted => "self_hosted".to_string(),
+        ConfluenceFlavor::Cloud => "cloud".to_string(),
+    }
 }
 
 fn is_default_slack_required_scopes(scopes: &[String]) -> bool {
@@ -1317,16 +1355,24 @@ impl Config {
             "confluence" => {
                 let config = self.confluence.get_or_insert_with(|| ConfluenceConfig {
                     base_url: String::new(),
+                    flavor: None,
+                    cloud_id: None,
                     api_version: None,
                     username: None,
+                    client_id: None,
+                    redirect_uri: None,
                     space_key: None,
                 });
                 match field {
                     "base_url" | "url" => config.base_url = value.to_string(),
+                    "flavor" => config.flavor = Some(parse_confluence_flavor(value)?),
+                    "cloud_id" | "cloud" => config.cloud_id = Some(value.to_string()),
                     "api_version" | "api" | "version" => {
                         config.api_version = Some(value.to_string())
                     }
                     "username" | "email" | "user" => config.username = Some(value.to_string()),
+                    "client_id" => config.client_id = Some(value.to_string()),
+                    "redirect_uri" => config.redirect_uri = Some(value.to_string()),
                     "space_key" | "space" => config.space_key = Some(value.to_string()),
                     _ => {
                         return Err(Error::Config(format!(
@@ -1484,8 +1530,12 @@ impl Config {
                 };
                 match field {
                     "base_url" | "url" => Ok(Some(config.base_url.clone())),
+                    "flavor" => Ok(config.flavor.map(confluence_flavor_slug)),
+                    "cloud_id" | "cloud" => Ok(config.cloud_id.clone()),
                     "api_version" | "api" | "version" => Ok(config.api_version.clone()),
                     "username" | "email" | "user" => Ok(config.username.clone()),
+                    "client_id" => Ok(config.client_id.clone()),
+                    "redirect_uri" => Ok(config.redirect_uri.clone()),
                     "space_key" | "space" => Ok(config.space_key.clone()),
                     _ => Err(Error::Config(format!(
                         "Unknown Confluence config field: {}",
@@ -2157,9 +2207,15 @@ mod tests {
         config
             .set("confluence.base_url", "https://wiki.example.com")
             .unwrap();
+        config.set("confluence.flavor", "cloud").unwrap();
+        config.set("confluence.cloud_id", "cloud-123").unwrap();
         config.set("confluence.api_version", "v1").unwrap();
         config
             .set("confluence.username", "dev@example.com")
+            .unwrap();
+        config.set("confluence.client_id", "client-123").unwrap();
+        config
+            .set("confluence.redirect_uri", "http://localhost:8787/callback")
             .unwrap();
         config.set("confluence.space_key", "ENG").unwrap();
 
@@ -2172,12 +2228,28 @@ mod tests {
             Some("https://wiki.example.com".to_string())
         );
         assert_eq!(
+            config.get("confluence.flavor").unwrap(),
+            Some("cloud".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.cloud").unwrap(),
+            Some("cloud-123".to_string())
+        );
+        assert_eq!(
             config.get("confluence.api").unwrap(),
             Some("v1".to_string())
         );
         assert_eq!(
             config.get("confluence.username").unwrap(),
             Some("dev@example.com".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.client_id").unwrap(),
+            Some("client-123".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.redirect_uri").unwrap(),
+            Some("http://localhost:8787/callback".to_string())
         );
         assert_eq!(
             config.get("confluence.space").unwrap(),

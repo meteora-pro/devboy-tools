@@ -470,6 +470,12 @@ enum ConfigCommands {
 
     /// Show configuration file path
     Path,
+
+    /// Confluence Cloud OAuth setup helpers
+    ConfluenceOauth {
+        #[command(subcommand)]
+        command: ConfluenceOauthCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -540,6 +546,49 @@ enum ContextCommands {
     List,
     /// Switch active context
     Use { name: String },
+}
+
+#[derive(Subcommand)]
+enum ConfluenceOauthCommands {
+    /// Print the Atlassian OAuth 3LO authorization URL
+    Url {
+        /// Optional context name. Defaults to active context, then global config.
+        #[arg(long)]
+        context: Option<String>,
+        /// Optional state override. Generated automatically when omitted.
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// Exchange an Atlassian OAuth authorization code for tokens and store them
+    Exchange {
+        /// Authorization code returned by Atlassian
+        #[arg(long)]
+        code: String,
+        /// Optional context name. Defaults to active context, then global config.
+        #[arg(long)]
+        context: Option<String>,
+        /// Client secret override. When omitted, reads from keychain.
+        #[arg(long)]
+        client_secret: Option<String>,
+        /// Persist the provided client secret to keychain.
+        #[arg(long)]
+        store_client_secret: bool,
+    },
+    /// Refresh Atlassian OAuth tokens using the stored refresh token
+    Refresh {
+        /// Optional context name. Defaults to active context, then global config.
+        #[arg(long)]
+        context: Option<String>,
+        /// Refresh token override. When omitted, reads from keychain.
+        #[arg(long)]
+        refresh_token: Option<String>,
+        /// Client secret override. When omitted, reads from keychain.
+        #[arg(long)]
+        client_secret: Option<String>,
+        /// Persist the provided client secret to keychain.
+        #[arg(long)]
+        store_client_secret: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -972,7 +1021,7 @@ async fn main() -> Result<()> {
             }
 
             Some(Commands::Config { command }) => {
-                handle_config_command(command)?;
+                handle_config_command(command).await?;
             }
 
             Some(Commands::Login { server }) => {
@@ -2313,7 +2362,7 @@ fn register_forge_mcp_to_path(server_name: &str, config_path: &std::path::Path) 
 // Config Commands
 // =============================================================================
 
-fn handle_config_command(command: ConfigCommands) -> Result<()> {
+async fn handle_config_command(command: ConfigCommands) -> Result<()> {
     match command {
         ConfigCommands::Set { key, value } => {
             let mut config = Config::load().context("Failed to load config")?;
@@ -2446,6 +2495,50 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!();
             }
 
+            if let Some(confluence) = &config.confluence {
+                println!("[confluence]");
+                println!("  base_url = {}", confluence.base_url);
+                if let Some(flavor) = confluence.flavor {
+                    println!(
+                        "  flavor = {}",
+                        match flavor {
+                            devboy_core::ConfluenceFlavor::SelfHosted => "self_hosted",
+                            devboy_core::ConfluenceFlavor::Cloud => "cloud",
+                        }
+                    );
+                }
+                if let Some(cloud_id) = &confluence.cloud_id {
+                    println!("  cloud_id = {}", cloud_id);
+                }
+                if let Some(api_version) = &confluence.api_version {
+                    println!("  api_version = {}", api_version);
+                }
+                if let Some(username) = &confluence.username {
+                    println!("  username = {}", username);
+                }
+                if let Some(client_id) = &confluence.client_id {
+                    println!("  client_id = {}", client_id);
+                }
+                if let Some(redirect_uri) = &confluence.redirect_uri {
+                    println!("  redirect_uri = {}", redirect_uri);
+                }
+                if let Some(space_key) = &confluence.space_key {
+                    println!("  space_key = {}", space_key);
+                }
+                if store.exists("confluence.token") {
+                    println!("  token = ******* (in keychain)");
+                } else {
+                    println!("  token = (not set)");
+                }
+                if store.exists("confluence.refresh_token") {
+                    println!("  refresh_token = ******* (in keychain)");
+                }
+                if store.exists("confluence.client_secret") {
+                    println!("  client_secret = ******* (in keychain)");
+                }
+                println!();
+            }
+
             if let Some(linear) = &config.linear {
                 println!("[linear]");
                 println!("  url = {}", linear.url);
@@ -2542,6 +2635,10 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!("  devboy config set slack.workspace <workspace>");
                 println!("  devboy config set-secret slack.token <xoxb-token>");
             }
+        }
+
+        ConfigCommands::ConfluenceOauth { command } => {
+            handle_confluence_oauth_command(command).await?;
         }
 
         ConfigCommands::Path => {
@@ -3517,6 +3614,265 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
+struct ConfluenceOauthTarget {
+    config: devboy_core::ConfluenceConfig,
+    secret_prefix: String,
+    label: String,
+}
+
+fn resolve_confluence_oauth_target(
+    config: &Config,
+    requested_context: Option<&str>,
+) -> Result<ConfluenceOauthTarget> {
+    if let Some(name) = requested_context {
+        let context = config
+            .contexts
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("Context '{}' not found", name))?;
+        let confluence = context
+            .confluence
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Context '{}' has no Confluence config", name))?;
+        return Ok(ConfluenceOauthTarget {
+            config: confluence,
+            secret_prefix: format!("contexts.{name}.confluence"),
+            label: name.to_string(),
+        });
+    }
+
+    if let Some(active) = config.resolve_active_context_name()
+        && let Some(context) = config.contexts.get(&active)
+        && let Some(confluence) = context.confluence.clone()
+    {
+        return Ok(ConfluenceOauthTarget {
+            config: confluence,
+            secret_prefix: format!("contexts.{active}.confluence"),
+            label: active,
+        });
+    }
+
+    if let Some(confluence) = config.confluence.clone() {
+        return Ok(ConfluenceOauthTarget {
+            config: confluence,
+            secret_prefix: "confluence".to_string(),
+            label: "global".to_string(),
+        });
+    }
+
+    Err(anyhow::anyhow!(
+        "Confluence is not configured in the active context or global config"
+    ))
+}
+
+fn get_secret_key(prefix: &str, field: &str) -> String {
+    format!("{prefix}.{field}")
+}
+
+fn read_secret_with_override(
+    store: &dyn CredentialStore,
+    key: &str,
+    override_value: Option<String>,
+    label: &str,
+) -> Result<String> {
+    if let Some(value) = override_value {
+        return Ok(value);
+    }
+    store
+        .get(key)?
+        .map(|secret| secret.expose_secret().to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!("{label} not set. Run: devboy config set-secret {key} <value>")
+        })
+}
+
+fn maybe_store_secret(
+    store: &dyn CredentialStore,
+    key: &str,
+    value: Option<&str>,
+    should_store: bool,
+) -> Result<()> {
+    if should_store && let Some(value) = value {
+        let secret = SecretString::from(value.to_string());
+        store.store(key, &secret)?;
+        println!("Stored {} in keychain", key);
+    }
+    Ok(())
+}
+
+/// Generates the OAuth 2.0 `state` parameter — 128 bits from the OS CSPRNG,
+/// hex-encoded behind a `devboy-` marker.
+///
+/// Sourced from `getrandom`, the workspace's designated OS-level CSPRNG, so
+/// one implementation covers every platform: no `/dev/urandom` handling that
+/// breaks on Windows, and no PowerShell subprocess that breaks under a
+/// restrictive execution policy or on installs without it.
+fn generate_oauth_state() -> Result<String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes)
+        .context("Failed to read OS randomness for OAuth state generation")?;
+
+    let mut state = String::with_capacity("devboy-".len() + bytes.len() * 2);
+    state.push_str("devboy-");
+    for byte in bytes {
+        state.push(HEX[(byte >> 4) as usize] as char);
+        state.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    Ok(state)
+}
+
+async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Result<()> {
+    match command {
+        ConfluenceOauthCommands::Url { context, state } => {
+            let (config, _) = load_runtime_config()?;
+            let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
+            let client_id = target
+                .config
+                .client_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence client_id is not configured"))?;
+            let redirect_uri = target
+                .config
+                .redirect_uri
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence redirect_uri is not configured"))?;
+            let state = match state {
+                Some(state) => state,
+                None => generate_oauth_state()?,
+            };
+            let url = ConfluenceClient::oauth_authorize_url(
+                &client_id,
+                &redirect_uri,
+                &state,
+                &[
+                    "offline_access",
+                    "read:confluence-content.all",
+                    "write:confluence-content",
+                    "read:confluence-space.summary",
+                ],
+            );
+            println!("{url}");
+        }
+        ConfluenceOauthCommands::Exchange {
+            code,
+            context,
+            client_secret,
+            store_client_secret,
+        } => {
+            let (config, _) = load_runtime_config()?;
+            let store = get_credential_store();
+            let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
+            let client_id = target
+                .config
+                .client_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence client_id is not configured"))?;
+            let redirect_uri = target
+                .config
+                .redirect_uri
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence redirect_uri is not configured"))?;
+            let client_secret_key = get_secret_key(&target.secret_prefix, "client_secret");
+            let client_secret = read_secret_with_override(
+                store.as_ref(),
+                &client_secret_key,
+                client_secret,
+                "Confluence client secret",
+            )?;
+            let tokens = ConfluenceClient::exchange_oauth_code(
+                &client_id,
+                &client_secret,
+                &redirect_uri,
+                &code,
+            )
+            .await?;
+            let access_token = tokens.access_token.clone();
+            store.store(
+                &get_secret_key(&target.secret_prefix, "token"),
+                &access_token,
+            )?;
+            if let Some(refresh_token) = tokens.refresh_token.clone() {
+                store.store(
+                    &get_secret_key(&target.secret_prefix, "refresh_token"),
+                    &refresh_token,
+                )?;
+            }
+            maybe_store_secret(
+                store.as_ref(),
+                &client_secret_key,
+                Some(&client_secret),
+                store_client_secret,
+            )?;
+            println!("Stored Confluence OAuth access token for {}", target.label);
+            if tokens.refresh_token.is_some() {
+                println!("Stored Confluence OAuth refresh token for {}", target.label);
+            }
+            if let Some(expires_in) = tokens.expires_in {
+                println!("Access token expires in {} seconds", expires_in);
+            }
+        }
+        ConfluenceOauthCommands::Refresh {
+            context,
+            refresh_token,
+            client_secret,
+            store_client_secret,
+        } => {
+            let (config, _) = load_runtime_config()?;
+            let store = get_credential_store();
+            let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
+            let client_id = target
+                .config
+                .client_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence client_id is not configured"))?;
+            let client_secret_key = get_secret_key(&target.secret_prefix, "client_secret");
+            let refresh_token_key = get_secret_key(&target.secret_prefix, "refresh_token");
+            let client_secret = read_secret_with_override(
+                store.as_ref(),
+                &client_secret_key,
+                client_secret,
+                "Confluence client secret",
+            )?;
+            let refresh_token = read_secret_with_override(
+                store.as_ref(),
+                &refresh_token_key,
+                refresh_token,
+                "Confluence refresh token",
+            )?;
+            let tokens =
+                ConfluenceClient::refresh_oauth_token(&client_id, &client_secret, &refresh_token)
+                    .await?;
+            let access_token = tokens.access_token.clone();
+            store.store(
+                &get_secret_key(&target.secret_prefix, "token"),
+                &access_token,
+            )?;
+            let refresh_token = tokens
+                .refresh_token
+                .clone()
+                .unwrap_or_else(|| SecretString::from(refresh_token));
+            store.store(&refresh_token_key, &refresh_token)?;
+            maybe_store_secret(
+                store.as_ref(),
+                &client_secret_key,
+                Some(&client_secret),
+                store_client_secret,
+            )?;
+            println!(
+                "Refreshed Confluence OAuth access token for {}",
+                target.label
+            );
+            if let Some(expires_in) = tokens.expires_in {
+                println!("Access token expires in {} seconds", expires_in);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Credential store factory for the MCP command — wraps the default chain in a TTL
 /// cache when the user enabled it.
 fn build_mcp_store(cache_ttl_secs: u64) -> Box<dyn CredentialStore> {
@@ -4442,8 +4798,23 @@ fn add_context_providers_from_env(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client = ConfluenceClient::new(&confluence.base_url, auth)
+            let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
+            if let Some(flavor) = confluence.flavor {
+                client = client.with_flavor(match flavor {
+                    devboy_core::ConfluenceFlavor::SelfHosted => {
+                        devboy_confluence::ConfluenceFlavor::SelfHosted
+                    }
+                    devboy_core::ConfluenceFlavor::Cloud => {
+                        devboy_confluence::ConfluenceFlavor::Cloud
+                    }
+                });
+            } else if confluence.cloud_id.is_some() {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = confluence.cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -4738,8 +5109,23 @@ fn add_context_providers(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client = ConfluenceClient::new(&confluence.base_url, auth)
+            let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
+            if let Some(flavor) = confluence.flavor {
+                client = client.with_flavor(match flavor {
+                    devboy_core::ConfluenceFlavor::SelfHosted => {
+                        devboy_confluence::ConfluenceFlavor::SelfHosted
+                    }
+                    devboy_core::ConfluenceFlavor::Cloud => {
+                        devboy_confluence::ConfluenceFlavor::Cloud
+                    }
+                });
+            } else if confluence.cloud_id.is_some() {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = confluence.cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -5867,8 +6253,12 @@ mod tests {
         let context = ContextConfig {
             confluence: Some(ConfluenceConfig {
                 base_url: "https://wiki.example.com".to_string(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".to_string()),
                 username: None,
+                client_id: None,
+                redirect_uri: None,
                 space_key: Some("ENG".to_string()),
             }),
             ..Default::default()
@@ -5882,6 +6272,30 @@ mod tests {
             server.active_knowledge_base_providers()[0].provider_name(),
             "confluence"
         );
+    }
+
+    #[test]
+    fn test_generate_oauth_state_uses_expected_shape() {
+        let state = generate_oauth_state().unwrap();
+
+        assert!(state.starts_with("devboy-"));
+        assert_eq!(state.len(), "devboy-".len() + 32);
+        assert!(
+            state["devboy-".len()..]
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
+    }
+
+    #[test]
+    fn test_generate_oauth_state_is_unpredictable() {
+        // The whole point of `state` is CSRF protection, so successive
+        // values must not repeat. The previous implementation derived it
+        // from a UNIX timestamp, which collides for calls within the same
+        // second — exactly what this guards against.
+        let states: std::collections::HashSet<String> =
+            (0..64).map(|_| generate_oauth_state().unwrap()).collect();
+        assert_eq!(states.len(), 64, "generated states must all be distinct");
     }
 
     #[test]

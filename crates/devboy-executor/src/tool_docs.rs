@@ -742,6 +742,8 @@ mod tests {
                 scope: ConfluenceScope::Space {
                     key: Some("ENG".into()),
                 },
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".into()),
                 extra: HashMap::new(),
             },

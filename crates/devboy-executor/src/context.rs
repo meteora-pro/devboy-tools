@@ -177,6 +177,8 @@ pub enum ProviderConfig {
         base_url: String,
         auth: ConfluenceAuthConfig,
         scope: ConfluenceScope,
+        flavor: Option<devboy_confluence::ConfluenceFlavor>,
+        cloud_id: Option<String>,
         api_version: Option<String>,
         extra: HashMap<String, serde_json::Value>,
     },
@@ -329,6 +331,8 @@ mod tests {
             scope: ConfluenceScope::Space {
                 key: Some("ENG".into()),
             },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v1".into()),
             extra: HashMap::new(),
         };

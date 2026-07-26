@@ -191,11 +191,13 @@ pub fn create_knowledge_base_provider(
         ProviderConfig::Confluence {
             base_url,
             auth,
+            flavor,
+            cloud_id,
             api_version,
             scope: ConfluenceScope::Space { .. },
             ..
         } => {
-            let client = if let Some(proxy) = proxy {
+            let mut client = if let Some(proxy) = proxy {
                 devboy_confluence::ConfluenceClient::new(
                     &proxy.url,
                     devboy_confluence::ConfluenceAuth::None,
@@ -209,6 +211,14 @@ pub fn create_knowledge_base_provider(
                 devboy_confluence::ConfluenceClient::new(base_url, confluence_auth(auth))
                     .with_api_version(api_version.as_deref())
             };
+            if let Some(flavor) = flavor {
+                client = client.with_flavor(*flavor);
+            } else if cloud_id.is_some() {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             Ok(Box::new(client))
         }
         other => Err(Error::ProviderUnsupported {
@@ -477,6 +487,8 @@ mod tests {
             scope: ConfluenceScope::Space {
                 key: Some("ENG".into()),
             },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v1".into()),
             extra: HashMap::new(),
         };
@@ -498,6 +510,8 @@ mod tests {
             scope: ConfluenceScope::Space {
                 key: Some("ENG".into()),
             },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v1".into()),
             extra: HashMap::new(),
         };
@@ -517,6 +531,8 @@ mod tests {
                 token: "test-token".into(),
             },
             scope: ConfluenceScope::Space { key: None },
+            flavor: None,
+            cloud_id: None,
             api_version: None,
             extra: HashMap::new(),
         };
@@ -565,11 +581,80 @@ mod tests {
                 token: "test-token".into(),
             },
             scope: ConfluenceScope::Space { key: None },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v2".into()),
             extra: HashMap::new(),
         };
 
         let provider = create_knowledge_base_provider(&config, None).unwrap();
+        let _ = provider.get_spaces().await.unwrap();
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_confluence_knowledge_base_provider_honors_cloud_flavor() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/wiki/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let config = ProviderConfig::Confluence {
+            base_url: server.base_url(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            flavor: Some(devboy_confluence::ConfluenceFlavor::Cloud),
+            cloud_id: Some("cloud-123".into()),
+            api_version: None,
+            extra: HashMap::new(),
+        };
+
+        let provider = create_knowledge_base_provider(&config, None).unwrap();
+        let _ = provider.get_spaces().await.unwrap();
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_confluence_knowledge_base_provider_explicit_self_hosted_overrides_detection()
+     {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let config = ProviderConfig::Confluence {
+            base_url: "https://team.atlassian.net".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            flavor: Some(devboy_confluence::ConfluenceFlavor::SelfHosted),
+            cloud_id: None,
+            api_version: None,
+            extra: HashMap::new(),
+        };
+
+        let proxy = ProxyConfig {
+            url: server.base_url(),
+            headers: HashMap::new(),
+        };
+        let provider = create_knowledge_base_provider(&config, Some(&proxy)).unwrap();
         let _ = provider.get_spaces().await.unwrap();
 
         mock.assert();

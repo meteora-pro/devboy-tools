@@ -12,8 +12,36 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use crate::DEFAULT_CONFLUENCE_API_PATH;
+
+const ATLASSIAN_OAUTH_AUTHORIZE_URL: &str = "https://auth.atlassian.com/authorize";
+const ATLASSIAN_OAUTH_TOKEN_URL: &str = "https://auth.atlassian.com/oauth/token";
+
+#[derive(Clone, Copy, Default)]
+pub enum ConfluenceFlavor {
+    #[default]
+    SelfHosted,
+    Cloud,
+}
+
+impl fmt::Debug for ConfluenceFlavor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SelfHosted => f.write_str("SelfHosted"),
+            Self::Cloud => f.write_str("Cloud"),
+        }
+    }
+}
+
+fn detect_flavor(url: &str) -> ConfluenceFlavor {
+    if url.contains(".atlassian.net") {
+        ConfluenceFlavor::Cloud
+    } else {
+        ConfluenceFlavor::SelfHosted
+    }
+}
 
 #[derive(Clone)]
 pub enum ConfluenceAuth {
@@ -23,6 +51,19 @@ pub enum ConfluenceAuth {
         username: String,
         password: SecretString,
     },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConfluenceOAuthTokens {
+    pub access_token: SecretString,
+    #[serde(default)]
+    pub refresh_token: Option<SecretString>,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default)]
+    pub token_type: Option<String>,
 }
 
 impl fmt::Debug for ConfluenceAuth {
@@ -57,6 +98,9 @@ impl ConfluenceAuth {
 #[derive(Clone)]
 pub struct ConfluenceClient {
     base_url: String,
+    flavor: ConfluenceFlavor,
+    cloud_id: Option<String>,
+    cloud_api_base_url: Option<String>,
     /// Original Confluence instance URL for generating browse links
     /// (`_links.webui`, `/pages/<id>`). When the client is configured
     /// for proxy mode, `base_url` points at the proxy host so API
@@ -76,6 +120,9 @@ impl fmt::Debug for ConfluenceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ConfluenceClient")
             .field("base_url", &self.base_url)
+            .field("flavor", &self.flavor)
+            .field("cloud_id", &self.cloud_id)
+            .field("cloud_api_base_url", &self.cloud_api_base_url)
             .field("instance_url", &self.instance_url)
             .field("api_path", &self.api_path)
             .field("page_api_path", &self.page_api_path)
@@ -87,14 +134,108 @@ impl fmt::Debug for ConfluenceClient {
 }
 
 impl ConfluenceClient {
+    pub fn oauth_authorize_url(
+        client_id: &str,
+        redirect_uri: &str,
+        state: &str,
+        scopes: &[&str],
+    ) -> String {
+        let scope = if scopes.is_empty() {
+            "offline_access read:confluence-content.all write:confluence-content read:confluence-space.summary".to_string()
+        } else {
+            scopes.join(" ")
+        };
+        format!(
+            "{ATLASSIAN_OAUTH_AUTHORIZE_URL}?audience=api.atlassian.com&client_id={}&scope={}&redirect_uri={}&state={}&response_type=code&prompt=consent",
+            encode_query_value(client_id),
+            encode_query_value(&scope),
+            encode_query_value(redirect_uri),
+            encode_query_value(state),
+        )
+    }
+
+    pub async fn exchange_oauth_code(
+        client_id: &str,
+        client_secret: &str,
+        redirect_uri: &str,
+        code: &str,
+    ) -> Result<ConfluenceOAuthTokens> {
+        let http = reqwest::Client::new();
+        let request = http
+            .post(ATLASSIAN_OAUTH_TOKEN_URL)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(&json!({
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri
+            }));
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::from_status(
+                status.as_u16(),
+                String::from_utf8_lossy(&body).into_owned(),
+            ));
+        }
+        serde_json::from_slice::<ConfluenceOAuthTokens>(&body)
+            .map_err(|e| Error::InvalidData(format!("invalid Atlassian OAuth response: {e}")))
+    }
+
+    pub async fn refresh_oauth_token(
+        client_id: &str,
+        client_secret: &str,
+        refresh_token: &str,
+    ) -> Result<ConfluenceOAuthTokens> {
+        let http = reqwest::Client::new();
+        let request = http
+            .post(ATLASSIAN_OAUTH_TOKEN_URL)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(&json!({
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token
+            }));
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        let status = response.status();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Network(e.to_string()))?;
+        if !status.is_success() {
+            return Err(Error::from_status(
+                status.as_u16(),
+                String::from_utf8_lossy(&body).into_owned(),
+            ));
+        }
+        serde_json::from_slice::<ConfluenceOAuthTokens>(&body)
+            .map_err(|e| Error::InvalidData(format!("invalid Atlassian OAuth response: {e}")))
+    }
+
     pub fn new(base_url: impl Into<String>, auth: ConfluenceAuth) -> Self {
         let base = normalize_base_url(base_url.into());
+        let flavor = detect_flavor(&base);
         Self {
             instance_url: base.clone(),
             base_url: base,
-            api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
-            page_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
-            space_api_path: DEFAULT_CONFLUENCE_API_PATH.to_string(),
+            flavor,
+            cloud_id: None,
+            cloud_api_base_url: None,
+            api_path: api_path_for_flavor(flavor, None),
+            page_api_path: api_path_for_flavor(flavor, None),
+            space_api_path: api_path_for_flavor(flavor, None),
             auth,
             proxy_headers: None,
             http: reqwest::Client::new(),
@@ -121,9 +262,35 @@ impl ConfluenceClient {
         &self.auth
     }
 
+    pub fn flavor(&self) -> &ConfluenceFlavor {
+        &self.flavor
+    }
+
+    pub fn with_flavor(mut self, flavor: ConfluenceFlavor) -> Self {
+        self.flavor = flavor;
+        self.api_path = api_path_for_flavor(self.flavor, None);
+        self.page_api_path = api_path_for_flavor(self.flavor, None);
+        self.space_api_path = api_path_for_flavor(self.flavor, None);
+        self
+    }
+
+    pub fn with_cloud_id(mut self, cloud_id: impl Into<String>) -> Self {
+        self.cloud_id = Some(cloud_id.into());
+        self
+    }
+
+    pub fn with_cloud_api_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.cloud_api_base_url = Some(normalize_base_url(base_url.into()));
+        self
+    }
+
+    pub fn cloud_api_base_url(&self) -> Option<String> {
+        self.cloud_api_base_url.clone()
+    }
+
     pub fn with_api_version(mut self, api_version: Option<&str>) -> Self {
-        self.page_api_path = api_path_for_version(api_version);
-        self.space_api_path = api_path_for_version(api_version);
+        self.page_api_path = api_path_for_flavor(self.flavor, api_version);
+        self.space_api_path = api_path_for_flavor(self.flavor, api_version);
         self
     }
 
@@ -149,9 +316,48 @@ impl ConfluenceClient {
         self.api_url(&self.api_path, path)
     }
 
+    pub fn cloud_api_root_url(&self) -> Option<String> {
+        self.cloud_id.as_ref().map(|cloud_id| {
+            format!(
+                "{}/ex/confluence/{cloud_id}",
+                self.cloud_api_base_url
+                    .as_deref()
+                    .unwrap_or("https://api.atlassian.com")
+            )
+        })
+    }
+
+    pub fn cloud_api_url(&self, path: &str) -> Option<String> {
+        self.cloud_api_root_url().map(|root| {
+            let path = path.trim_start_matches('/');
+            format!("{root}/{path}")
+        })
+    }
+
     fn api_url(&self, api_path: &str, path: &str) -> String {
         let path = path.trim_start_matches('/');
         format!("{}{}/{}", self.base_url, api_path, path)
+    }
+
+    async fn api_request_url(&self, api_path: &str, path: &str) -> Result<String> {
+        if matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            let cloud_root = self.resolve_cloud_api_root_url().await?;
+            return Ok(format!(
+                "{}/{}/{}",
+                cloud_root,
+                api_path.trim_matches('/'),
+                path.trim_start_matches('/')
+            ));
+        }
+        Ok(self.api_url(api_path, path))
+    }
+
+    async fn legacy_rest_api_url(&self, path: &str) -> Result<String> {
+        let api_path = match self.flavor {
+            ConfluenceFlavor::Cloud => "/wiki/rest/api",
+            ConfluenceFlavor::SelfHosted => DEFAULT_CONFLUENCE_API_PATH,
+        };
+        Ok(self.api_url(api_path, path))
     }
 
     #[cfg(test)]
@@ -174,9 +380,10 @@ impl ConfluenceClient {
     where
         T: DeserializeOwned,
     {
+        let url = self.api_request_url(api_path, path).await?;
         let request = self
             .http
-            .get(self.api_url(api_path, path))
+            .get(url)
             .header(reqwest::header::ACCEPT, "application/json");
         self.send_json(request).await
     }
@@ -186,9 +393,10 @@ impl ConfluenceClient {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
+        let url = self.api_request_url(api_path, path).await?;
         let request = self
             .http
-            .post(self.api_url(api_path, path))
+            .post(url)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
@@ -200,13 +408,49 @@ impl ConfluenceClient {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
+        let url = self.api_request_url(api_path, path).await?;
         let request = self
             .http
-            .put(self.api_url(api_path, path))
+            .put(url)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
         self.send_json(request).await
+    }
+
+    async fn get_json_from_legacy_api<T>(&self, path: &str) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let url = self.legacy_rest_api_url(path).await?;
+        let request = self
+            .http
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json");
+        self.send_json(request).await
+    }
+
+    async fn post_empty_json_to_legacy_api<B>(&self, path: &str, body: &B) -> Result<()>
+    where
+        B: Serialize + ?Sized,
+    {
+        let url = self.legacy_rest_api_url(path).await?;
+        let request = self
+            .http
+            .post(url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_empty(request).await
+    }
+
+    async fn delete_empty_from_legacy_api(&self, path: &str) -> Result<()> {
+        let url = self.legacy_rest_api_url(path).await?;
+        let request = self
+            .http
+            .delete(url)
+            .header(reqwest::header::ACCEPT, "application/json");
+        self.send_empty(request).await
     }
 
     pub async fn post_json<T, B>(&self, path: &str, body: &B) -> Result<T>
@@ -349,7 +593,7 @@ fn should_fallback_to_rest_api(error: &Error) -> bool {
 }
 
 fn uses_v2_api(api_path: &str) -> bool {
-    api_path == "/api/v2"
+    api_path.ends_with("/api/v2")
 }
 
 fn proxy_headers_to_headermap(headers: &HashMap<String, String>) -> HeaderMap {
@@ -369,10 +613,17 @@ fn normalize_base_url(base_url: String) -> String {
     base_url.trim_end_matches('/').to_string()
 }
 
-fn api_path_for_version(api_version: Option<&str>) -> String {
-    match api_version.map(str::trim).filter(|v| !v.is_empty()) {
-        Some("v2") => "/api/v2".to_string(),
-        _ => DEFAULT_CONFLUENCE_API_PATH.to_string(),
+fn api_path_for_flavor(flavor: ConfluenceFlavor, api_version: Option<&str>) -> String {
+    let version = api_version.map(str::trim).filter(|v| !v.is_empty());
+    match flavor {
+        ConfluenceFlavor::Cloud => match version {
+            Some("v2") | None => "/wiki/api/v2".to_string(),
+            Some(_) => "/wiki/api/v2".to_string(),
+        },
+        ConfluenceFlavor::SelfHosted => match version {
+            Some("v2") => "/api/v2".to_string(),
+            _ => DEFAULT_CONFLUENCE_API_PATH.to_string(),
+        },
     }
 }
 
@@ -549,8 +800,12 @@ struct ConfluenceUser {
 struct ConfluenceBody {
     #[serde(default)]
     storage: Option<ConfluenceBodyValue>,
+    #[serde(default, rename = "atlas_doc_format")]
+    atlas_doc_format: Option<ConfluenceBodyJsonValue>,
     #[serde(default)]
     view: Option<ConfluenceBodyValue>,
+    #[serde(default)]
+    representation: Option<String>,
     #[serde(default)]
     value: Option<String>,
 }
@@ -558,7 +813,15 @@ struct ConfluenceBody {
 #[derive(Debug, Clone, Deserialize)]
 struct ConfluenceBodyValue {
     #[serde(default)]
+    representation: Option<String>,
+    #[serde(default)]
     value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ConfluenceBodyJsonValue {
+    #[serde(default)]
+    value: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -581,6 +844,13 @@ struct ConfluenceLabel {
     label: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct AtlassianAccessibleResource {
+    id: String,
+    #[serde(default)]
+    url: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct ConfluenceWriteLabel<'a> {
     prefix: &'static str,
@@ -597,8 +867,8 @@ struct ConfluenceAncestor {
 }
 
 #[derive(Debug, Serialize)]
-struct ConfluenceContentBody<'a> {
-    value: &'a str,
+struct ConfluenceContentBody {
+    value: Value,
     representation: &'static str,
 }
 
@@ -608,7 +878,7 @@ struct ConfluenceContentPayload<'a> {
     content_type: &'static str,
     title: &'a str,
     space: ConfluenceCreateSpaceRef<'a>,
-    body: ConfluenceCreateBodyPayload<'a>,
+    body: ConfluenceCreateBodyPayload,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     ancestors: Vec<ConfluenceCreateAncestorRef<'a>>,
 }
@@ -619,8 +889,8 @@ struct ConfluenceCreateSpaceRef<'a> {
 }
 
 #[derive(Debug, Serialize)]
-struct ConfluenceCreateBodyPayload<'a> {
-    storage: ConfluenceContentBody<'a>,
+struct ConfluenceCreateBodyPayload {
+    storage: ConfluenceContentBody,
 }
 
 #[derive(Debug, Serialize)]
@@ -635,7 +905,7 @@ struct ConfluenceUpdatePayload<'a> {
     content_type: &'static str,
     title: &'a str,
     version: ConfluenceUpdateVersion,
-    body: ConfluenceCreateBodyPayload<'a>,
+    body: ConfluenceCreateBodyPayload,
     #[serde(skip_serializing_if = "Option::is_none")]
     ancestors: Option<Vec<ConfluenceCreateAncestorRef<'a>>>,
 }
@@ -653,7 +923,7 @@ struct ConfluenceV2PagePayload<'a> {
     title: &'a str,
     #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
     parent_id: Option<&'a str>,
-    body: ConfluenceContentBody<'a>,
+    body: ConfluenceContentBody,
 }
 
 #[derive(Debug, Serialize)]
@@ -665,7 +935,7 @@ struct ConfluenceV2UpdatePayload<'a> {
     space_id: &'a str,
     #[serde(rename = "parentId", skip_serializing_if = "Option::is_none")]
     parent_id: Option<&'a str>,
-    body: ConfluenceContentBody<'a>,
+    body: ConfluenceContentBody,
     version: ConfluenceUpdateVersion,
 }
 
@@ -743,12 +1013,55 @@ fn display_name(user: Option<&ConfluenceUser>) -> Option<String> {
     })
 }
 
-fn body_value(body: &ConfluenceBody) -> Option<String> {
-    body.view
+fn normalize_body_content(value: Option<&str>, representation: Option<&str>) -> Option<String> {
+    let value = value?;
+    match representation
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some("storage") | Some("view") => Some(confluence_storage_to_markdown(value)),
+        _ => Some(value.to_string()),
+    }
+}
+
+fn adf_body_value(body: &ConfluenceBody) -> Option<&Value> {
+    body.atlas_doc_format
         .as_ref()
-        .and_then(|value| value.value.clone())
-        .or_else(|| body.storage.as_ref().and_then(|value| value.value.clone()))
-        .or_else(|| body.value.clone())
+        .and_then(|value| value.value.as_ref())
+}
+
+fn page_content_markdown(page: &ConfluencePage) -> String {
+    page.body
+        .as_ref()
+        .and_then(adf_body_value)
+        .map(adf_to_markdown)
+        .or_else(|| {
+            page.body
+                .as_ref()
+                .and_then(|body| body.storage.as_ref())
+                .and_then(|storage| {
+                    normalize_body_content(
+                        storage.value.as_deref(),
+                        storage.representation.as_deref().or(Some("storage")),
+                    )
+                })
+        })
+        .or_else(|| {
+            page.body.as_ref().and_then(|body| {
+                body.view.as_ref().and_then(|view| {
+                    normalize_body_content(
+                        view.value.as_deref(),
+                        view.representation.as_deref().or(Some("view")),
+                    )
+                })
+            })
+        })
+        .or_else(|| {
+            page.body.as_ref().and_then(|body| {
+                normalize_body_content(body.value.as_deref(), body.representation.as_deref())
+            })
+        })
+        .unwrap_or_default()
 }
 
 fn extract_labels(page: &ConfluencePage) -> Vec<String> {
@@ -784,11 +1097,13 @@ fn normalize_labels(labels: &[String]) -> Vec<String> {
 }
 
 fn page_excerpt(page: &ConfluencePage) -> Option<String> {
-    page.body
-        .as_ref()
-        .and_then(body_value)
-        .map(|value| truncate_string(strip_html_tags(&value), 280))
-        .filter(|value| !value.is_empty())
+    let content = page_content_markdown(page);
+    let normalized = collapse_markdown_whitespace(&content);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(truncate_string(normalized, 280))
+    }
 }
 
 fn strip_html_tags(input: &str) -> String {
@@ -838,6 +1153,38 @@ fn normalize_confluence_write_content(content: &str, content_type: Option<&str>)
         other => Err(Error::InvalidData(format!(
             "unsupported confluence content_type '{other}', expected markdown, html, or storage"
         ))),
+    }
+}
+
+fn normalize_confluence_v2_write_content(
+    flavor: ConfluenceFlavor,
+    content: &str,
+    content_type: Option<&str>,
+) -> Result<ConfluenceContentBody> {
+    if matches!(flavor, ConfluenceFlavor::Cloud) {
+        let adf = match content_type
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("markdown")
+        {
+            "markdown" => markdown_to_adf(content),
+            "html" => markdown_to_adf(&strip_html_tags_preserve_layout(content)),
+            "storage" => markdown_to_adf(&confluence_storage_to_markdown(content)),
+            other => {
+                return Err(Error::InvalidData(format!(
+                    "unsupported confluence cloud content_type '{other}', expected markdown, html, or storage"
+                )));
+            }
+        };
+        Ok(ConfluenceContentBody {
+            value: adf,
+            representation: "atlas_doc_format",
+        })
+    } else {
+        Ok(ConfluenceContentBody {
+            value: Value::String(normalize_confluence_write_content(content, content_type)?),
+            representation: "storage",
+        })
     }
 }
 
@@ -962,6 +1309,213 @@ fn markdown_to_confluence_storage(markdown: &str) -> String {
     out
 }
 
+fn markdown_to_adf(markdown: &str) -> Value {
+    let markdown = markdown.replace("\r\n", "\n");
+    let mut content = Vec::new();
+    let mut paragraph: Vec<String> = Vec::new();
+    let mut lines = markdown.lines().peekable();
+
+    let flush_paragraph = |content: &mut Vec<Value>, paragraph: &mut Vec<String>| {
+        if paragraph.is_empty() {
+            return;
+        }
+        let text = paragraph.join(" ");
+        content.push(json!({
+            "type": "paragraph",
+            "content": markdown_inline_to_adf(&text)
+        }));
+        paragraph.clear();
+    };
+
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("```") {
+            flush_paragraph(&mut content, &mut paragraph);
+            let mut code_lines = Vec::new();
+            for code_line in lines.by_ref() {
+                if code_line.trim_start().starts_with("```") {
+                    break;
+                }
+                code_lines.push(code_line);
+            }
+            content.push(json!({
+                "type": "codeBlock",
+                "content": [{ "type": "text", "text": code_lines.join("\n") }]
+            }));
+            continue;
+        }
+        if trimmed.is_empty() {
+            flush_paragraph(&mut content, &mut paragraph);
+            continue;
+        }
+        if let Some((level, title)) = parse_markdown_heading(trimmed) {
+            flush_paragraph(&mut content, &mut paragraph);
+            content.push(json!({
+                "type": "heading",
+                "attrs": { "level": level },
+                "content": markdown_inline_to_adf(title)
+            }));
+            continue;
+        }
+
+        let mut list_items = Vec::new();
+        if let Some(item) = parse_unordered_list_item(trimmed) {
+            flush_paragraph(&mut content, &mut paragraph);
+            list_items.push(item.to_string());
+            while let Some(next) = lines.peek() {
+                if let Some(item) = parse_unordered_list_item(next.trim()) {
+                    list_items.push(item.to_string());
+                    lines.next();
+                } else {
+                    break;
+                }
+            }
+            content.push(json!({
+                "type": "bulletList",
+                "content": list_items.into_iter().map(|item| json!({
+                    "type": "listItem",
+                    "content": [{ "type": "paragraph", "content": markdown_inline_to_adf(&item) }]
+                })).collect::<Vec<_>>()
+            }));
+            continue;
+        }
+        if let Some(item) = parse_ordered_list_item(trimmed) {
+            flush_paragraph(&mut content, &mut paragraph);
+            list_items.push(item.to_string());
+            while let Some(next) = lines.peek() {
+                if let Some(item) = parse_ordered_list_item(next.trim()) {
+                    list_items.push(item.to_string());
+                    lines.next();
+                } else {
+                    break;
+                }
+            }
+            content.push(json!({
+                "type": "orderedList",
+                "content": list_items.into_iter().map(|item| json!({
+                    "type": "listItem",
+                    "content": [{ "type": "paragraph", "content": markdown_inline_to_adf(&item) }]
+                })).collect::<Vec<_>>()
+            }));
+            continue;
+        }
+        paragraph.push(trimmed.to_string());
+    }
+
+    flush_paragraph(&mut content, &mut paragraph);
+    json!({
+        "type": "doc",
+        "version": 1,
+        "content": content
+    })
+}
+
+fn markdown_inline_to_adf(input: &str) -> Vec<Value> {
+    let mut nodes = Vec::new();
+    let mut chars = input.chars().peekable();
+    let mut plain = String::new();
+
+    let flush_plain = |nodes: &mut Vec<Value>, plain: &mut String| {
+        if !plain.is_empty() {
+            nodes.push(json!({ "type": "text", "text": plain.clone() }));
+            plain.clear();
+        }
+    };
+
+    while let Some(ch) = chars.next() {
+        if ch == '`' {
+            flush_plain(&mut nodes, &mut plain);
+            let mut code = String::new();
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next == '`' {
+                    break;
+                }
+                code.push(next);
+            }
+            nodes.push(json!({
+                "type": "text",
+                "text": code,
+                "marks": [{ "type": "code" }]
+            }));
+            continue;
+        }
+        if ch == '*' && chars.peek() == Some(&'*') {
+            chars.next();
+            flush_plain(&mut nodes, &mut plain);
+            let mut bold = String::new();
+            while let Some(next) = chars.next() {
+                if next == '*' && chars.peek() == Some(&'*') {
+                    chars.next();
+                    break;
+                }
+                bold.push(next);
+            }
+            nodes.push(json!({
+                "type": "text",
+                "text": bold,
+                "marks": [{ "type": "strong" }]
+            }));
+            continue;
+        }
+        if ch == '*' {
+            flush_plain(&mut nodes, &mut plain);
+            let mut em = String::new();
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next == '*' {
+                    break;
+                }
+                em.push(next);
+            }
+            nodes.push(json!({
+                "type": "text",
+                "text": em,
+                "marks": [{ "type": "em" }]
+            }));
+            continue;
+        }
+        if ch == '[' {
+            let mut label = String::new();
+            while let Some(&next) = chars.peek() {
+                chars.next();
+                if next == ']' {
+                    break;
+                }
+                label.push(next);
+            }
+            if chars.peek() == Some(&'(') {
+                chars.next();
+                let mut href = String::new();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == ')' {
+                        break;
+                    }
+                    href.push(next);
+                }
+                flush_plain(&mut nodes, &mut plain);
+                nodes.push(json!({
+                    "type": "text",
+                    "text": label,
+                    "marks": [{ "type": "link", "attrs": { "href": href } }]
+                }));
+                continue;
+            }
+            plain.push('[');
+            plain.push_str(&label);
+            continue;
+        }
+        plain.push(ch);
+    }
+    flush_plain(&mut nodes, &mut plain);
+    if nodes.is_empty() {
+        vec![json!({ "type": "text", "text": "" })]
+    } else {
+        nodes
+    }
+}
+
 fn parse_markdown_heading(line: &str) -> Option<(usize, &str)> {
     let hashes = line.chars().take_while(|&ch| ch == '#').count();
     if !(1..=6).contains(&hashes) {
@@ -1055,6 +1609,113 @@ fn replace_inline_delimited(input: &str, delimiter: &str, open: &str, close: &st
         out.push_str(delimiter);
     }
     out
+}
+
+fn adf_to_markdown(adf: &Value) -> String {
+    let mut out = String::new();
+    if let Some(content) = adf.get("content").and_then(Value::as_array) {
+        for (index, node) in content.iter().enumerate() {
+            if index > 0 && !out.ends_with("\n\n") {
+                out.push_str("\n\n");
+            }
+            render_adf_block(node, &mut out);
+        }
+    }
+    collapse_markdown_whitespace(&out)
+}
+
+fn render_adf_block(node: &Value, out: &mut String) {
+    match node.get("type").and_then(Value::as_str).unwrap_or_default() {
+        "paragraph" => render_adf_inline_nodes(node.get("content"), out),
+        "heading" => {
+            let level = node
+                .get("attrs")
+                .and_then(|attrs| attrs.get("level"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 6) as usize;
+            out.push_str(&"#".repeat(level));
+            out.push(' ');
+            render_adf_inline_nodes(node.get("content"), out);
+        }
+        "bulletList" => {
+            if let Some(items) = node.get("content").and_then(Value::as_array) {
+                for (idx, item) in items.iter().enumerate() {
+                    if idx > 0 {
+                        out.push('\n');
+                    }
+                    out.push_str("- ");
+                    render_adf_list_item(item, out);
+                }
+            }
+        }
+        "orderedList" => {
+            if let Some(items) = node.get("content").and_then(Value::as_array) {
+                for (idx, item) in items.iter().enumerate() {
+                    if idx > 0 {
+                        out.push('\n');
+                    }
+                    out.push_str(&(idx + 1).to_string());
+                    out.push_str(". ");
+                    render_adf_list_item(item, out);
+                }
+            }
+        }
+        "codeBlock" => {
+            out.push_str("```");
+            out.push('\n');
+            render_adf_inline_nodes(node.get("content"), out);
+            out.push('\n');
+            out.push_str("```");
+        }
+        _ => render_adf_inline_nodes(node.get("content"), out),
+    }
+}
+
+fn render_adf_list_item(node: &Value, out: &mut String) {
+    if let Some(content) = node.get("content").and_then(Value::as_array) {
+        for block in content {
+            render_adf_inline_nodes(block.get("content"), out);
+        }
+    }
+}
+
+fn render_adf_inline_nodes(content: Option<&Value>, out: &mut String) {
+    if let Some(nodes) = content.and_then(Value::as_array) {
+        for node in nodes {
+            match node.get("type").and_then(Value::as_str).unwrap_or_default() {
+                "text" => {
+                    let mut text = node
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if let Some(marks) = node.get("marks").and_then(Value::as_array) {
+                        for mark in marks {
+                            match mark.get("type").and_then(Value::as_str).unwrap_or_default() {
+                                "strong" => text = format!("**{text}**"),
+                                "em" => text = format!("*{text}*"),
+                                "code" => text = format!("`{text}`"),
+                                "link" => {
+                                    if let Some(href) = mark
+                                        .get("attrs")
+                                        .and_then(|attrs| attrs.get("href"))
+                                        .and_then(Value::as_str)
+                                    {
+                                        text = format!("[{text}]({href})");
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    out.push_str(&text);
+                }
+                "hardBreak" => out.push('\n'),
+                _ => render_adf_inline_nodes(node.get("content"), out),
+            }
+        }
+    }
 }
 
 fn confluence_storage_to_markdown(storage: &str) -> String {
@@ -1364,6 +2025,81 @@ fn path_from_cursor(cursor: &str, api_path: &str) -> String {
 }
 
 impl ConfluenceClient {
+    async fn resolve_cloud_api_root_url(&self) -> Result<String> {
+        if let Some(url) = self.cloud_api_root_url() {
+            return Ok(url);
+        }
+
+        if !matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            return Err(Error::InvalidData(
+                "cloud API root requested for non-cloud Confluence client".to_string(),
+            ));
+        }
+
+        let cloud_id = self.discover_cloud_id().await?;
+        Ok(format!(
+            "{}/ex/confluence/{cloud_id}",
+            self.cloud_api_base_url
+                .as_deref()
+                .unwrap_or("https://api.atlassian.com")
+        ))
+    }
+
+    async fn discover_cloud_id(&self) -> Result<String> {
+        match &self.auth {
+            ConfluenceAuth::BearerToken(_) => {}
+            ConfluenceAuth::Basic { .. } => {
+                return Err(Error::InvalidData(
+                    "Confluence Cloud with basic auth requires explicit cloud_id".to_string(),
+                ));
+            }
+            ConfluenceAuth::None => {
+                return Err(Error::InvalidData(
+                    "Confluence Cloud requires bearer auth or explicit cloud_id".to_string(),
+                ));
+            }
+        }
+
+        let url = format!(
+            "{}/oauth/token/accessible-resources",
+            self.cloud_api_base_url
+                .as_deref()
+                .unwrap_or("https://api.atlassian.com")
+        );
+        let request = self
+            .http
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json");
+        let resources: Vec<AtlassianAccessibleResource> = self.send_json(request).await?;
+
+        let wanted_origin = url_origin(&self.instance_url)
+            .or_else(|| url_origin(&self.base_url))
+            .ok_or_else(|| {
+                Error::InvalidData(format!(
+                    "cannot determine Confluence Cloud origin from base URL '{}'",
+                    self.base_url
+                ))
+            })?;
+
+        resources
+            .into_iter()
+            .find(|resource| {
+                resource
+                    .url
+                    .as_deref()
+                    .and_then(url_origin)
+                    .map(|origin| origin == wanted_origin)
+                    .unwrap_or(false)
+            })
+            .map(|resource| resource.id)
+            .ok_or_else(|| {
+                Error::NotFound(format!(
+                    "no Atlassian accessible resource matched Confluence base URL '{}'",
+                    self.instance_url
+                ))
+            })
+    }
+
     async fn resolve_space_by_key(&self, space_key: &str) -> Result<ConfluenceSpace> {
         let spaces = self.get_spaces().await?;
         spaces
@@ -1435,7 +2171,7 @@ impl ConfluenceClient {
                 name: label.as_str(),
             })
             .collect::<Vec<_>>();
-        self.post_empty_json(&format!("content/{page_id}/label"), &payload)
+        self.post_empty_json_to_legacy_api(&format!("content/{page_id}/label"), &payload)
             .await
     }
 
@@ -1450,7 +2186,7 @@ impl ConfluenceClient {
 
         for label in current.iter().filter(|label| !desired.contains(*label)) {
             let path = format!("content/{page_id}/label?name={}", encode_query_value(label));
-            self.delete_empty(&path).await?;
+            self.delete_empty_from_legacy_api(&path).await?;
         }
 
         let to_add = desired
@@ -1499,7 +2235,8 @@ impl ConfluenceClient {
             format!("content?{}", query.join("&"))
         };
 
-        let response: ConfluenceListResponse<ConfluencePage> = self.get_json(&path).await?;
+        let response: ConfluenceListResponse<ConfluencePage> =
+            self.get_json_from_legacy_api(&path).await?;
         let pagination = map_pagination(&response, Some(limit));
         let mut items = response
             .results
@@ -1577,7 +2314,7 @@ impl ConfluenceClient {
             },
             body: ConfluenceCreateBodyPayload {
                 storage: ConfluenceContentBody {
-                    value: &storage_content,
+                    value: Value::String(storage_content),
                     representation: "storage",
                 },
             },
@@ -1653,7 +2390,7 @@ impl ConfluenceClient {
             },
             body: ConfluenceCreateBodyPayload {
                 storage: ConfluenceContentBody {
-                    value: &content,
+                    value: Value::String(content),
                     representation: "storage",
                 },
             },
@@ -1722,7 +2459,12 @@ impl ConfluenceClient {
     }
 
     async fn get_page_v2(&self, page_id: &str) -> Result<KbPageContent> {
-        let path = format!("pages/{page_id}?body-format=storage&include-labels=true");
+        let body_format = if matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            "atlas_doc_format"
+        } else {
+            "storage"
+        };
+        let path = format!("pages/{page_id}?body-format={body_format}&include-labels=true");
         let page: ConfluencePage = self.get_json_from_api(&self.page_api_path, &path).await?;
         let mut summary = map_page_summary(&self.instance_url, &page);
         if summary.space_key.is_none()
@@ -1734,8 +2476,7 @@ impl ConfluenceClient {
             summary.url = Some(format!("{}/pages/{}", self.instance_url, page.id));
         }
 
-        let storage_content = page.body.as_ref().and_then(body_value).unwrap_or_default();
-        let content = confluence_storage_to_markdown(&storage_content);
+        let content = page_content_markdown(&page);
         let content_type = "markdown".to_string();
         let ancestors = match self.get_page_ancestor_chain_v2(page_id).await {
             Ok(ancestors) => ancestors,
@@ -1754,18 +2495,18 @@ impl ConfluenceClient {
     }
 
     async fn create_page_v2(&self, params: CreatePageParams) -> Result<KbPage> {
-        let storage_content =
-            normalize_confluence_write_content(&params.content, params.content_type.as_deref())?;
+        let body = normalize_confluence_v2_write_content(
+            self.flavor,
+            &params.content,
+            params.content_type.as_deref(),
+        )?;
         let space = self.resolve_space_by_key(&params.space_key).await?;
         let payload = ConfluenceV2PagePayload {
             space_id: &space.id,
             status: "current",
             title: &params.title,
             parent_id: params.parent_id.as_deref(),
-            body: ConfluenceContentBody {
-                value: &storage_content,
-                representation: "storage",
-            },
+            body,
         };
 
         let page: ConfluencePage = self
@@ -1783,23 +2524,24 @@ impl ConfluenceClient {
     }
 
     async fn update_page_v2(&self, params: UpdatePageParams) -> Result<KbPage> {
+        let body_format = if matches!(self.flavor, ConfluenceFlavor::Cloud) {
+            "atlas_doc_format"
+        } else {
+            "storage"
+        };
         let current_path = if params.labels.is_some() {
             format!(
-                "pages/{}?body-format=storage&include-labels=true",
-                params.page_id
+                "pages/{}?body-format={body_format}&include-labels=true",
+                params.page_id,
             )
         } else {
-            format!("pages/{}?body-format=storage", params.page_id)
+            format!("pages/{}?body-format={body_format}", params.page_id)
         };
         let current: ConfluencePage = self
             .get_json_from_api(&self.page_api_path, &current_path)
             .await?;
         let current_title = current.title.clone();
-        let current_content = current
-            .body
-            .as_ref()
-            .and_then(body_value)
-            .unwrap_or_default();
+        let current_content = page_content_markdown(&current);
         let current_version = current
             .version
             .as_ref()
@@ -1825,10 +2567,16 @@ impl ConfluenceClient {
 
         let title = params.title.as_deref().unwrap_or(&current_title);
         let content = match params.content.as_deref() {
-            Some(updated) => {
-                normalize_confluence_write_content(updated, params.content_type.as_deref())?
-            }
-            None => current_content,
+            Some(updated) => normalize_confluence_v2_write_content(
+                self.flavor,
+                updated,
+                params.content_type.as_deref(),
+            )?,
+            None => normalize_confluence_v2_write_content(
+                self.flavor,
+                &current_content,
+                Some("markdown"),
+            )?,
         };
         let space_id = current
             .space_id
@@ -1847,10 +2595,7 @@ impl ConfluenceClient {
             title,
             space_id,
             parent_id,
-            body: ConfluenceContentBody {
-                value: &content,
-                representation: "storage",
-            },
+            body: content,
             version: ConfluenceUpdateVersion {
                 number: current_version.saturating_add(1),
             },
@@ -1975,7 +2720,8 @@ impl KnowledgeBaseProvider for ConfluenceClient {
             )
         };
 
-        let response: ConfluenceListResponse<ConfluencePage> = self.get_json(&path).await?;
+        let response: ConfluenceListResponse<ConfluencePage> =
+            self.get_json_from_legacy_api(&path).await?;
         let pagination = map_pagination(&response, Some(limit));
         let items = response
             .results
@@ -2013,6 +2759,105 @@ mod tests {
         assert_eq!(
             client.rest_api_url("content"),
             "https://wiki.example.com/rest/api/content"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_defaults_to_self_hosted_flavor() {
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("token"));
+
+        assert!(matches!(client.flavor(), ConfluenceFlavor::SelfHosted));
+    }
+
+    #[tokio::test]
+    async fn new_auto_detects_cloud_flavor_for_atlassian_net() {
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("token"),
+        );
+
+        assert!(matches!(client.flavor(), ConfluenceFlavor::Cloud));
+        assert_eq!(
+            client.rest_api_url("spaces"),
+            "https://team.atlassian.net/wiki/api/v2/spaces"
+        );
+    }
+
+    #[tokio::test]
+    async fn with_flavor_cloud_switches_to_cloud_api_paths() {
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+
+        assert!(matches!(client.flavor(), ConfluenceFlavor::Cloud));
+        assert_eq!(
+            client.rest_api_url("spaces"),
+            "https://wiki.example.com/wiki/api/v2/spaces"
+        );
+    }
+
+    #[tokio::test]
+    async fn cloud_api_root_url_uses_atlassian_cloud_base() {
+        let client =
+            ConfluenceClient::new("https://wiki.example.com/", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud)
+                .with_cloud_id("abc123");
+
+        assert_eq!(
+            client.cloud_api_root_url().as_deref(),
+            Some("https://api.atlassian.com/ex/confluence/abc123")
+        );
+        assert_eq!(
+            client.cloud_api_url("/wiki/api/v2/spaces").as_deref(),
+            Some("https://api.atlassian.com/ex/confluence/abc123/wiki/api/v2/spaces")
+        );
+    }
+
+    #[tokio::test]
+    async fn api_request_url_uses_atlassian_cloud_root_for_cloud_v2_calls() {
+        let client =
+            ConfluenceClient::new("https://example.atlassian.net", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud)
+                .with_cloud_id("abc123");
+
+        assert_eq!(
+            client
+                .api_request_url("/wiki/api/v2", "spaces/42/pages")
+                .await
+                .unwrap(),
+            "https://api.atlassian.com/ex/confluence/abc123/wiki/api/v2/spaces/42/pages"
+        );
+    }
+
+    #[test]
+    fn oauth_authorize_url_contains_required_atlassian_parameters() {
+        let url = ConfluenceClient::oauth_authorize_url(
+            "client-123",
+            "http://localhost:8787/callback",
+            "state-1",
+            &["offline_access", "read:confluence-content.all"],
+        );
+        assert!(url.contains("https://auth.atlassian.com/authorize?"));
+        assert!(url.contains("audience=api.atlassian.com"));
+        assert!(url.contains("client_id=client-123"));
+        assert!(url.contains("state=state-1"));
+        assert!(url.contains("response_type=code"));
+        assert!(url.contains("prompt=consent"));
+    }
+
+    #[tokio::test]
+    async fn legacy_rest_api_url_uses_wiki_rest_api_for_cloud() {
+        let client =
+            ConfluenceClient::new("https://example.atlassian.net", ConfluenceAuth::bearer("t"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+
+        assert_eq!(
+            client
+                .legacy_rest_api_url("content/42/label")
+                .await
+                .unwrap(),
+            "https://example.atlassian.net/wiki/rest/api/content/42/label"
         );
     }
 
@@ -2224,6 +3069,83 @@ mod tests {
 
         mock.assert();
         assert!(response.ok);
+    }
+
+    #[tokio::test]
+    async fn add_labels_uses_cloud_legacy_rest_api() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/wiki/rest/api/content/42/label")
+                .header("authorization", "Bearer secret-token");
+            then.status(204);
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+
+        client
+            .add_labels("42", &[String::from("adr")])
+            .await
+            .unwrap();
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_spaces_discovers_cloud_id_from_accessible_resources() {
+        let server = MockServer::start();
+        let resources_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/oauth/token/accessible-resources")
+                .header("authorization", "Bearer secret-token");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"[
+                    {
+                        "id": "cloud-123",
+                        "url": "https://team.atlassian.net"
+                    }
+                ]"#,
+                );
+        });
+        let spaces_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .header("authorization", "Bearer secret-token")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud)
+        .with_cloud_api_base_url(server.base_url());
+
+        let response = client.get_spaces().await.unwrap();
+
+        assert!(response.items.is_empty());
+        resources_mock.assert();
+        spaces_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn get_spaces_cloud_basic_auth_requires_explicit_cloud_id() {
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::basic("dev@example.com", "secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud);
+
+        let err = client.get_spaces().await.unwrap_err();
+        assert!(err.to_string().contains("explicit cloud_id"));
     }
 
     #[tokio::test]
@@ -2772,6 +3694,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_page_cloud_v2_reads_adf_as_markdown() {
+        let server = MockServer::start();
+        let _resource_mock = server.mock(|when, then| {
+            when.method(GET).path("/oauth/token/accessible-resources");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"[{ "id": "cloud-123", "url": "https://team.atlassian.net" }]"#);
+        });
+        let _space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "results": [{ "id": "123", "key": "ENG", "name": "Engineering" }], "_links": {} }"#);
+        });
+        let page_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/pages/42")
+                .query_param("body-format", "atlas_doc_format")
+                .query_param("include-labels", "true");
+            then.status(200).header("content-type", "application/json").body(r#"{
+                "id": "42",
+                "title": "ADR-001",
+                "spaceId": "123",
+                "version": { "number": 7 },
+                "body": {
+                    "atlas_doc_format": {
+                        "value": {
+                            "type": "doc",
+                            "version": 1,
+                            "content": [
+                                { "type": "heading", "attrs": { "level": 2 }, "content": [{ "type": "text", "text": "ADR" }] },
+                                { "type": "paragraph", "content": [{ "type": "text", "text": "Hello " }, { "type": "text", "text": "world", "marks": [{ "type": "strong" }] }] }
+                            ]
+                        }
+                    }
+                },
+                "labels": { "results": [{ "label": "adr" }] }
+            }"#);
+        });
+        let ancestors_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/pages/42/ancestors")
+                .query_param("limit", "100");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "results": [], "_links": {} }"#);
+        });
+
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud)
+        .with_cloud_api_base_url(server.base_url());
+        let page = client.get_page("42").await.unwrap();
+
+        page_mock.assert();
+        ancestors_mock.assert();
+        assert_eq!(page.content, "## ADR\n\nHello **world**");
+        assert_eq!(page.labels, vec!["adr"]);
+    }
+
+    #[tokio::test]
     async fn get_page_v2_propagates_non_fallback_ancestor_errors() {
         let server = MockServer::start();
         let space_mock = server.mock(|when, then| {
@@ -3015,6 +4003,85 @@ mod tests {
         assert_eq!(page.id, "43");
         assert_eq!(page.space_key.as_deref(), Some("ENG"));
         assert_eq!(page.version, Some(1));
+    }
+
+    #[tokio::test]
+    async fn create_page_cloud_v2_writes_adf_payload() {
+        let server = MockServer::start();
+        let _resource_mock = server.mock(|when, then| {
+            when.method(GET).path("/oauth/token/accessible-resources");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"[{ "id": "cloud-123", "url": "https://team.atlassian.net" }]"#);
+        });
+        let _space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{ "results": [{ "id": "123", "key": "ENG", "name": "Engineering" }], "_links": {} }"#);
+        });
+        let create_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/pages")
+                .header("authorization", "Bearer secret-token")
+                .header("content-type", "application/json")
+                .json_body_obj(&json!({
+                    "spaceId": "123",
+                    "status": "current",
+                    "title": "ADR-002",
+                    "body": {
+                        "representation": "atlas_doc_format",
+                        "value": {
+                            "type": "doc",
+                            "version": 1,
+                            "content": [
+                                {
+                                    "type": "heading",
+                                    "attrs": { "level": 1 },
+                                    "content": [{ "type": "text", "text": "Decision" }]
+                                },
+                                {
+                                    "type": "paragraph",
+                                    "content": [
+                                        { "type": "text", "text": "Hello " },
+                                        { "type": "text", "text": "world", "marks": [{ "type": "strong" }] }
+                                    ]
+                                }
+                            ]
+                        }
+                    }
+                }));
+            then.status(200).header("content-type", "application/json").body(r#"{
+                "id": "43",
+                "title": "ADR-002",
+                "spaceId": "123",
+                "version": { "number": 1 }
+            }"#);
+        });
+
+        let client = ConfluenceClient::new(
+            "https://team.atlassian.net",
+            ConfluenceAuth::bearer("secret-token"),
+        )
+        .with_flavor(ConfluenceFlavor::Cloud)
+        .with_cloud_api_base_url(server.base_url());
+        let page = client
+            .create_page(CreatePageParams {
+                space_key: "ENG".into(),
+                title: "ADR-002".into(),
+                content: "# Decision\n\nHello **world**".into(),
+                content_type: Some("markdown".into()),
+                parent_id: None,
+                labels: vec![],
+            })
+            .await
+            .unwrap();
+
+        create_mock.assert();
+        assert_eq!(page.id, "43");
     }
 
     #[tokio::test]
@@ -3362,6 +4429,39 @@ mod tests {
     }
 
     #[test]
+    fn adf_and_markdown_converters_cover_basic_formatting() {
+        let adf = markdown_to_adf("## ADR\n\nHello **world** and [link](https://example.com)");
+        assert_eq!(adf["type"], "doc");
+        assert_eq!(adf["content"][0]["type"], "heading");
+        assert_eq!(adf["content"][1]["type"], "paragraph");
+
+        let markdown = adf_to_markdown(&json!({
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "heading",
+                    "attrs": { "level": 2 },
+                    "content": [{ "type": "text", "text": "ADR" }]
+                },
+                {
+                    "type": "paragraph",
+                    "content": [
+                        { "type": "text", "text": "Hello " },
+                        { "type": "text", "text": "world", "marks": [{ "type": "strong" }] },
+                        { "type": "text", "text": " and " },
+                        { "type": "text", "text": "link", "marks": [{ "type": "link", "attrs": { "href": "https://example.com" } }] }
+                    ]
+                }
+            ]
+        }));
+        assert_eq!(
+            markdown,
+            "## ADR\n\nHello **world** and [link](https://example.com)"
+        );
+    }
+
+    #[test]
     fn markdown_code_blocks_escape_cdata_terminators() {
         let storage = markdown_to_confluence_storage("```xml\nbefore ]]> after\n```");
         assert!(storage.contains("<![CDATA[before ]]]]><![CDATA[> after"));
@@ -3423,6 +4523,34 @@ mod tests {
         assert_eq!(result.items[0].id, "99");
         assert_eq!(result.items[0].title, "Architecture Overview");
         assert_eq!(result.items[0].space_key.as_deref(), Some("ENG"));
+    }
+
+    #[tokio::test]
+    async fn search_uses_cloud_legacy_rest_api_path() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/wiki/rest/api/content/search");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":10,"size":0,"_links":{}}"#);
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+        let result = client
+            .search(SearchKbParams {
+                query: "architecture".into(),
+                space_key: None,
+                cursor: None,
+                limit: Some(10),
+                raw_query: false,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert!(result.items.is_empty());
     }
 
     #[tokio::test]

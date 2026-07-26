@@ -510,6 +510,29 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::asset::SemanticAnalys
 pub fn devboy_core::asset::filename_from_url(url: &str) -> alloc::string::String
 pub fn devboy_core::asset::parse_markdown_attachments(markdown: &str) -> alloc::vec::Vec<devboy_core::asset::MarkdownAttachment>
 pub mod devboy_core::config
+pub enum devboy_core::config::ConfluenceFlavor
+pub devboy_core::config::ConfluenceFlavor::Cloud
+pub devboy_core::config::ConfluenceFlavor::SelfHosted
+impl core::clone::Clone for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::clone(&self) -> devboy_core::config::ConfluenceFlavor
+impl core::cmp::Eq for devboy_core::config::ConfluenceFlavor
+impl core::cmp::PartialEq for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::eq(&self, other: &devboy_core::config::ConfluenceFlavor) -> bool
+impl core::fmt::Debug for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::config::ConfluenceFlavor
+impl core::marker::StructuralPartialEq for devboy_core::config::ConfluenceFlavor
+impl serde_core::ser::Serialize for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::ConfluenceFlavor
+impl core::marker::Send for devboy_core::config::ConfluenceFlavor
+impl core::marker::Sync for devboy_core::config::ConfluenceFlavor
+impl core::marker::Unpin for devboy_core::config::ConfluenceFlavor
+impl core::marker::UnsafeUnpin for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ConfluenceFlavor
 pub enum devboy_core::config::RoutingStrategy
 pub devboy_core::config::RoutingStrategy::Local
 pub devboy_core::config::RoutingStrategy::LocalFirst
@@ -643,6 +666,10 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::Config
 pub struct devboy_core::config::ConfluenceConfig
 pub devboy_core::config::ConfluenceConfig::api_version: core::option::Option<alloc::string::String>
 pub devboy_core::config::ConfluenceConfig::base_url: alloc::string::String
+pub devboy_core::config::ConfluenceConfig::client_id: core::option::Option<alloc::string::String>
+pub devboy_core::config::ConfluenceConfig::cloud_id: core::option::Option<alloc::string::String>
+pub devboy_core::config::ConfluenceConfig::flavor: core::option::Option<devboy_core::config::ConfluenceFlavor>
+pub devboy_core::config::ConfluenceConfig::redirect_uri: core::option::Option<alloc::string::String>
 pub devboy_core::config::ConfluenceConfig::space_key: core::option::Option<alloc::string::String>
 pub devboy_core::config::ConfluenceConfig::username: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::config::ConfluenceConfig
@@ -3969,6 +3996,29 @@ impl core::marker::Unpin for devboy_core::asset::AssetContextKind
 impl core::marker::UnsafeUnpin for devboy_core::asset::AssetContextKind
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::asset::AssetContextKind
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::asset::AssetContextKind
+pub enum devboy_core::ConfluenceFlavor
+pub devboy_core::ConfluenceFlavor::Cloud
+pub devboy_core::ConfluenceFlavor::SelfHosted
+impl core::clone::Clone for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::clone(&self) -> devboy_core::config::ConfluenceFlavor
+impl core::cmp::Eq for devboy_core::config::ConfluenceFlavor
+impl core::cmp::PartialEq for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::eq(&self, other: &devboy_core::config::ConfluenceFlavor) -> bool
+impl core::fmt::Debug for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::config::ConfluenceFlavor
+impl core::marker::StructuralPartialEq for devboy_core::config::ConfluenceFlavor
+impl serde_core::ser::Serialize for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::ConfluenceFlavor
+impl core::marker::Send for devboy_core::config::ConfluenceFlavor
+impl core::marker::Sync for devboy_core::config::ConfluenceFlavor
+impl core::marker::Unpin for devboy_core::config::ConfluenceFlavor
+impl core::marker::UnsafeUnpin for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ConfluenceFlavor
 pub enum devboy_core::ContentKind
 pub devboy_core::ContentKind::Binary
 pub devboy_core::ContentKind::Data
@@ -4622,6 +4672,10 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::Config
 pub struct devboy_core::ConfluenceConfig
 pub devboy_core::ConfluenceConfig::api_version: core::option::Option<alloc::string::String>
 pub devboy_core::ConfluenceConfig::base_url: alloc::string::String
+pub devboy_core::ConfluenceConfig::client_id: core::option::Option<alloc::string::String>
+pub devboy_core::ConfluenceConfig::cloud_id: core::option::Option<alloc::string::String>
+pub devboy_core::ConfluenceConfig::flavor: core::option::Option<devboy_core::config::ConfluenceFlavor>
+pub devboy_core::ConfluenceConfig::redirect_uri: core::option::Option<alloc::string::String>
 pub devboy_core::ConfluenceConfig::space_key: core::option::Option<alloc::string::String>
 pub devboy_core::ConfluenceConfig::username: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::config::ConfluenceConfig
