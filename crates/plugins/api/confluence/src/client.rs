@@ -4872,6 +4872,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_space_by_key_follows_a_v2_cursor_on_the_v2_surface() {
+        // Page 1 is served from the v2 surface, so its cursor carries the v2
+        // prefix. Resolving that against the legacy prefix left the path
+        // intact and built /rest/api/api/v2/... — an opaque 404 instead of a
+        // walk to the match.
+        let server = MockServer::start();
+        let page1 = server.mock(|when, then| {
+            when.method(GET).path("/api/v2/space").query_param("limit", "100");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":"1","key":"OTHER","name":"Other","type":"global","status":"current"}],"start":0,"limit":1,"size":1,"_links":{"next":"/api/v2/space?cursor=abc"}}"#,
+                );
+        });
+        let page2 = server.mock(|when, then| {
+            when.method(GET).path("/api/v2/space").query_param("cursor", "abc");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":"2","key":"WANTED","name":"Wanted","type":"global","status":"current"}],"start":1,"limit":1,"size":1,"_links":{}}"#,
+                );
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::SelfHosted)
+                .with_api_version(Some("v2"));
+        let space = client.resolve_space_by_key("WANTED").await.unwrap();
+
+        assert_eq!(space.key, "WANTED");
+        page1.assert();
+        page2.assert();
+    }
+
+    #[tokio::test]
     async fn search_follows_a_cloud_cursor_without_doubling_the_legacy_prefix() {
         // Cloud echoes cursors relative to /wiki/rest/api, while self.api_path
         // points at /wiki/api/v2. Stripping with the wrong prefix left the
