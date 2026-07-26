@@ -72,6 +72,16 @@ pub enum LinearScope {
     },
 }
 
+/// Scope for YouGile API calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum YouGileScope {
+    /// Single YouGile board.
+    Board {
+        /// Provider-native board identifier.
+        id: String,
+    },
+}
+
 /// Scope for Confluence API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConfluenceScope {
@@ -157,6 +167,12 @@ pub enum ProviderConfig {
         scope: LinearScope,
         extra: HashMap<String, serde_json::Value>,
     },
+    YouGile {
+        base_url: String,
+        access_token: SecretString,
+        scope: YouGileScope,
+        extra: HashMap<String, serde_json::Value>,
+    },
     Confluence {
         base_url: String,
         auth: ConfluenceAuthConfig,
@@ -202,6 +218,7 @@ impl ProviderConfig {
             Self::ClickUp { .. } => "clickup",
             Self::Jira { .. } => "jira",
             Self::Linear { .. } => "linear",
+            Self::YouGile { .. } => "yougile",
             Self::Confluence { .. } => "confluence",
             Self::Fireflies { .. } => "fireflies",
             Self::Slack { .. } => "slack",
@@ -360,6 +377,19 @@ mod tests {
             extra: HashMap::new(),
         };
         assert_eq!(config.provider_name(), "linear");
+    }
+
+    #[test]
+    fn test_provider_name_yougile() {
+        let config = ProviderConfig::YouGile {
+            base_url: "https://yougile.com/api-v2".into(),
+            access_token: token("tok"),
+            scope: YouGileScope::Board {
+                id: "board-1".into(),
+            },
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "yougile");
     }
 
     #[test]

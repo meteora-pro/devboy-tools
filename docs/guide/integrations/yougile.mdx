@@ -1,0 +1,157 @@
+import ConfigExtractor from '../../components/ConfigExtractor';
+
+# YouGile Integration
+
+DevBoy tools provides integration with YouGile for managing board-based tasks through AI assistants. YouGile tasks are mapped to the unified issue interface, so you can query and update them alongside issues from other trackers.
+
+<ConfigExtractor provider="yougile" />
+
+## Authentication
+
+YouGile uses a **Personal API Token** sent as a bearer token.
+
+| Auth Method | Token Source | Required For |
+|-------------|--------------|--------------|
+| Bearer token | YouGile personal API token | Reading tasks, creating/updating tasks, reading comments, posting comments |
+
+## Configuration
+
+### Basic configuration
+
+```bash
+# Set the board scope
+devboy config set yougile.board_id <board_id>
+
+# Optional: override the API base URL
+devboy config set yougile.url https://yougile.com/api-v2
+
+# Store token in OS keychain
+devboy config set-secret yougile.token <token>
+```
+
+### Configuration file
+
+Settings are stored in `~/.config/devboy-tools/config.toml`:
+
+```toml
+[yougile]
+url = "https://yougile.com/api-v2"
+board_id = "board-123"
+```
+
+The token is stored separately in the OS keychain for security.
+
+### Context-scoped configuration
+
+YouGile can also be configured per context:
+
+```toml
+[contexts.product.yougile]
+url = "https://yougile.com/api-v2"
+board_id = "board-123"
+```
+
+You can also define env-only contexts:
+
+```bash
+DEVBOY_CONTEXTS_PRODUCT_YOUGILE_BOARD_ID=board-123
+DEVBOY_CONTEXTS_PRODUCT_YOUGILE_TOKEN=<token>
+```
+
+## MCP tools
+
+Once configured, the following MCP tools are available:
+
+### Issue tools
+
+| Tool | Description |
+|------|-------------|
+| `get_issues` | List tasks on the configured board with filters (state, assignee, search, pagination) |
+| `get_issue` | Get a single task by key |
+| `get_issue_comments` | Get task chat messages as issue comments |
+| `create_issue` | Create a new task on the configured board |
+| `update_issue` | Update an existing task (title, description, assignees, state, status, stickers) |
+| `add_issue_comment` | Add a chat message to a task |
+
+### Task key format
+
+YouGile tasks are exposed with the most useful available key:
+
+- Project-style task key when present, e.g. `DEV-42`
+- Fallback internal key, e.g. `yougile#<task-id>`
+
+Both forms are accepted by read/update/comment operations.
+
+### Board / status model
+
+YouGile is board-centric. DevBoy scopes the provider to one board and maps board columns to issue statuses.
+
+- `status` uses the exact YouGile column title
+- `state` is the generic open/closed abstraction
+- `stateCategory` is derived from column title heuristics: `backlog`, `todo`, `in_progress`, `done`, `cancelled`
+
+When updating `status`, DevBoy also keeps the generic task flags (`completed`, `archived`, `deleted`) in sync so open/closed filters stay consistent.
+
+## Current limitations
+
+The integration is usable, but a few parts are intentionally strict or incomplete:
+
+- Generic `labels` are not supported. Passing them to `create_issue` or `update_issue` returns an error.
+- Generic `priority` is not supported. Use provider-specific sticker ids via `custom_fields` if your board models priority that way.
+- Parent/subtask writes are supported through the unified parent fields:
+  - `create_issue.parent`
+  - `update_issue.parentId`
+- Task attachments are not yet surfaced as `attachments_count`.
+- Issue `url` is not yet mapped.
+
+### Stickers via `custom_fields`
+
+YouGile-specific stickers can be passed through `custom_fields` as an object keyed by sticker id:
+
+```json
+{
+  "custom_fields": {
+    "priorityStickerId": "high",
+    "deadlineStickerId": "2026-06-17"
+  }
+}
+```
+
+This is the current escape hatch for board-specific metadata such as custom priority stickers.
+
+## Merge request tools
+
+YouGile does not have merge requests. All MR-related tools will return a `ProviderUnsupported` error when used with YouGile. Use a GitHub or GitLab provider for MR operations.
+
+## Testing
+
+Verify your YouGile configuration:
+
+```bash
+devboy test yougile
+```
+
+This tests the connection by calling the current-user endpoint and reporting the authenticated user.
+
+## Troubleshooting
+
+### "401 Unauthorized" error
+
+- Verify the token is correct
+- Check that the token has not been revoked
+- Make sure the token is stored under `yougile.token` or `contexts.<name>.yougile.token`
+
+### "404 Not Found" error
+
+- Verify the board ID is correct
+- Ensure the task exists when using `get_issue`
+- Check that the configured API URL points at the correct YouGile instance
+
+### "status does not match any column title" error
+
+- `update_issue.status` must match an existing column title on the configured board
+- Use the exact visible column title from YouGile
+
+### Rate limiting
+
+YouGile is rate-limited by the client to stay within the provider guidance used by this integration.

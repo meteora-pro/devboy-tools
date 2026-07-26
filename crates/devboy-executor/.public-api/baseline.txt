@@ -263,6 +263,11 @@ pub devboy_executor::context::ProviderConfig::Telegram::access_token: secrecy::S
 pub devboy_executor::context::ProviderConfig::Telegram::base_url: alloc::string::String
 pub devboy_executor::context::ProviderConfig::Telegram::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::context::ProviderConfig::Telegram::scope: devboy_executor::context::TelegramScope
+pub devboy_executor::context::ProviderConfig::YouGile
+pub devboy_executor::context::ProviderConfig::YouGile::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::YouGile::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::YouGile::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::YouGile::scope: devboy_executor::context::YouGileScope
 impl devboy_executor::context::ProviderConfig
 pub fn devboy_executor::context::ProviderConfig::provider_name(&self) -> &str
 impl core::clone::Clone for devboy_executor::context::ProviderConfig
@@ -312,6 +317,24 @@ impl core::marker::Unpin for devboy_executor::context::TelegramScope
 impl core::marker::UnsafeUnpin for devboy_executor::context::TelegramScope
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::TelegramScope
 impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::TelegramScope
+pub enum devboy_executor::context::YouGileScope
+pub devboy_executor::context::YouGileScope::Board
+pub devboy_executor::context::YouGileScope::Board::id: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::clone(&self) -> devboy_executor::context::YouGileScope
+impl core::fmt::Debug for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::YouGileScope
+impl core::marker::Send for devboy_executor::context::YouGileScope
+impl core::marker::Sync for devboy_executor::context::YouGileScope
+impl core::marker::Unpin for devboy_executor::context::YouGileScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::YouGileScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::YouGileScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::YouGileScope
 pub struct devboy_executor::context::AdditionalContext
 pub devboy_executor::context::AdditionalContext::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::context::AdditionalContext::metadata: core::option::Option<devboy_executor::context::ProviderMetadata>
@@ -802,6 +825,11 @@ pub devboy_executor::ProviderConfig::Telegram::access_token: secrecy::SecretStri
 pub devboy_executor::ProviderConfig::Telegram::base_url: alloc::string::String
 pub devboy_executor::ProviderConfig::Telegram::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::ProviderConfig::Telegram::scope: devboy_executor::context::TelegramScope
+pub devboy_executor::ProviderConfig::YouGile
+pub devboy_executor::ProviderConfig::YouGile::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::YouGile::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::YouGile::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::YouGile::scope: devboy_executor::context::YouGileScope
 impl devboy_executor::context::ProviderConfig
 pub fn devboy_executor::context::ProviderConfig::provider_name(&self) -> &str
 impl core::clone::Clone for devboy_executor::context::ProviderConfig

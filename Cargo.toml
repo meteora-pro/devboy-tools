@@ -21,6 +21,7 @@ members = [
     "crates/plugins/api/github",
     "crates/plugins/api/clickup",
     "crates/plugins/api/jira",
+    "crates/plugins/api/yougile",
     "crates/plugins/api/linear",
     "crates/plugins/api/confluence",
     "crates/plugins/api/fireflies",
@@ -146,6 +147,7 @@ devboy-confluence = { version = "0.32.0", path = "crates/plugins/api/confluence"
 devboy-fireflies = { version = "0.32.0", path = "crates/plugins/api/fireflies" }
 devboy-slack = { version = "0.32.0", path = "crates/plugins/api/slack" }
 devboy-telegram = { version = "0.32.0", path = "crates/plugins/api/telegram" }
+devboy-yougile = { version = "0.32.0", path = "crates/plugins/api/yougile" }
 
 # Secret framework crates (epic #247)
 devboy-vault-crypto = { version = "0.32.0", path = "crates/devboy-vault-crypto" }

@@ -57,6 +57,7 @@ pub struct Config {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linear: Option<LinearConfig>,
+    pub yougile: Option<YouGileConfig>,
 
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -237,6 +238,7 @@ pub struct ContextConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linear: Option<LinearConfig>,
+    pub yougile: Option<YouGileConfig>,
 
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -302,6 +304,16 @@ pub struct LinearConfig {
     /// Optional human-readable team key (e.g. `ENG`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team_key: Option<String>,
+}
+
+/// YouGile provider configuration (issue tracker).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YouGileConfig {
+    /// YouGile API base URL.
+    #[serde(default = "default_yougile_url")]
+    pub url: String,
+    /// Default board ID used as the provider scope.
+    pub board_id: String,
 }
 
 /// Fireflies.ai provider configuration (meeting notes).
@@ -392,6 +404,10 @@ pub struct TelegramConfig {
     /// Optional bot username for diagnostics and UX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bot_username: Option<String>,
+}
+
+fn default_yougile_url() -> String {
+    "https://yougile.com/api-v2".to_string()
 }
 
 pub fn default_slack_required_scopes() -> Vec<String> {
@@ -1099,6 +1115,7 @@ impl Config {
             || self.clickup.is_some()
             || self.jira.is_some()
             || self.linear.is_some()
+            || self.yougile.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1123,6 +1140,9 @@ impl Config {
         }
         if self.linear.is_some() {
             providers.push("linear");
+        }
+        if self.yougile.is_some() {
+            providers.push("yougile");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -1193,6 +1213,7 @@ impl Config {
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
             linear: self.linear.clone(),
+            yougile: self.yougile.clone(),
             fireflies: self.fireflies.clone(),
             confluence: self.confluence.clone(),
             slack: self.slack.clone(),
@@ -1310,6 +1331,22 @@ impl Config {
                     _ => {
                         return Err(Error::Config(format!(
                             "Unknown Linear config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
+            "yougile" => {
+                let config = self.yougile.get_or_insert_with(|| YouGileConfig {
+                    url: default_yougile_url(),
+                    board_id: String::new(),
+                });
+                match field {
+                    "url" | "base_url" => config.url = value.to_string(),
+                    "board_id" | "board" => config.board_id = value.to_string(),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown YouGile config field: {}",
                             field
                         )));
                     }
@@ -1470,6 +1507,19 @@ impl Config {
                     "team_key" | "key" => Ok(config.team_key.clone()),
                     _ => Err(Error::Config(format!(
                         "Unknown Linear config field: {}",
+                        field
+                    ))),
+                }
+            }
+            "yougile" => {
+                let Some(config) = &self.yougile else {
+                    return Ok(None);
+                };
+                match field {
+                    "url" | "base_url" => Ok(Some(config.url.clone())),
+                    "board_id" | "board" => Ok(Some(config.board_id.clone())),
+                    _ => Err(Error::Config(format!(
+                        "Unknown YouGile config field: {}",
                         field
                     ))),
                 }
@@ -1743,6 +1793,7 @@ impl ContextConfig {
             || self.clickup.is_some()
             || self.jira.is_some()
             || self.linear.is_some()
+            || self.yougile.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1766,6 +1817,9 @@ impl ContextConfig {
         }
         if self.linear.is_some() {
             providers.push("linear");
+        }
+        if self.yougile.is_some() {
+            providers.push("yougile");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -2108,6 +2162,45 @@ mod tests {
     }
 
     #[test]
+    fn test_set_and_get_yougile() {
+        let mut config = Config::default();
+
+        config
+            .set("yougile.url", "https://company.yougile.com/api-v2")
+            .unwrap();
+        config.set("yougile.board_id", "board-123").unwrap();
+
+        assert_eq!(
+            config.get("yougile.url").unwrap(),
+            Some("https://company.yougile.com/api-v2".to_string())
+        );
+        assert_eq!(
+            config.get("yougile.base_url").unwrap(),
+            Some("https://company.yougile.com/api-v2".to_string())
+        );
+        assert_eq!(
+            config.get("yougile.board_id").unwrap(),
+            Some("board-123".to_string())
+        );
+        assert_eq!(
+            config.get("yougile.board").unwrap(),
+            Some("board-123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_yougile_alias() {
+        let mut config = Config::default();
+
+        config.set("yougile.board", "board-456").unwrap();
+
+        assert_eq!(
+            config.get("yougile.board_id").unwrap(),
+            Some("board-456".to_string())
+        );
+    }
+
+    #[test]
     fn test_set_and_get_confluence() {
         let mut config = Config::default();
 
@@ -2225,6 +2318,10 @@ mod tests {
         assert!(config.set("linear.unknown", "value").is_err());
         config.set("linear.team_id", "team-1").unwrap();
         assert!(config.get("linear.unknown").is_err());
+        // YouGile unknown field
+        assert!(config.set("yougile.unknown", "value").is_err());
+        config.set("yougile.board_id", "board-123").unwrap();
+        assert!(config.get("yougile.unknown").is_err());
     }
 
     #[test]
@@ -2236,6 +2333,7 @@ mod tests {
         assert_eq!(config.get("clickup.list_id").unwrap(), None);
         assert_eq!(config.get("jira.url").unwrap(), None);
         assert_eq!(config.get("linear.team_id").unwrap(), None);
+        assert_eq!(config.get("yougile.url").unwrap(), None);
         assert_eq!(config.get("confluence.base_url").unwrap(), None);
         assert_eq!(config.get("telegram.base_url").unwrap(), None);
     }
@@ -2295,6 +2393,10 @@ mod tests {
                 team_id: "team-1".to_string(),
                 team_key: Some("ENG".to_string()),
             }),
+            yougile: Some(YouGileConfig {
+                url: default_yougile_url(),
+                board_id: "board-1".to_string(),
+            }),
             fireflies: None,
             confluence: None,
             slack: None,
@@ -2314,12 +2416,13 @@ mod tests {
         };
 
         let providers = config.configured_providers();
-        assert_eq!(providers.len(), 6);
+        assert_eq!(providers.len(), 7);
         assert!(providers.contains(&"github"));
         assert!(providers.contains(&"gitlab"));
         assert!(providers.contains(&"clickup"));
         assert!(providers.contains(&"jira"));
         assert!(providers.contains(&"linear"));
+        assert!(providers.contains(&"yougile"));
         assert!(providers.contains(&"telegram"));
         assert!(config.has_any_provider());
     }
@@ -2406,6 +2509,7 @@ mod tests {
             clickup: None,
             jira: None,
             linear: None,
+            yougile: None,
             fireflies: None,
             confluence: None,
             slack: None,
@@ -2430,6 +2534,7 @@ mod tests {
         assert!(toml_str.contains("[telegram]"));
         assert!(!toml_str.contains("[clickup]"));
         assert!(!toml_str.contains("[jira]"));
+        assert!(!toml_str.contains("[yougile]"));
 
         // Parse back
         let parsed: Config = toml::from_str(&toml_str).unwrap();
@@ -2565,11 +2670,15 @@ mod tests {
                 project_key: "DEV".to_string(),
                 email: "dev@example.com".to_string(),
             }),
+            yougile: Some(YouGileConfig {
+                url: default_yougile_url(),
+                board_id: "board-2".to_string(),
+            }),
             ..Default::default()
         };
 
         let providers = context.configured_providers();
-        assert_eq!(providers, vec!["github", "jira"]);
+        assert_eq!(providers, vec!["github", "jira", "yougile"]);
         assert!(context.has_any_provider());
     }
 

@@ -624,6 +624,7 @@ pub devboy_core::config::Config::secrets: core::option::Option<devboy_core::conf
 pub devboy_core::config::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::config::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::config::Config::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::config::Config::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::Config
 pub const devboy_core::config::Config::DEFAULT_CONTEXT_NAME: &'static str
 pub fn devboy_core::config::Config::config_dir() -> devboy_core::error::Result<std::path::PathBuf>
@@ -696,6 +697,7 @@ pub devboy_core::config::ContextConfig::jira: core::option::Option<devboy_core::
 pub devboy_core::config::ContextConfig::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::config::ContextConfig::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::config::ContextConfig::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::config::ContextConfig::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::ContextConfig
 pub fn devboy_core::config::ContextConfig::configured_providers(&self) -> alloc::vec::Vec<&'static str>
 pub fn devboy_core::config::ContextConfig::has_any_provider(&self) -> bool
@@ -1139,6 +1141,24 @@ impl core::marker::Unpin for devboy_core::config::TelegramConfig
 impl core::marker::UnsafeUnpin for devboy_core::config::TelegramConfig
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::TelegramConfig
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::TelegramConfig
+pub struct devboy_core::config::YouGileConfig
+pub devboy_core::config::YouGileConfig::board_id: alloc::string::String
+pub devboy_core::config::YouGileConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::clone(&self) -> devboy_core::config::YouGileConfig
+impl core::fmt::Debug for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::YouGileConfig
+impl core::marker::Send for devboy_core::config::YouGileConfig
+impl core::marker::Sync for devboy_core::config::YouGileConfig
+impl core::marker::Unpin for devboy_core::config::YouGileConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::YouGileConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::YouGileConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::YouGileConfig
 pub fn devboy_core::config::default_slack_required_scopes() -> alloc::vec::Vec<alloc::string::String>
 pub fn devboy_core::config::matches_glob(pattern: &str, name: &str) -> bool
 pub fn devboy_core::config::routing_strategy_slug(s: devboy_core::config::RoutingStrategy) -> alloc::string::String
@@ -4610,6 +4630,7 @@ pub devboy_core::Config::secrets: core::option::Option<devboy_core::config::Secr
 pub devboy_core::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::Config::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::Config::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::Config
 pub const devboy_core::config::Config::DEFAULT_CONTEXT_NAME: &'static str
 pub fn devboy_core::config::Config::config_dir() -> devboy_core::error::Result<std::path::PathBuf>
@@ -4712,6 +4733,7 @@ pub devboy_core::ContextConfig::jira: core::option::Option<devboy_core::config::
 pub devboy_core::ContextConfig::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::ContextConfig::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::ContextConfig::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::ContextConfig::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::ContextConfig
 pub fn devboy_core::config::ContextConfig::configured_providers(&self) -> alloc::vec::Vec<&'static str>
 pub fn devboy_core::config::ContextConfig::has_any_provider(&self) -> bool

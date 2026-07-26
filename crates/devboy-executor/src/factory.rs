@@ -6,6 +6,7 @@ use devboy_core::{
 use crate::context::{
     ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
     LinearScope, ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
+    YouGileScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -142,6 +143,18 @@ pub fn create_provider(
                 }
                 Ok(Box::new(client))
             }
+        },
+        ProviderConfig::YouGile {
+            base_url,
+            access_token,
+            scope,
+            ..
+        } => match scope {
+            YouGileScope::Board { id } => Ok(Box::new(devboy_yougile::YouGileClient::with_base_url(
+                base_url,
+                id,
+                access_token.clone(),
+            ))),
         },
 
         ProviderConfig::Confluence { .. } => Err(Error::ProviderUnsupported {
@@ -314,6 +327,14 @@ pub fn create_enricher(
             } else {
                 Some(Box::new(devboy_linear::LinearSchemaEnricher))
             }
+        }
+        ProviderConfig::YouGile { .. } => {
+            let meta = metadata?;
+            let yougile_meta: devboy_yougile::YouGileMetadata =
+                serde_json::from_value(meta.data.clone()).ok()?;
+            Some(Box::new(devboy_yougile::YouGileSchemaEnricher::new(
+                yougile_meta,
+            )))
         }
         ProviderConfig::Confluence { .. } => None,
         ProviderConfig::Fireflies { .. } => {
@@ -940,6 +961,24 @@ mod tests {
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
             "clickup"
+        );
+    }
+
+    #[test]
+    fn test_create_yougile_provider() {
+        let config = ProviderConfig::YouGile {
+            base_url: "https://yougile.com/api-v2".into(),
+            access_token: "tok".into(),
+            scope: YouGileScope::Board {
+                id: "board-123".into(),
+            },
+            extra: HashMap::new(),
+        };
+        let provider = create_provider(&config, None);
+        assert!(provider.is_ok());
+        assert_eq!(
+            IssueProvider::provider_name(provider.unwrap().as_ref()),
+            "yougile"
         );
     }
 

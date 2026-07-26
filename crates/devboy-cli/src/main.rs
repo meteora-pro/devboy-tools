@@ -25,6 +25,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use devboy_clickup::ClickUpClient;
 use devboy_confluence::{ConfluenceAuth, ConfluenceClient};
+use devboy_core::config::YouGileConfig;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
     IssueFilter, IssueProvider, JiraConfig, LinearConfig, MergeRequestProvider, MrFilter, Provider,
@@ -45,6 +46,7 @@ use devboy_mcp::{
 use devboy_slack::SlackClient;
 use devboy_storage::{ChainStore, CredentialStore, wrap_with_cache};
 use devboy_telegram::TelegramClient;
+use devboy_yougile::YouGileClient;
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
 use secrecy::{ExposeSecret, SecretString};
@@ -273,7 +275,7 @@ enum Commands {
 
     /// Test provider connection
     Test {
-        /// Provider to test (github, gitlab, clickup, jira, slack)
+        /// Provider to test (github, gitlab, clickup, jira, yougile, slack)
         provider: String,
     },
 
@@ -1911,6 +1913,7 @@ fn build_config(options: &InitOptions) -> Config {
             gitlab: options.gitlab.clone(),
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
+            yougile: None,
             linear: options.linear.clone(),
             fireflies: None,
             confluence: None,
@@ -3205,6 +3208,43 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "yougile" => {
+            let yg = config.yougile.as_ref().context(
+                "YouGile not configured. Run: devboy config set yougile.board_id <board_id>",
+            )?;
+
+            let token = store
+                .get("yougile.token")
+                .context("Failed to get token")?
+                .context(
+                    "YouGile token not set. Run: devboy config set-secret yougile.token <token>",
+                )?;
+
+            println!("Testing YouGile connection...");
+            println!("  URL: {}", yg.url);
+            println!("  Board ID: {}", yg.board_id);
+
+            let client = YouGileClient::with_base_url(&yg.url, &yg.board_id, token);
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("YouGile connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("YouGile connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         "jira" => {
             let jira = config
                 .jira
@@ -4306,6 +4346,7 @@ fn get_proxy_url_from_env(name: &str) -> Option<String> {
 /// - `DEVBOY_CONTEXTS_{NAME}_GITLAB_URL` + `_PROJECT_ID` -> GitLab provider
 /// - `DEVBOY_CONTEXTS_{NAME}_CLICKUP_LIST_ID` -> ClickUp provider
 /// - `DEVBOY_CONTEXTS_{NAME}_JIRA_URL` + `_PROJECT_KEY` + `_EMAIL` -> Jira provider
+/// - `DEVBOY_CONTEXTS_{NAME}_YOUGILE_BOARD_ID` -> YouGile provider
 /// - `DEVBOY_CONTEXTS_{NAME}_SLACK_WORKSPACE` or `_TEAM_ID` -> Slack provider
 ///
 /// Tokens are resolved via the credential store (which checks env vars first).
@@ -4395,7 +4436,7 @@ fn add_env_only_contexts(
 /// - "MY_PROJECT_GITLAB_URL" -> ("MY_PROJECT", "GITLAB", "URL")
 fn parse_context_env_key(key: &str) -> Option<(String, String, String)> {
     // Known provider prefixes (in order of specificity)
-    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA", "SLACK"];
+    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA", "YOUGILE", "SLACK"];
 
     for provider in providers {
         // Look for _PROVIDER_ in the key
@@ -4433,6 +4474,9 @@ struct EnvContextBuilder {
     jira_url: Option<String>,
     jira_project_key: Option<String>,
     jira_email: Option<String>,
+    // YouGile
+    yougile_url: Option<String>,
+    yougile_board_id: Option<String>,
     // Linear
     linear_url: Option<String>,
     linear_team_id: Option<String>,
@@ -4474,6 +4518,9 @@ impl EnvContextBuilder {
             ("JIRA", "URL") => self.jira_url = Some(value),
             ("JIRA", "PROJECT_KEY") | ("JIRA", "PROJECT") => self.jira_project_key = Some(value),
             ("JIRA", "EMAIL") => self.jira_email = Some(value),
+            // YouGile
+            ("YOUGILE", "URL") | ("YOUGILE", "BASE_URL") => self.yougile_url = Some(value),
+            ("YOUGILE", "BOARD_ID") | ("YOUGILE", "BOARD") => self.yougile_board_id = Some(value),
             // Linear
             ("LINEAR", "URL") | ("LINEAR", "BASE_URL") => self.linear_url = Some(value),
             ("LINEAR", "TEAM_ID") | ("LINEAR", "TEAM") => self.linear_team_id = Some(value),
@@ -4547,6 +4594,17 @@ impl EnvContextBuilder {
             None
         };
 
+        let yougile = if self.yougile_board_id.is_some() {
+            Some(YouGileConfig {
+                url: self
+                    .yougile_url
+                    .clone()
+                    .unwrap_or_else(|| "https://yougile.com/api-v2".to_string()),
+                board_id: self.yougile_board_id.clone().unwrap(),
+            })
+        } else {
+            None
+        };
         let linear = self.linear_team_id.as_ref().map(|team_id| LinearConfig {
             url: self
                 .linear_url
@@ -4561,6 +4619,7 @@ impl EnvContextBuilder {
             gitlab,
             clickup,
             jira,
+            yougile,
             linear,
             fireflies: None,
             confluence: None,
@@ -4684,6 +4743,25 @@ fn add_context_providers_from_env(
         } else {
             tracing::warn!(
                 "Jira configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(yougile) = &context.yougile {
+        if let Some(token) = get_token_for_context(store, context_name, "yougile") {
+            let client = YouGileClient::with_base_url(&yougile.url, &yougile.board_id, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added YouGile provider to env-only context '{}': {} (board {})",
+                context_name,
+                yougile.url,
+                yougile.board_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "YouGile configured via env for context '{}' but no token found",
                 context_name
             );
         }
@@ -4973,6 +5051,26 @@ fn add_context_providers(
         } else {
             tracing::warn!(
                 "Jira configured in context '{}' but no token found (tried contexts.{}.jira.token then jira.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(yougile) = &context.yougile {
+        if let Some(token) = get_token_for_context(store, context_name, "yougile") {
+            let client = YouGileClient::with_base_url(&yougile.url, &yougile.board_id, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added YouGile provider to context '{}': {} (board {})",
+                context_name,
+                yougile.url,
+                yougile.board_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "YouGile configured in context '{}' but no token found (tried contexts.{}.yougile.token then yougile.token)",
                 context_name,
                 context_name
             );
@@ -6201,6 +6299,27 @@ mod tests {
     }
 
     #[test]
+    fn test_add_context_providers_registers_yougile_provider() {
+        let mut server = McpServer::new();
+        let store = MemoryStore::with_credentials([(
+            "contexts.default.yougile.token".to_string(),
+            "yg-secret".to_string(),
+        )]);
+        let context = ContextConfig {
+            yougile: Some(YouGileConfig {
+                url: "https://yougile.com/api-v2".to_string(),
+                board_id: "board-1".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let added = add_context_providers(&mut server, &store, "default", &context);
+
+        assert!(added);
+        assert_eq!(server.active_providers().len(), 1);
+    }
+
+    #[test]
     fn test_build_config_empty_options() {
         let options = InitOptions::default();
         let config = build_config(&options);
@@ -6910,6 +7029,19 @@ args = ["old"]
     }
 
     #[test]
+    fn test_parse_context_env_key_yougile() {
+        let result = parse_context_env_key("OPS_YOUGILE_BOARD_ID");
+        assert_eq!(
+            result,
+            Some((
+                "OPS".to_string(),
+                "YOUGILE".to_string(),
+                "BOARD_ID".to_string()
+            ))
+        );
+    }
+
+    #[test]
     fn test_parse_context_env_key_invalid() {
         assert_eq!(parse_context_env_key("INVALID_KEY"), None);
         assert_eq!(parse_context_env_key("GITHUB_OWNER"), None); // Missing context name
@@ -7015,6 +7147,22 @@ args = ["old"]
         let context = builder.build();
         // Should return None because Jira requires all three fields
         assert!(context.is_none() || context.as_ref().map(|c| c.jira.is_none()).unwrap_or(true));
+    }
+
+    #[test]
+    fn test_env_context_builder_yougile() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("YOUGILE", "BOARD_ID", "board-123".to_string());
+        builder.set_field(
+            "YOUGILE",
+            "URL",
+            "https://company.yougile.com/api-v2".to_string(),
+        );
+
+        let context = builder.build().unwrap();
+        let yougile = context.yougile.unwrap();
+        assert_eq!(yougile.board_id, "board-123");
+        assert_eq!(yougile.url, "https://company.yougile.com/api-v2");
     }
 
     #[test]
