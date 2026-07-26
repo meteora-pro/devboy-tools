@@ -14,7 +14,8 @@ use crate::DEFAULT_LINEAR_URL;
 use crate::types::{
     GraphQlResponse, LinearComment, LinearCommentCreateData, LinearIssue, LinearIssueCommentsData,
     LinearIssueCreateData, LinearIssueData, LinearIssueLabelsData, LinearIssueUpdateData,
-    LinearIssuesData, LinearUser, LinearUsersData, LinearWorkflowStatesData, Viewer, ViewerData,
+    LinearIssuesData, LinearUser, LinearUsersData, LinearWorkflowState, LinearWorkflowStatesData,
+    Viewer, ViewerData,
 };
 
 const VIEWER_QUERY: &str = r#"
@@ -755,13 +756,21 @@ fn map_issue(issue: &LinearIssue) -> Issue {
         },
         title: issue.title.clone(),
         description: issue.description.clone(),
-        state: issue
+        // `state` stays binary open/closed like every other provider, so
+        // cross-provider filters keep working. The rich workflow state name
+        // goes to `status` and its unified bucket to `status_category`.
+        state: map_state(issue.state.as_ref()),
+        status: issue
             .state
             .as_ref()
             .map(|state| state.name.clone())
-            .filter(|name| !name.is_empty())
-            .or_else(|| issue.state.as_ref().and_then(|state| state.r#type.clone()))
-            .unwrap_or_else(|| "unknown".to_string()),
+            .filter(|name| !name.is_empty()),
+        status_category: issue
+            .state
+            .as_ref()
+            .and_then(|state| state.r#type.as_deref())
+            .and_then(map_status_category)
+            .map(str::to_string),
         source: "linear".to_string(),
         priority: map_priority(issue.priority),
         labels: issue
@@ -795,6 +804,34 @@ fn map_comment(comment: &LinearComment) -> Comment {
     }
 }
 
+/// Binary open/closed state, matching the cross-provider `Issue::state`
+/// contract. Linear's `completed`/`canceled` workflow types are terminal;
+/// everything else (including an unknown/missing type) is still open.
+fn map_state(state: Option<&LinearWorkflowState>) -> String {
+    match state.and_then(|s| s.r#type.as_deref()) {
+        Some("completed") | Some("canceled") => "closed".to_string(),
+        _ => "open".to_string(),
+    }
+}
+
+/// Linear workflow state type → unified `Issue::status_category`
+/// (`backlog` / `todo` / `in_progress` / `done` / `cancelled`).
+///
+/// Inverse of [`map_state_category`]. `triage` is Linear's pre-backlog
+/// inbox — not yet actionable, so it buckets with `backlog`.
+fn map_status_category(state_type: &str) -> Option<&'static str> {
+    match state_type {
+        "triage" | "backlog" => Some("backlog"),
+        "unstarted" => Some("todo"),
+        "started" => Some("in_progress"),
+        "completed" => Some("done"),
+        "canceled" => Some("cancelled"),
+        _ => None,
+    }
+}
+
+/// Unified status category → Linear workflow state type, used to translate
+/// caller-supplied filters into Linear's `state.type` predicate.
 fn map_state_category(category: &str) -> Option<&'static str> {
     match category {
         "backlog" => Some("backlog"),
@@ -1302,6 +1339,55 @@ mod tests {
     use httpmock::MockServer;
     use serde_json::json;
 
+    fn workflow_state(name: &str, r#type: Option<&str>) -> LinearWorkflowState {
+        LinearWorkflowState {
+            name: name.to_string(),
+            r#type: r#type.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn map_state_is_binary_and_only_terminal_types_close() {
+        for open_type in ["triage", "backlog", "unstarted", "started"] {
+            let state = workflow_state("Whatever", Some(open_type));
+            assert_eq!(map_state(Some(&state)), "open", "type={open_type}");
+        }
+        for closed_type in ["completed", "canceled"] {
+            let state = workflow_state("Whatever", Some(closed_type));
+            assert_eq!(map_state(Some(&state)), "closed", "type={closed_type}");
+        }
+        // Missing state, or a type Linear may add later, stays open rather
+        // than silently disappearing from `state:open` queries.
+        assert_eq!(map_state(None), "open");
+        assert_eq!(map_state(Some(&workflow_state("New", None))), "open");
+        assert_eq!(
+            map_state(Some(&workflow_state("New", Some("something_new")))),
+            "open"
+        );
+    }
+
+    #[test]
+    fn map_status_category_covers_every_linear_state_type() {
+        assert_eq!(map_status_category("triage"), Some("backlog"));
+        assert_eq!(map_status_category("backlog"), Some("backlog"));
+        assert_eq!(map_status_category("unstarted"), Some("todo"));
+        assert_eq!(map_status_category("started"), Some("in_progress"));
+        assert_eq!(map_status_category("completed"), Some("done"));
+        assert_eq!(map_status_category("canceled"), Some("cancelled"));
+        assert_eq!(map_status_category("something_new"), None);
+    }
+
+    #[test]
+    fn map_status_category_round_trips_through_map_state_category() {
+        // Every unified category the filter layer accepts must map back to
+        // itself, so `status_category` values are valid filter inputs.
+        for category in ["backlog", "todo", "in_progress", "done", "cancelled"] {
+            let linear_type = map_state_category(category)
+                .unwrap_or_else(|| panic!("no linear type for {category}"));
+            assert_eq!(map_status_category(linear_type), Some(category));
+        }
+    }
+
     fn linear_issue(identifier: &str, title: &str, state: &str) -> Value {
         json!({
             "id": format!("id-{identifier}"),
@@ -1425,7 +1511,9 @@ mod tests {
         let issue = client.get_issue("ENG-42").await.unwrap();
         assert_eq!(issue.key, "ENG-42");
         assert_eq!(issue.title, "Fix login");
-        assert_eq!(issue.state, "In Progress");
+        assert_eq!(issue.state, "open");
+        assert_eq!(issue.status.as_deref(), Some("In Progress"));
+        assert_eq!(issue.status_category.as_deref(), Some("in_progress"));
         assert_eq!(issue.priority.as_deref(), Some("high"));
         assert_eq!(issue.labels, vec!["bug".to_string()]);
         assert_eq!(issue.parent.as_deref(), Some("ENG-1"));
@@ -1881,7 +1969,9 @@ mod tests {
         assert_eq!(issue.key, "ENG-42");
         assert_eq!(issue.title, "Updated issue title");
         assert_eq!(issue.description.as_deref(), Some("Updated description"));
-        assert_eq!(issue.state, "In Review");
+        assert_eq!(issue.state, "open");
+        assert_eq!(issue.status.as_deref(), Some("In Review"));
+        assert_eq!(issue.status_category.as_deref(), Some("in_progress"));
         assert_eq!(issue.priority.as_deref(), Some("low"));
         assert!(issue.labels.is_empty());
         assert!(issue.assignees.is_empty());
