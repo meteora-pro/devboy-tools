@@ -1702,8 +1702,15 @@ fn render_adf_table(node: &Value, out: &mut String) {
                     render_adf_block(block, &mut text);
                 }
             }
-            // A literal pipe would break the row apart when re-read.
-            cols.push(text.trim().replace('|', "\\|"));
+            // A literal pipe would break the row apart when re-read, and a
+            // newline — from a hardBreak or a list inside the cell — would
+            // split the row across lines and destroy the table structure.
+            cols.push(
+                text.trim()
+                    .replace('|', "\\|")
+                    .replace("\r\n", "<br>")
+                    .replace('\n', "<br>"),
+            );
         }
         rendered.push(cols);
     }
@@ -2303,9 +2310,20 @@ impl ConfluenceClient {
     }
 
     async fn list_spaces_page(&self, cursor: &str) -> Result<ProviderResult<KbSpace>> {
-        let path = path_from_cursor(cursor, self.legacy_api_path());
-        let response: ConfluenceListResponse<ConfluenceSpace> =
-            self.get_json_from_legacy_api(&path).await?;
+        // Continue on whichever surface produced the cursor. `get_spaces()`
+        // serves page 1 from v2 when it is available, and a v2 cursor carries
+        // the v2 prefix — resolving it against the legacy prefix leaves the
+        // path intact and builds `/wiki/rest/api/wiki/api/v2/...`, a 404.
+        let v2_prefix = self.space_api_path.trim_end_matches('/');
+        let from_v2 = uses_v2_api(&self.space_api_path) && cursor.contains(v2_prefix);
+
+        let response: ConfluenceListResponse<ConfluenceSpace> = if from_v2 {
+            let path = path_from_cursor(cursor, &self.space_api_path);
+            self.get_json_from_api(&self.space_api_path, &path).await?
+        } else {
+            let path = path_from_cursor(cursor, self.legacy_api_path());
+            self.get_json_from_legacy_api(&path).await?
+        };
         let pagination = map_pagination(&response, Some(100));
         let items = response
             .results
@@ -4793,6 +4811,36 @@ mod tests {
         assert!(md.contains("| Name | Age |"), "missing header row: {md}");
         assert!(md.contains("| --- | --- |"), "missing delimiter row: {md}");
         assert!(md.contains("| Alice | 30 |"), "missing body row: {md}");
+    }
+
+    #[test]
+    fn adf_table_cells_never_break_the_row_across_lines() {
+        let adf = json!({
+            "type": "doc",
+            "content": [{ "type": "table", "content": [
+                { "type": "tableRow", "content": [
+                    { "type": "tableCell", "content": [
+                        { "type": "paragraph", "content": [
+                            { "type": "text", "text": "one" },
+                            { "type": "hardBreak" },
+                            { "type": "text", "text": "two" }]}]},
+                    { "type": "tableCell", "content": [
+                        { "type": "bulletList", "content": [
+                            { "type": "listItem", "content": [
+                                { "type": "paragraph", "content": [{ "type": "text", "text": "a" }]}]},
+                            { "type": "listItem", "content": [
+                                { "type": "paragraph", "content": [{ "type": "text", "text": "b" }]}]}]}]}
+                ]}
+            ]}]
+        });
+
+        let md = adf_to_markdown(&adf);
+        // Every table line must still be a complete row: a stray newline
+        // inside a cell used to split the row and destroy the structure.
+        for line in md.lines().filter(|l| l.starts_with('|')) {
+            assert!(line.ends_with('|'), "row broken across lines: {md}");
+        }
+        assert!(md.contains("one<br>two"), "hardBreak not folded: {md}");
     }
 
     #[test]
