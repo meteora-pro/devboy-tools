@@ -32,6 +32,7 @@ pub mod config;
 pub mod enricher;
 pub mod error;
 pub mod liveness;
+pub mod oauth;
 pub mod provider;
 pub mod secret_approval;
 

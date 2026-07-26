@@ -1,7 +1,9 @@
 use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext};
 use async_trait::async_trait;
 use devboy_core::ProxyMcpServerConfig;
+use devboy_core::oauth::OAuthTokens;
 use devboy_mcp::{McpProxyClient, ProxyTransport};
+use secrecy::ExposeSecret;
 use serde_json::{Value, json};
 use std::time::Instant;
 
@@ -111,7 +113,62 @@ fn normalized_auth_type(auth_type: &str) -> Option<&'static str> {
         "bearer" => Some("bearer"),
         "api_key" => Some("api_key"),
         "none" => Some("none"),
+        "oauth2" => Some("oauth2"),
         _ => None,
+    }
+}
+
+/// Report the OAuth login state for an `auth_type = "oauth2"` proxy (issue #306).
+/// This is the stdio-side awareness signal: a human — or a coding agent reading
+/// `devboy doctor` — sees whether the proxy is authorized and, if not, the exact
+/// `devboy login <name>` to run. (No live probe: a valid session may still be
+/// mid-flight, and tokens auto-refresh at request time.)
+fn probe_oauth_state(
+    ctx: &DiagnosticContext,
+    proxy: &ProxyMcpServerConfig,
+    auth_type: &str,
+) -> ProxyProbeResult {
+    let key = format!("proxy.{}.oauth", proxy.name);
+    // A present secret isn't enough: the proxy path needs it to deserialize as
+    // OAuthTokens. Treat a corrupt/partial blob as not-logged-in so doctor never
+    // reports a false-positive session.
+    let logged_in = match ctx.credential_store.get(&key) {
+        Ok(Some(secret)) => serde_json::from_str::<OAuthTokens>(secret.expose_secret()).is_ok(),
+        _ => false,
+    };
+    // Match build_oauth_auth's actual requirements: both client_id AND
+    // token_endpoint must be cached, else the proxy manager skips this server
+    // despite a stored token blob — doctor must not show green in that case.
+    let has_client = proxy
+        .oauth
+        .as_ref()
+        .is_some_and(|o| o.client_id.is_some() && o.token_endpoint.is_some());
+    if logged_in && has_client {
+        ProxyProbeResult {
+            status: CheckStatus::Pass,
+            detail: json!({
+                "name": proxy.name,
+                "url": proxy.url,
+                "auth_type": auth_type,
+                "transport": proxy.transport,
+                "status": "logged_in",
+                "message": "OAuth: logged in; tokens auto-refresh",
+            }),
+            fix_command: None,
+        }
+    } else {
+        ProxyProbeResult {
+            status: CheckStatus::Error,
+            detail: json!({
+                "name": proxy.name,
+                "url": proxy.url,
+                "auth_type": auth_type,
+                "transport": proxy.transport,
+                "status": "needs_login",
+                "message": format!("OAuth proxy '{}' is not logged in", proxy.name),
+            }),
+            fix_command: Some(format!("devboy login {}", proxy.name)),
+        }
     }
 }
 
@@ -170,6 +227,11 @@ async fn probe_proxy_server(
             };
         }
     };
+
+    // OAuth2 proxies carry no token_key — report login state instead of probing.
+    if auth_type == "oauth2" {
+        return probe_oauth_state(ctx, proxy, auth_type);
+    }
 
     let token = match auth_type {
         "none" => None,
@@ -234,6 +296,7 @@ async fn probe_proxy_server(
         token_value,
         auth_type,
         transport,
+        None,
     )
     .await
     {
@@ -445,6 +508,7 @@ mod tests {
                     tool_prefix: Some("cloud".to_string()),
                     transport: "streamable-http".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -493,6 +557,7 @@ mod tests {
                     tool_prefix: None,
                     transport: "streamable-http".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -520,6 +585,7 @@ mod tests {
                     tool_prefix: None,
                     transport: "grpc".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -548,6 +614,7 @@ mod tests {
                     tool_prefix: None,
                     transport: "streamable-http".to_string(),
                     routing: None,
+                    oauth: None,
                 }],
                 ..Default::default()
             },
@@ -583,6 +650,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;
@@ -599,6 +667,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;
@@ -618,6 +687,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;
@@ -654,6 +724,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             },
         )
         .await;

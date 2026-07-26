@@ -168,10 +168,7 @@ fn locate_repo_root(start: &Path) -> Option<PathBuf> {
         if cur.join(".git").exists() || cur.join(".devboy.toml").exists() {
             return Some(cur.to_path_buf());
         }
-        match cur.parent() {
-            Some(p) => cur = p,
-            None => return None,
-        }
+        cur = cur.parent()?;
     }
 }
 

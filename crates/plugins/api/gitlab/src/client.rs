@@ -543,14 +543,13 @@ fn map_position(gl_position: &GitLabNotePosition) -> Option<CodePosition> {
             .clone()
             .unwrap_or_else(|| gl_position.old_path.clone().unwrap_or_default());
         (path, new_line, "new".to_string())
-    } else if let Some(old_line) = gl_position.old_line {
+    } else {
+        let old_line = gl_position.old_line?;
         let path = gl_position
             .old_path
             .clone()
             .unwrap_or_else(|| gl_position.new_path.clone().unwrap_or_default());
         (path, old_line, "old".to_string())
-    } else {
-        return None;
     };
 
     Some(CodePosition {

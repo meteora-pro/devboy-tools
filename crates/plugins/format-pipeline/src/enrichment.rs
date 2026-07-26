@@ -372,7 +372,7 @@ fn intent_boost(model: &ToolValueModel, intent_keywords: &[String]) -> f32 {
         .map(|k| k.to_ascii_lowercase())
         .collect();
     let mut boost: f32 = 1.0;
-    for (_name, group) in model.field_groups.iter() {
+    for group in model.field_groups.values() {
         if group.default_include {
             continue; // already counted in the base value
         }
