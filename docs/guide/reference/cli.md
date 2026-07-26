@@ -78,6 +78,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
 * [`devboy trace end`↴](#devboy-trace-end)
+* [`devboy login`↴](#devboy-login)
 * [`devboy doctor`↴](#devboy-doctor)
 * [`devboy upgrade`↴](#devboy-upgrade)
 * [`devboy benchmark`↴](#devboy-benchmark)
@@ -107,6 +108,7 @@ DevBoy - AI-powered development tools
 * `secrets` — Discover and inspect declared secrets (metadata only — values are never shown)
 * `hooks` — Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
 * `trace` — Write to a skill's self-feedback session trace (ADR-015)
+* `login` — Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628)
 * `doctor` — Run diagnostic checks for the local DevBoy setup
 * `upgrade` — Upgrade devboy to the latest version
 * `benchmark` — Benchmark format pipeline on real open-source project data (JSON vs TOON)
@@ -1215,6 +1217,20 @@ Finalise a session — writes the closing event and updates `meta.json` with the
 * `--summary <SUMMARY>` — Human-readable summary
 
   Default value: ``
+
+
+
+## `devboy login`
+
+Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628).
+
+Discovers the authorization server from the upstream's `WWW-Authenticate` challenge, registers a client if needed (RFC 7591), prints a code + URL to approve in a browser, then stores auto-refreshing tokens.
+
+**Usage:** `devboy login <SERVER>`
+
+###### **Arguments:**
+
+* `<SERVER>` — Name of the `[[proxy_mcp_servers]]` entry to authorize
 
 
 
