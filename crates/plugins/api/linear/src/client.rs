@@ -596,7 +596,27 @@ impl LinearClient {
             ));
         }
 
-        let target_name = match state.to_ascii_lowercase().as_str() {
+        let data = self.list_workflow_states().await?;
+        let nodes = data.workflow_states.nodes;
+
+        // An exact state name always wins over the category aliases below.
+        // Linear's own default states are literally called "Done", "Todo",
+        // "Backlog" and "Canceled"; resolving those by category first would
+        // shadow them and could land on a different state of the same type
+        // (a team with both "Done" and "Released" is ordinary), silently
+        // setting a status the caller never asked for.
+        if let Some(node) = nodes
+            .iter()
+            .find(|node| node.name.eq_ignore_ascii_case(state))
+        {
+            return Ok(node.id.clone());
+        }
+
+        // Not a state name on this team — fall back to the shared category
+        // vocabulary. Which state is chosen among several of the same type
+        // follows the order Linear returns them in; callers who need a
+        // specific one should name it exactly, which the branch above honours.
+        let target_type = match state.to_ascii_lowercase().as_str() {
             "open" | "opened" => None,
             "closed" => Some("completed"),
             "cancelled" | "canceled" => Some("canceled"),
@@ -604,39 +624,33 @@ impl LinearClient {
             "todo" => Some("unstarted"),
             "in_progress" | "in progress" | "started" => Some("started"),
             "done" | "completed" => Some("completed"),
-            other => {
-                return self.resolve_workflow_state_id_by_name(other).await;
+            _ => {
+                return Err(Error::NotFound(format!(
+                    "Linear workflow state not found by name '{}' in team {}; \
+                     available: {}",
+                    state,
+                    self.team_id,
+                    nodes
+                        .iter()
+                        .map(|node| node.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
             }
         };
 
-        let variables = json!({
-            "first": 100,
-            "filter": {
-                "team": {
-                    "id": {
-                        "eq": self.team_id
-                    }
-                }
-            }
-        });
-        let data: LinearWorkflowStatesData = self
-            .graphql(WORKFLOW_STATES_QUERY, variables, &self.token)
-            .await?;
-
-        let state_id = if let Some(target_type) = target_name {
-            data.workflow_states
-                .nodes
+        let state_id = match target_type {
+            Some(target_type) => nodes
                 .into_iter()
                 .find(|node| node.r#type.as_deref() == Some(target_type))
-                .map(|node| node.id)
-        } else {
-            data.workflow_states
-                .nodes
+                .map(|node| node.id),
+            // "open" means any non-terminal state.
+            None => nodes
                 .into_iter()
                 .find(|node| {
                     !matches!(node.r#type.as_deref(), Some("completed") | Some("canceled"))
                 })
-                .map(|node| node.id)
+                .map(|node| node.id),
         };
 
         state_id.ok_or_else(|| {
@@ -645,36 +659,6 @@ impl LinearClient {
                 state, self.team_id
             ))
         })
-    }
-
-    async fn resolve_workflow_state_id_by_name(&self, state_name: &str) -> Result<String> {
-        let variables = json!({
-            "first": 100,
-            "filter": {
-                "team": {
-                    "id": {
-                        "eq": self.team_id
-                    }
-                },
-                "name": {
-                    "eqIgnoreCase": state_name
-                }
-            }
-        });
-        let data: LinearWorkflowStatesData = self
-            .graphql(WORKFLOW_STATES_QUERY, variables, &self.token)
-            .await?;
-        data.workflow_states
-            .nodes
-            .into_iter()
-            .find(|node| node.name.eq_ignore_ascii_case(state_name))
-            .map(|node| node.id)
-            .ok_or_else(|| {
-                Error::NotFound(format!(
-                    "Linear workflow state not found by name '{}' in team {}",
-                    state_name, self.team_id
-                ))
-            })
     }
 
     async fn list_workflow_states(&self) -> Result<LinearWorkflowStatesData> {
@@ -1908,6 +1892,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resolve_workflow_state_prefers_an_exact_name_over_the_category_alias() {
+        // The team has two `completed` states and the literal name "Done" is
+        // one of them. Resolving "Done" by category could land on "Released";
+        // the exact name must win.
+        let server = MockServer::start();
+        let states = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query WorkflowStates");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": { "workflowStates": { "nodes": [
+                        { "id": "st-released", "name": "Released", "type": "completed" },
+                        { "id": "st-done", "name": "Done", "type": "completed" }
+                    ] } }
+                }));
+        });
+
+        let client = LinearClient::with_base_url(
+            format!("{}/graphql", server.base_url()),
+            "team-1",
+            SecretString::from("lin_api_test".to_owned()),
+        );
+
+        assert_eq!(
+            client.resolve_workflow_state_id("Done").await.unwrap(),
+            "st-done"
+        );
+        // A pure category still resolves by type, first state of that type.
+        assert_eq!(
+            client.resolve_workflow_state_id("closed").await.unwrap(),
+            "st-released"
+        );
+        // An unknown name fails loudly and lists what is available.
+        let err = client
+            .resolve_workflow_state_id("Shipped")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, Error::NotFound(m) if m.contains("Shipped") && m.contains("Released")),
+            "unexpected error: {err:?}"
+        );
+        states.assert_calls(3);
+    }
+
+    #[tokio::test]
     async fn get_issues_sends_order_by_and_reports_sort_info() {
         let server = MockServer::start();
         let page = server.mock(|when, then| {
@@ -2100,8 +2131,9 @@ mod tests {
         let workflow_states = server.mock(|when, then| {
             when.method(POST)
                 .path("/graphql")
-                .body_includes("query WorkflowStates")
-                .body_includes(r#""name":{"eqIgnoreCase":"in review"}"#);
+                // States are now fetched unfiltered and matched by exact name
+                // locally, so an exact name is never shadowed by a category alias.
+                .body_includes("query WorkflowStates");
             then.status(200)
                 .header("content-type", "application/json")
                 .json_body(json!({

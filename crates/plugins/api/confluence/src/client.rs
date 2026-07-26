@@ -352,12 +352,21 @@ impl ConfluenceClient {
         Ok(self.api_url(api_path, path))
     }
 
-    async fn legacy_rest_api_url(&self, path: &str) -> Result<String> {
-        let api_path = match self.flavor {
+    /// Prefix used by the v1 (legacy) REST surface.
+    ///
+    /// Distinct from `self.api_path`, which on Cloud points at `/wiki/api/v2`.
+    /// Anything that will be sent through `get_json_from_legacy_api` must
+    /// resolve relative to *this* — including cursors echoed back by the
+    /// server, or the prefix gets prepended twice and the request 404s.
+    fn legacy_api_path(&self) -> &'static str {
+        match self.flavor {
             ConfluenceFlavor::Cloud => "/wiki/rest/api",
             ConfluenceFlavor::SelfHosted => DEFAULT_CONFLUENCE_API_PATH,
-        };
-        Ok(self.api_url(api_path, path))
+        }
+    }
+
+    async fn legacy_rest_api_url(&self, path: &str) -> Result<String> {
+        Ok(self.api_url(self.legacy_api_path(), path))
     }
 
     #[cfg(test)]
@@ -2214,7 +2223,8 @@ impl ConfluenceClient {
     async fn list_pages_v1(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
         let limit = params.limit.unwrap_or(25);
         let path = if let Some(cursor) = params.cursor.as_ref() {
-            path_from_cursor(cursor, &self.api_path)
+            // Fetched via the legacy surface below, so strip the legacy prefix.
+            path_from_cursor(cursor, self.legacy_api_path())
         } else if let Some(parent_id) = params.parent_id.as_ref() {
             let offset = params.offset.unwrap_or(0);
             let query = [
@@ -2711,7 +2721,8 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         let limit = params.limit.unwrap_or(25);
 
         let path = if let Some(cursor) = params.cursor.as_ref() {
-            path_from_cursor(cursor, &self.api_path)
+            // Fetched via the legacy surface below, so strip the legacy prefix.
+            path_from_cursor(cursor, self.legacy_api_path())
         } else {
             let cql = build_search_cql(&params);
             format!(
@@ -4544,6 +4555,43 @@ mod tests {
                 space_key: None,
                 cursor: None,
                 limit: Some(10),
+                raw_query: false,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert!(result.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_follows_a_cloud_cursor_without_doubling_the_legacy_prefix() {
+        // Cloud echoes cursors relative to /wiki/rest/api, while self.api_path
+        // points at /wiki/api/v2. Stripping with the wrong prefix left the
+        // path intact and produced /wiki/rest/api/wiki/rest/api/... — a 404 on
+        // every page past the first.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/wiki/rest/api/content/search")
+                .query_param("start", "25");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":25,"limit":25,"size":0,"_links":{}}"#);
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+        let result = client
+            .search(SearchKbParams {
+                query: "architecture".into(),
+                space_key: None,
+                cursor: Some(
+                    "/wiki/rest/api/content/search?cql=text~%22architecture%22&limit=25&start=25"
+                        .into(),
+                ),
+                limit: Some(25),
                 raw_query: false,
             })
             .await
