@@ -55,6 +55,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearConfig>,
+
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fireflies: Option<FirefliesConfig>,
@@ -213,6 +216,10 @@ fn default_auth_none() -> String {
     "none".to_string()
 }
 
+fn default_linear_url() -> String {
+    "https://api.linear.app/graphql".to_string()
+}
+
 /// Per-context provider configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ContextConfig {
@@ -227,6 +234,9 @@ pub struct ContextConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearConfig>,
 
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -280,6 +290,18 @@ pub struct JiraConfig {
     pub project_key: String,
     /// User email (required for Jira auth)
     pub email: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinearConfig {
+    /// Linear GraphQL endpoint.
+    #[serde(default = "default_linear_url")]
+    pub url: String,
+    /// Default Linear team UUID used for issue operations.
+    pub team_id: String,
+    /// Optional human-readable team key (e.g. `ENG`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_key: Option<String>,
 }
 
 /// Fireflies.ai provider configuration (meeting notes).
@@ -1038,6 +1060,7 @@ impl Config {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.linear.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1059,6 +1082,9 @@ impl Config {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.linear.is_some() {
+            providers.push("linear");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -1128,6 +1154,7 @@ impl Config {
             gitlab: self.gitlab.clone(),
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
+            linear: self.linear.clone(),
             fireflies: self.fireflies.clone(),
             confluence: self.confluence.clone(),
             slack: self.slack.clone(),
@@ -1227,6 +1254,24 @@ impl Config {
                     _ => {
                         return Err(Error::Config(format!(
                             "Unknown Jira config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
+            "linear" => {
+                let config = self.linear.get_or_insert_with(|| LinearConfig {
+                    url: default_linear_url(),
+                    team_id: String::new(),
+                    team_key: None,
+                });
+                match field {
+                    "url" | "base_url" => config.url = value.to_string(),
+                    "team_id" | "team" => config.team_id = value.to_string(),
+                    "team_key" | "key" => config.team_key = Some(value.to_string()),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown Linear config field: {}",
                             field
                         )));
                     }
@@ -1365,6 +1410,20 @@ impl Config {
                     "email" => Ok(Some(config.email.clone())),
                     _ => Err(Error::Config(format!(
                         "Unknown Jira config field: {}",
+                        field
+                    ))),
+                }
+            }
+            "linear" => {
+                let Some(config) = &self.linear else {
+                    return Ok(None);
+                };
+                match field {
+                    "url" | "base_url" => Ok(Some(config.url.clone())),
+                    "team_id" | "team" => Ok(Some(config.team_id.clone())),
+                    "team_key" | "key" => Ok(config.team_key.clone()),
+                    _ => Err(Error::Config(format!(
+                        "Unknown Linear config field: {}",
                         field
                     ))),
                 }
@@ -1633,6 +1692,7 @@ impl ContextConfig {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.linear.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1653,6 +1713,9 @@ impl ContextConfig {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.linear.is_some() {
+            providers.push("linear");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -1962,6 +2025,39 @@ mod tests {
     }
 
     #[test]
+    fn test_set_and_get_linear() {
+        let mut config = Config::default();
+
+        config
+            .set("linear.url", "https://linear.example.com/graphql")
+            .unwrap();
+        config.set("linear.team_id", "team-123").unwrap();
+        config.set("linear.team_key", "ENG").unwrap();
+
+        assert_eq!(
+            config.get("linear.url").unwrap(),
+            Some("https://linear.example.com/graphql".to_string())
+        );
+        assert_eq!(
+            config.get("linear.base_url").unwrap(),
+            Some("https://linear.example.com/graphql".to_string())
+        );
+        assert_eq!(
+            config.get("linear.team_id").unwrap(),
+            Some("team-123".to_string())
+        );
+        assert_eq!(
+            config.get("linear.team").unwrap(),
+            Some("team-123".to_string())
+        );
+        assert_eq!(
+            config.get("linear.team_key").unwrap(),
+            Some("ENG".to_string())
+        );
+        assert_eq!(config.get("linear.key").unwrap(), Some("ENG".to_string()));
+    }
+
+    #[test]
     fn test_set_and_get_confluence() {
         let mut config = Config::default();
 
@@ -2052,6 +2148,11 @@ mod tests {
         assert!(config.set("jira.unknown", "value").is_err());
         config.set("jira.url", "https://jira.com").unwrap();
         assert!(config.get("jira.unknown").is_err());
+
+        // Linear unknown field
+        assert!(config.set("linear.unknown", "value").is_err());
+        config.set("linear.team_id", "team-1").unwrap();
+        assert!(config.get("linear.unknown").is_err());
     }
 
     #[test]
@@ -2062,6 +2163,7 @@ mod tests {
         assert_eq!(config.get("gitlab.url").unwrap(), None);
         assert_eq!(config.get("clickup.list_id").unwrap(), None);
         assert_eq!(config.get("jira.url").unwrap(), None);
+        assert_eq!(config.get("linear.team_id").unwrap(), None);
         assert_eq!(config.get("confluence.base_url").unwrap(), None);
         assert_eq!(config.get("telegram.base_url").unwrap(), None);
     }
@@ -2116,6 +2218,11 @@ mod tests {
                 project_key: "k".to_string(),
                 email: "e".to_string(),
             }),
+            linear: Some(LinearConfig {
+                url: "https://api.linear.app/graphql".to_string(),
+                team_id: "team-1".to_string(),
+                team_key: Some("ENG".to_string()),
+            }),
             fireflies: None,
             confluence: None,
             slack: None,
@@ -2135,13 +2242,33 @@ mod tests {
         };
 
         let providers = config.configured_providers();
-        assert_eq!(providers.len(), 5);
+        assert_eq!(providers.len(), 6);
         assert!(providers.contains(&"github"));
         assert!(providers.contains(&"gitlab"));
         assert!(providers.contains(&"clickup"));
         assert!(providers.contains(&"jira"));
+        assert!(providers.contains(&"linear"));
         assert!(providers.contains(&"telegram"));
         assert!(config.has_any_provider());
+    }
+
+    #[test]
+    fn test_legacy_default_context_includes_linear() {
+        let config = Config {
+            linear: Some(LinearConfig {
+                url: "https://api.linear.app/graphql".to_string(),
+                team_id: "team-legacy".to_string(),
+                team_key: Some("OPS".to_string()),
+            }),
+            ..Config::default()
+        };
+
+        let context = config
+            .legacy_default_context()
+            .expect("legacy default context should exist");
+        let linear = context.linear.expect("linear should be present");
+        assert_eq!(linear.team_id, "team-legacy");
+        assert_eq!(linear.team_key.as_deref(), Some("OPS"));
     }
 
     #[test]
@@ -2206,6 +2333,7 @@ mod tests {
             }),
             clickup: None,
             jira: None,
+            linear: None,
             fireflies: None,
             confluence: None,
             slack: None,

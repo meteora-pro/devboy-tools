@@ -5,7 +5,7 @@ use devboy_core::{
 
 use crate::context::{
     ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
+    LinearScope, ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -126,6 +126,22 @@ pub fn create_provider(
                     keys.join(", ")
                 ),
             }),
+        },
+
+        ProviderConfig::Linear {
+            base_url,
+            access_token,
+            scope,
+            ..
+        } => match scope {
+            LinearScope::Team { id, key } => {
+                let mut client =
+                    devboy_linear::LinearClient::with_base_url(base_url, id, access_token.clone());
+                if let Some(key) = key {
+                    client = client.with_team_key(key);
+                }
+                Ok(Box::new(client))
+            }
         },
 
         ProviderConfig::Confluence { .. } => Err(Error::ProviderUnsupported {
@@ -278,6 +294,17 @@ pub fn create_enricher(
                 serde_json::from_value(meta.data.clone()).ok()?;
             Some(Box::new(devboy_jira::JiraSchemaEnricher::new(jira_meta)))
         }
+        ProviderConfig::Linear { .. } => {
+            if let Some(meta) = metadata {
+                let linear_meta: devboy_linear::LinearMetadata =
+                    serde_json::from_value(meta.data.clone()).ok()?;
+                Some(Box::new(
+                    devboy_linear::enricher::DynamicLinearSchemaEnricher::new(linear_meta),
+                ))
+            } else {
+                Some(Box::new(devboy_linear::LinearSchemaEnricher))
+            }
+        }
         ProviderConfig::Confluence { .. } => None,
         ProviderConfig::Fireflies { .. } => {
             Some(Box::new(devboy_fireflies::FirefliesSchemaEnricher))
@@ -397,6 +424,25 @@ mod tests {
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
             "jira"
+        );
+    }
+
+    #[test]
+    fn test_create_linear_provider() {
+        let config = ProviderConfig::Linear {
+            base_url: "https://api.linear.app/graphql".into(),
+            access_token: "lin_api_test".into(),
+            scope: LinearScope::Team {
+                id: "team-123".into(),
+                key: Some("ENG".into()),
+            },
+            extra: HashMap::new(),
+        };
+        let provider = create_provider(&config, None);
+        assert!(provider.is_ok());
+        assert_eq!(
+            IssueProvider::provider_name(provider.unwrap().as_ref()),
+            "linear"
         );
     }
 
@@ -605,6 +651,29 @@ mod tests {
                     "custom_fields": []
                 }
             }
+        }));
+        assert!(create_enricher(&config, Some(&meta)).is_some());
+    }
+
+    #[test]
+    fn test_create_enricher_linear_uses_metadata_when_present() {
+        let config = ProviderConfig::Linear {
+            base_url: "https://api.linear.app/graphql".into(),
+            access_token: "token".into(),
+            scope: LinearScope::Team {
+                id: "team-1".into(),
+                key: Some("ENG".into()),
+            },
+            extra: HashMap::new(),
+        };
+
+        assert!(create_enricher(&config, None).is_some());
+
+        let meta = ProviderMetadata::new(serde_json::json!({
+            "statuses": [
+                { "id": "1", "name": "Backlog", "category": "backlog" },
+                { "id": "2", "name": "In Review", "category": "in_progress" }
+            ]
         }));
         assert!(create_enricher(&config, Some(&meta)).is_some());
     }
