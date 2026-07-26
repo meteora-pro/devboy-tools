@@ -1668,9 +1668,74 @@ fn adf_to_markdown(adf: &Value) -> String {
     collapse_markdown_whitespace(&out)
 }
 
+/// Renders an ADF `table` as a GitHub-flavoured Markdown table.
+///
+/// Without an arm of its own a table fell through to the inline catch-all,
+/// which walks the row/cell hierarchy with no separators at all — a 2×2 table
+/// came out as the single run-on string "NameAgeAlice30".
+fn render_adf_table(node: &Value, out: &mut String) {
+    let Some(rows) = node.get("content").and_then(Value::as_array) else {
+        return;
+    };
+
+    let mut rendered: Vec<Vec<String>> = Vec::new();
+    let mut header_is_first_row = false;
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        if row.get("type").and_then(Value::as_str) != Some("tableRow") {
+            continue;
+        }
+        let Some(cells) = row.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        let mut cols = Vec::with_capacity(cells.len());
+        for cell in cells {
+            if row_idx == 0 && cell.get("type").and_then(Value::as_str) == Some("tableHeader") {
+                header_is_first_row = true;
+            }
+            let mut text = String::new();
+            if let Some(blocks) = cell.get("content").and_then(Value::as_array) {
+                for (idx, block) in blocks.iter().enumerate() {
+                    if idx > 0 {
+                        text.push(' ');
+                    }
+                    render_adf_block(block, &mut text);
+                }
+            }
+            // A literal pipe would break the row apart when re-read.
+            cols.push(text.trim().replace('|', "\\|"));
+        }
+        rendered.push(cols);
+    }
+
+    if rendered.is_empty() {
+        return;
+    }
+
+    let width = rendered.iter().map(Vec::len).max().unwrap_or(0);
+    for (idx, row) in rendered.iter().enumerate() {
+        let mut cols = row.clone();
+        cols.resize(width, String::new());
+        out.push_str(&format!("| {} |", cols.join(" | ")));
+        out.push('\n');
+        if idx == 0 {
+            // GFM needs a delimiter row; synthesise one even when the source
+            // table has no header cells, or the rest is not parsed as a table.
+            let _ = header_is_first_row;
+            out.push_str(&format!("| {} |", vec!["---"; width].join(" | ")));
+            out.push('\n');
+        }
+    }
+    // Trim the trailing newline; the block joiner adds its own separator.
+    while out.ends_with('\n') {
+        out.pop();
+    }
+}
+
 fn render_adf_block(node: &Value, out: &mut String) {
     match node.get("type").and_then(Value::as_str).unwrap_or_default() {
         "paragraph" => render_adf_inline_nodes(node.get("content"), out),
+        "table" => render_adf_table(node, out),
         "heading" => {
             let level = node
                 .get("attrs")
@@ -1756,6 +1821,68 @@ fn render_adf_inline_nodes(content: Option<&Value>, out: &mut String) {
                     out.push_str(&text);
                 }
                 "hardBreak" => out.push('\n'),
+                // These carry their payload in `attrs`, not `content`. The
+                // catch-all below recurses into `content` and so emitted
+                // nothing at all for them — "@Bob, please review" silently
+                // became ", please review".
+                "mention" => {
+                    let attrs = node.get("attrs");
+                    let text = attrs
+                        .and_then(|a| a.get("text"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            attrs
+                                .and_then(|a| a.get("id"))
+                                .and_then(Value::as_str)
+                                .map(|id| format!("@{id}"))
+                        })
+                        .unwrap_or_else(|| "@unknown".to_string());
+                    out.push_str(&text);
+                }
+                "emoji" => {
+                    let attrs = node.get("attrs");
+                    let text = attrs
+                        .and_then(|a| a.get("text"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            attrs
+                                .and_then(|a| a.get("shortName"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_default();
+                    out.push_str(&text);
+                }
+                "status" | "date" => {
+                    let attrs = node.get("attrs");
+                    if let Some(text) = attrs.and_then(|a| a.get("text")).and_then(Value::as_str) {
+                        out.push_str(text);
+                    } else if let Some(ts) = attrs
+                        .and_then(|a| a.get("timestamp"))
+                        .and_then(Value::as_str)
+                    {
+                        out.push_str(ts);
+                    }
+                }
+                "inlineCard" => {
+                    if let Some(url) = node
+                        .get("attrs")
+                        .and_then(|a| a.get("url"))
+                        .and_then(Value::as_str)
+                    {
+                        out.push_str(url);
+                    }
+                }
+                "media" | "mediaInline" => {
+                    let attrs = node.get("attrs");
+                    let alt = attrs
+                        .and_then(|a| a.get("alt"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("attachment");
+                    out.push_str(&format!("[{alt}]"));
+                }
                 _ => render_adf_inline_nodes(node.get("content"), out),
             }
         }
@@ -2144,12 +2271,53 @@ impl ConfluenceClient {
             })
     }
 
-    async fn resolve_space_by_key(&self, space_key: &str) -> Result<ConfluenceSpace> {
-        let spaces = self.get_spaces().await?;
-        spaces
-            .items
+    /// Walks every page of spaces, stopping as soon as `predicate` matches.
+    ///
+    /// `get_spaces` returns a single 100-item page. Searching only that page
+    /// made `resolve_space_by_key` report NotFound — and
+    /// `resolve_space_key_by_id` report None — for spaces that exist but sit
+    /// past the first page.
+    async fn find_space<F>(&self, predicate: F) -> Result<Option<KbSpace>>
+    where
+        F: Fn(&KbSpace) -> bool,
+    {
+        // Bounded so a server that keeps advertising another page cannot spin.
+        const MAX_PAGES: usize = 100;
+
+        let mut page = self.get_spaces().await?;
+        for _ in 0..MAX_PAGES {
+            if let Some(found) = page.items.iter().find(|space| predicate(space)) {
+                return Ok(Some(found.clone()));
+            }
+            let Some(pagination) = page.pagination.as_ref().filter(|p| p.has_more) else {
+                return Ok(None);
+            };
+            let Some(cursor) = pagination.next_cursor.clone() else {
+                return Ok(None);
+            };
+            page = self.list_spaces_page(&cursor).await?;
+        }
+        Err(Error::InvalidData(
+            "Confluence kept reporting more spaces than expected".to_string(),
+        ))
+    }
+
+    async fn list_spaces_page(&self, cursor: &str) -> Result<ProviderResult<KbSpace>> {
+        let path = path_from_cursor(cursor, self.legacy_api_path());
+        let response: ConfluenceListResponse<ConfluenceSpace> =
+            self.get_json_from_legacy_api(&path).await?;
+        let pagination = map_pagination(&response, Some(100));
+        let items = response
+            .results
             .into_iter()
-            .find(|space| space.key == space_key)
+            .map(|space| map_space(&self.instance_url, space))
+            .collect::<Vec<_>>();
+        Ok(ProviderResult::new(items).with_pagination(pagination))
+    }
+
+    async fn resolve_space_by_key(&self, space_key: &str) -> Result<ConfluenceSpace> {
+        self.find_space(|space| space.key == space_key)
+            .await?
             .map(|space| ConfluenceSpace {
                 id: space.id,
                 key: space.key,
@@ -2163,11 +2331,9 @@ impl ConfluenceClient {
     }
 
     async fn resolve_space_key_by_id(&self, space_id: &str) -> Result<Option<String>> {
-        let spaces = self.get_spaces().await?;
-        Ok(spaces
-            .items
-            .into_iter()
-            .find(|space| space.id == space_id)
+        Ok(self
+            .find_space(|space| space.id == space_id)
+            .await?
             .map(|space| space.key))
     }
 
@@ -4597,6 +4763,64 @@ mod tests {
 
         mock.assert();
         assert!(result.items.is_empty());
+    }
+
+    #[test]
+    fn adf_tables_render_as_markdown_instead_of_a_run_on_string() {
+        let adf = json!({
+            "type": "doc",
+            "content": [{
+                "type": "table",
+                "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "Name" }] }]},
+                        { "type": "tableHeader", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "Age" }] }]}
+                    ]},
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "Alice" }] }]},
+                        { "type": "tableCell", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "30" }] }]}
+                    ]}
+                ]
+            }]
+        });
+
+        let md = adf_to_markdown(&adf);
+        // Previously: "NameAgeAlice30".
+        assert!(md.contains("| Name | Age |"), "missing header row: {md}");
+        assert!(md.contains("| --- | --- |"), "missing delimiter row: {md}");
+        assert!(md.contains("| Alice | 30 |"), "missing body row: {md}");
+    }
+
+    #[test]
+    fn adf_inline_nodes_with_attrs_payloads_are_not_dropped() {
+        let adf = json!({
+            "type": "doc",
+            "content": [{ "type": "paragraph", "content": [
+                { "type": "mention", "attrs": { "id": "u1", "text": "@Bob" } },
+                { "type": "text", "text": ", see " },
+                { "type": "inlineCard", "attrs": { "url": "https://example.com/x" } },
+                { "type": "text", "text": " " },
+                { "type": "status", "attrs": { "text": "DONE" } },
+                { "type": "emoji", "attrs": { "shortName": ":tada:" } },
+                { "type": "media", "attrs": { "alt": "diagram" } }
+            ]}]
+        });
+
+        let md = adf_to_markdown(&adf);
+        // Previously every one of these vanished, leaving ", see  ".
+        for expected in [
+            "@Bob",
+            "https://example.com/x",
+            "DONE",
+            ":tada:",
+            "[diagram]",
+        ] {
+            assert!(md.contains(expected), "{expected:?} was dropped from: {md}");
+        }
     }
 
     #[tokio::test]

@@ -1690,6 +1690,21 @@ fn jira_link_matches_target(
     let outward_key = link.outward_issue.as_ref().map(|issue| issue.key.as_str());
     let inward_key = link.inward_issue.as_ref().map(|issue| issue.key.as_str());
 
+    // Decide symmetry from the link's own wording where Jira supplies it: a
+    // genuinely symmetric type reads the same in both directions ("relates to"
+    // / "relates to"). The name-based hint alone is not enough, because an
+    // admin can configure a *directional* custom type also called "Relates"
+    // — and treating that as symmetric would delete the link pointing the
+    // other way.
+    let allow_either_direction = match (
+        link.link_type.inward.as_deref(),
+        link.link_type.outward.as_deref(),
+    ) {
+        (Some(inward), Some(outward)) => inward.eq_ignore_ascii_case(outward),
+        // No descriptions in the payload — fall back to the name hint.
+        _ => allow_either_direction,
+    };
+
     if allow_either_direction {
         outward_key == Some(target_key) || inward_key == Some(target_key)
     } else if reversed {
@@ -6551,6 +6566,48 @@ mod tests {
             get_mock.assert();
             // Nothing was deleted.
             assert_eq!(delete_mock.calls(), 0);
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_directional_type_named_relates_is_not_symmetric() {
+            // An admin can configure a custom, directional type also called
+            // "Relates". Deciding symmetry by name alone would match the link
+            // pointing the other way and delete the wrong relationship.
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200)
+                    .json_body(jira_issue_with_link(serde_json::json!({
+                        "id": "47",
+                        "type": {
+                            "name": "Relates",
+                            "inward": "is required by",
+                            "outward": "requires"
+                        },
+                        "inwardIssue": {
+                            "id": "10002",
+                            "key": "PROJ-2",
+                            "fields": { "summary": "Target" }
+                        }
+                    })));
+            });
+
+            let delete_mock = server.mock(|when, then| {
+                when.method(DELETE).path("/issueLink/47");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .unlink_issues("PROJ-1", "PROJ-2", "relates_to")
+                .await
+                .unwrap_err();
+
+            get_mock.assert();
+            assert_eq!(delete_mock.calls(), 0, "the reverse link must survive");
         }
 
         #[tokio::test]
