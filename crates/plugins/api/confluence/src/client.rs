@@ -1896,6 +1896,27 @@ fn render_adf_inline_nodes(content: Option<&Value>, out: &mut String) {
     }
 }
 
+/// Adds the GFM delimiter row after the first row of each table block.
+///
+/// A markdown table without `| --- |` under its first row is not parsed as a
+/// table at all, so the rows would render as literal pipe-laden text.
+fn insert_gfm_header_delimiter(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut previous_was_row = false;
+
+    for line in input.split_inclusive('\n') {
+        let trimmed = line.trim();
+        let is_row = trimmed.starts_with('|') && trimmed.ends_with('|');
+        out.push_str(line);
+        if is_row && !previous_was_row {
+            let columns = trimmed.matches('|').count().saturating_sub(1).max(1);
+            out.push_str(&format!("| {} |\n", vec!["---"; columns].join(" | ")));
+        }
+        previous_was_row = is_row;
+    }
+    out
+}
+
 fn confluence_storage_to_markdown(storage: &str) -> String {
     let with_code_blocks = replace_confluence_code_macros(storage);
     let with_links = replace_anchor_tags(&with_code_blocks);
@@ -1941,8 +1962,25 @@ fn confluence_storage_to_markdown(storage: &str) -> String {
         .replace("<h5>", "##### ")
         .replace("</h5>", "\n\n")
         .replace("<h6>", "###### ")
-        .replace("</h6>", "\n\n");
+        .replace("</h6>", "\n\n")
+        // Tables were falling through to the tag stripper, which drops every
+        // tag without inserting anything — so a row's cells ran together into
+        // one string ("NameAgeAlice30"). Emit GFM delimiters instead. This is
+        // the storage-format twin of the ADF table handling.
+        .replace("<table>", "\n")
+        .replace("</table>", "\n")
+        .replace("<tbody>", "")
+        .replace("</tbody>", "")
+        .replace("<thead>", "")
+        .replace("</thead>", "")
+        .replace("<tr>", "|")
+        .replace("</tr>", "\n")
+        .replace("<th>", " ")
+        .replace("</th>", " |")
+        .replace("<td>", " ")
+        .replace("</td>", " |");
 
+    let markdownish = insert_gfm_header_delimiter(&markdownish);
     let text = strip_html_tags_preserve_layout(&markdownish);
     collapse_markdown_whitespace(&decode_html_entities(&text))
 }
@@ -4781,6 +4819,23 @@ mod tests {
 
         mock.assert();
         assert!(result.items.is_empty());
+    }
+
+    #[test]
+    fn storage_tables_render_as_markdown_instead_of_a_run_on_string() {
+        // Self-hosted pages arrive as storage format, whose tables used to be
+        // stripped tag-by-tag with nothing in their place — the twin of the
+        // ADF defect, and this path shipped in v0.32.0.
+        let storage = "<table><tbody>\
+            <tr><th>Name</th><th>Age</th></tr>\
+            <tr><td>Alice</td><td>30</td></tr>\
+            </tbody></table>";
+
+        let md = confluence_storage_to_markdown(storage);
+        assert!(!md.contains("NameAge"), "cells ran together: {md}");
+        assert!(md.contains("| Name | Age |"), "missing header row: {md}");
+        assert!(md.contains("| --- | --- |"), "missing delimiter row: {md}");
+        assert!(md.contains("| Alice | 30 |"), "missing body row: {md}");
     }
 
     #[test]
