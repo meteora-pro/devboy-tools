@@ -14,8 +14,8 @@ use crate::DEFAULT_LINEAR_URL;
 use crate::types::{
     GraphQlResponse, LinearComment, LinearCommentCreateData, LinearIssue, LinearIssueCommentsData,
     LinearIssueCreateData, LinearIssueData, LinearIssueLabelsData, LinearIssueUpdateData,
-    LinearIssuesData, LinearUser, LinearUsersData, LinearWorkflowState, LinearWorkflowStatesData,
-    Viewer, ViewerData,
+    LinearIssuesData, LinearUser, LinearUsersData, LinearWorkflowState,
+    LinearWorkflowStateConnection, LinearWorkflowStatesData, Viewer, ViewerData,
 };
 
 const VIEWER_QUERY: &str = r#"
@@ -178,12 +178,16 @@ mutation IssueCreate($input: IssueCreateInput!) {
 "#;
 
 const WORKFLOW_STATES_QUERY: &str = r#"
-query WorkflowStates($first: Int!, $filter: WorkflowStateFilter) {
-  workflowStates(first: $first, filter: $filter) {
+query WorkflowStates($first: Int!, $after: String, $filter: WorkflowStateFilter) {
+  workflowStates(first: $first, after: $after, filter: $filter) {
     nodes {
       id
       name
       type
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
     }
   }
 }
@@ -661,19 +665,58 @@ impl LinearClient {
         })
     }
 
+    /// Every workflow state on the team, following the connection cursor.
+    ///
+    /// A single `first: 100` page silently truncates larger teams, and a
+    /// truncated list makes `resolve_workflow_state_id` miss an exact name and
+    /// fall back to the category branch — landing on a different state of the
+    /// same type. That is precisely the mis-set-status bug this resolver
+    /// exists to avoid, so the list has to be complete.
     async fn list_workflow_states(&self) -> Result<LinearWorkflowStatesData> {
-        let variables = json!({
-            "first": 100,
-            "filter": {
-                "team": {
-                    "id": {
-                        "eq": self.team_id
+        // Bounded so a server that always reports another page cannot spin.
+        const MAX_PAGES: usize = 50;
+
+        let mut nodes = Vec::new();
+        let mut after: Option<String> = None;
+
+        for _ in 0..MAX_PAGES {
+            let variables = json!({
+                "first": 100,
+                "after": after,
+                "filter": { "team": { "id": { "eq": self.team_id } } }
+            });
+            let page: LinearWorkflowStatesData = self
+                .graphql(WORKFLOW_STATES_QUERY, variables, &self.token)
+                .await?;
+            let connection = page.workflow_states;
+            nodes.extend(connection.nodes);
+
+            match connection.page_info {
+                Some(info) if info.has_next_page => match info.end_cursor {
+                    // A cursor-less "there is more" would restart from the
+                    // beginning and loop; treat it as a protocol error.
+                    Some(cursor) => after = Some(cursor),
+                    None => {
+                        return Err(Error::InvalidData(
+                            "Linear reported more workflow states but returned no cursor"
+                                .to_string(),
+                        ));
                     }
+                },
+                _ => {
+                    return Ok(LinearWorkflowStatesData {
+                        workflow_states: LinearWorkflowStateConnection {
+                            nodes,
+                            page_info: None,
+                        },
+                    });
                 }
             }
-        });
-        self.graphql(WORKFLOW_STATES_QUERY, variables, &self.token)
-            .await
+        }
+
+        Err(Error::InvalidData(format!(
+            "Linear still reported more workflow states after {MAX_PAGES} pages"
+        )))
     }
 
     fn map_create_priority(priority: Option<&str>) -> Result<Option<i32>> {

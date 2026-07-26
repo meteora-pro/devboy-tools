@@ -490,6 +490,41 @@ impl ConfluenceClient {
         self.send_json(request).await
     }
 
+    /// POST against the v1 (legacy) surface.
+    ///
+    /// The `*_v1` operations are reached as a fallback when v2 fails, so they
+    /// must resolve against [`Self::legacy_api_path`] — `rest_api_url` points
+    /// at `/wiki/api/v2` on Cloud and would build an endpoint that does not
+    /// exist.
+    async fn post_json_to_legacy_api<T, B>(&self, path: &str, body: &B) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .post(self.legacy_rest_api_url(path).await?)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_json(request).await
+    }
+
+    /// PUT against the v1 (legacy) surface. See [`Self::post_json_to_legacy_api`].
+    async fn put_json_to_legacy_api<T, B>(&self, path: &str, body: &B) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .put(self.legacy_rest_api_url(path).await?)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_json(request).await
+    }
+
     pub async fn post_empty_json<B>(&self, path: &str, body: &B) -> Result<()>
     where
         B: Serialize + ?Sized,
@@ -2208,7 +2243,7 @@ impl ConfluenceClient {
 
     async fn get_spaces_v1(&self) -> Result<ProviderResult<KbSpace>> {
         let response: ConfluenceListResponse<ConfluenceSpace> = self
-            .get_json("space?limit=100&type=global,personal")
+            .get_json_from_legacy_api("space?limit=100&type=global,personal")
             .await?;
         let pagination = map_pagination(&response, Some(100));
         let items = response
@@ -2273,7 +2308,7 @@ impl ConfluenceClient {
         let path = format!(
             "content/{page_id}?expand=space,version,history.lastUpdated,body.storage,metadata.labels,ancestors"
         );
-        let page: ConfluencePage = self.get_json(&path).await?;
+        let page: ConfluencePage = self.get_json_from_legacy_api(&path).await?;
         let summary = map_page_summary(&self.instance_url, &page);
         let storage_content = page
             .body
@@ -2335,7 +2370,7 @@ impl ConfluenceClient {
                 .unwrap_or_default(),
         };
 
-        let page: ConfluencePage = self.post_json("content", &payload).await?;
+        let page: ConfluencePage = self.post_json_to_legacy_api("content", &payload).await?;
         self.add_labels(&page.id, &params.labels).await?;
         Ok(map_page_summary(&self.instance_url, &page))
     }
@@ -2347,7 +2382,7 @@ impl ConfluenceClient {
             "space,version,body.storage,ancestors"
         };
         let current_path = format!("content/{}?expand={current_expand}", params.page_id);
-        let current: ConfluencePage = self.get_json(&current_path).await?;
+        let current: ConfluencePage = self.get_json_from_legacy_api(&current_path).await?;
 
         let current_title = current.title.clone();
         let current_content = current
@@ -2408,7 +2443,7 @@ impl ConfluenceClient {
         };
 
         let path = format!("content/{}", params.page_id);
-        let page: ConfluencePage = self.put_json(&path, &payload).await?;
+        let page: ConfluencePage = self.put_json_to_legacy_api(&path, &payload).await?;
         if let Some(labels) = params.labels.as_ref() {
             let current_labels = extract_labels(&current);
             self.sync_labels(&params.page_id, labels, &current_labels)

@@ -598,7 +598,10 @@ mod tests {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(GET)
-                .path("/wiki/api/v2/space")
+                // `space?limit=&type=` is a v1 endpoint (v2 spells it
+                // `spaces` with different params), so on Cloud it must be
+                // requested under /wiki/rest/api — not /wiki/api/v2.
+                .path("/wiki/rest/api/space")
                 .query_param("limit", "100")
                 .query_param("type", "global,personal");
             then.status(200)
