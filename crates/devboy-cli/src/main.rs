@@ -564,6 +564,11 @@ enum ConfluenceOauthCommands {
         /// Authorization code returned by Atlassian
         #[arg(long)]
         code: String,
+        /// `state` value Atlassian returned on the redirect. Checked against
+        /// the one issued by `oauth url`; required whenever that command
+        /// generated it.
+        #[arg(long)]
+        state: Option<String>,
         /// Optional context name. Defaults to active context, then global config.
         #[arg(long)]
         context: Option<String>,
@@ -3700,6 +3705,57 @@ fn maybe_store_secret(
     Ok(())
 }
 
+/// Verifies the `state` echoed back by Atlassian against the one `oauth url`
+/// issued, then consumes it so a value can never be replayed.
+///
+/// Generating `state` without checking the round-trip leaves the parameter
+/// decorative. When no state was issued (the caller supplied their own via
+/// `--state`, or drove the authorization step out of band) there is nothing
+/// to compare against, so the check is skipped loudly rather than silently.
+fn verify_oauth_state(
+    store: &dyn devboy_storage::CredentialStore,
+    secret_prefix: &str,
+    provided: Option<&str>,
+) -> Result<()> {
+    let key = get_secret_key(secret_prefix, "oauth_state");
+    let Some(expected) = store.get(&key).ok().flatten() else {
+        if provided.is_some() {
+            tracing::warn!(
+                "No issued OAuth state on record; skipping verification of the supplied --state"
+            );
+        }
+        return Ok(());
+    };
+
+    let expected = expected.expose_secret();
+    let provided = provided.ok_or_else(|| {
+        anyhow::anyhow!(
+            "`oauth url` issued a state parameter, so --state is required: pass the `state` \
+             value from the redirect URL. This binds the authorization code to your request."
+        )
+    })?;
+
+    // Constant-time compare: the value is a secret nonce, so avoid leaking a
+    // prefix match through timing.
+    let matches = expected.len() == provided.len()
+        && expected
+            .bytes()
+            .zip(provided.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0;
+
+    // One-shot either way — a rejected state must not stay valid for a retry.
+    let _ = store.delete(&key);
+
+    if !matches {
+        anyhow::bail!(
+            "OAuth state mismatch: the redirect did not come from the authorization request \
+             this CLI started. Discard the code and run `oauth url` again."
+        );
+    }
+    Ok(())
+}
+
 /// Generates the OAuth 2.0 `state` parameter — 128 bits from the OS CSPRNG,
 /// hex-encoded behind a `devboy-` marker.
 ///
@@ -3739,9 +3795,20 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
                 .redirect_uri
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("Confluence redirect_uri is not configured"))?;
+            // Remember the issued value so `oauth exchange` can verify the
+            // one Atlassian echoes back. Without this round-trip the `state`
+            // parameter is decorative and provides no CSRF protection.
             let state = match state {
                 Some(state) => state,
-                None => generate_oauth_state()?,
+                None => {
+                    let generated = generate_oauth_state()?;
+                    let store = get_credential_store();
+                    store.store(
+                        &get_secret_key(&target.secret_prefix, "oauth_state"),
+                        &SecretString::from(generated.clone()),
+                    )?;
+                    generated
+                }
             };
             let url = ConfluenceClient::oauth_authorize_url(
                 &client_id,
@@ -3758,6 +3825,7 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
         }
         ConfluenceOauthCommands::Exchange {
             code,
+            state,
             context,
             client_secret,
             store_client_secret,
@@ -3765,6 +3833,7 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
             let (config, _) = load_runtime_config()?;
             let store = get_credential_store();
             let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
+            verify_oauth_state(store.as_ref(), &target.secret_prefix, state.as_deref())?;
             let client_id = target
                 .config
                 .client_id
@@ -6285,6 +6354,52 @@ mod tests {
                 .chars()
                 .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
         );
+    }
+
+    #[test]
+    fn test_verify_oauth_state_accepts_the_issued_value_once() {
+        let store = MemoryStore::with_credentials([(
+            "confluence.oauth_state".to_string(),
+            "devboy-abc123".to_string(),
+        )]);
+
+        verify_oauth_state(&store, "confluence", Some("devboy-abc123")).unwrap();
+        // Consumed: the same value must not authorise a second exchange.
+        assert!(store.get("confluence.oauth_state").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_verify_oauth_state_rejects_mismatch_and_missing() {
+        let store = MemoryStore::with_credentials([(
+            "confluence.oauth_state".to_string(),
+            "devboy-abc123".to_string(),
+        )]);
+        let err = verify_oauth_state(&store, "confluence", Some("devboy-tampered")).unwrap_err();
+        assert!(
+            err.to_string().contains("state mismatch"),
+            "unexpected error: {err}"
+        );
+        // A rejected attempt also burns the nonce.
+        assert!(store.get("confluence.oauth_state").unwrap().is_none());
+
+        let store = MemoryStore::with_credentials([(
+            "confluence.oauth_state".to_string(),
+            "devboy-abc123".to_string(),
+        )]);
+        let err = verify_oauth_state(&store, "confluence", None).unwrap_err();
+        assert!(
+            err.to_string().contains("--state is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_verify_oauth_state_skips_when_none_was_issued() {
+        // Caller supplied their own state via `--state` on `oauth url`, or
+        // drove authorization out of band — nothing to compare against.
+        let store = MemoryStore::with_credentials([]);
+        verify_oauth_state(&store, "confluence", Some("whatever")).unwrap();
+        verify_oauth_state(&store, "confluence", None).unwrap();
     }
 
     #[test]

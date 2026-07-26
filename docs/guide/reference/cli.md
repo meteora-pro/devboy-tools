@@ -294,6 +294,7 @@ Exchange an Atlassian OAuth authorization code for tokens and store them
 ###### **Options:**
 
 * `--code <CODE>` — Authorization code returned by Atlassian
+* `--state <STATE>` — `state` value Atlassian returned on the redirect. Checked against the one issued by `oauth url`; required whenever that command generated it
 * `--context <CONTEXT>` — Optional context name. Defaults to active context, then global config
 * `--client-secret <CLIENT_SECRET>` — Client secret override. When omitted, reads from keychain
 * `--store-client-secret` — Persist the provided client secret to keychain
