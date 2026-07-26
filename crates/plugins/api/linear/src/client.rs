@@ -354,7 +354,9 @@ impl LinearClient {
             return Err(Error::Unauthorized("Invalid Linear API token".to_string()));
         }
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(Error::RateLimited { retry_after: None });
+            return Err(Error::RateLimited {
+                retry_after: parse_retry_after(response.headers()),
+            });
         }
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
@@ -363,6 +365,11 @@ impl LinearClient {
                 message: text,
             });
         }
+
+        // Linear also signals throttling inside a 200 response via the
+        // RATELIMITED error extension, so keep the headers around before the
+        // body is consumed.
+        let retry_after = parse_retry_after(response.headers());
 
         let gql_response: GraphQlResponse<T> = response
             .json()
@@ -380,8 +387,10 @@ impl LinearClient {
                 .collect::<Vec<_>>()
                 .join("; ");
             return if rate_limited {
-                let _ = message;
-                Err(Error::RateLimited { retry_after: None })
+                // `Error::RateLimited` carries no message, so keep Linear's
+                // wording in the log instead of dropping it silently.
+                debug!(%message, "linear graphql rate limited");
+                Err(Error::RateLimited { retry_after })
             } else {
                 Err(Error::Api {
                     status: 200,
@@ -802,6 +811,35 @@ fn map_comment(comment: &LinearComment) -> Comment {
         updated_at: comment.updated_at.clone(),
         position: None,
     }
+}
+
+/// Seconds to wait before retrying, from a throttled Linear response.
+///
+/// Prefers the standard `Retry-After` (delta-seconds form); falls back to
+/// Linear's `X-RateLimit-Requests-Reset`, which is an epoch timestamp in
+/// **milliseconds** and therefore has to be converted to a delta.
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    if let Some(seconds) = headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+    {
+        return Some(seconds);
+    }
+
+    let reset_ms = headers
+        .get("x-ratelimit-requests-reset")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())?;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis() as u64;
+
+    // Already elapsed (or clock skew) — retry immediately rather than
+    // reporting a bogus wait.
+    Some(reset_ms.saturating_sub(now_ms).div_ceil(1000))
 }
 
 /// Binary open/closed state, matching the cross-provider `Issue::state`
@@ -1344,6 +1382,53 @@ mod tests {
             name: name.to_string(),
             r#type: r#type.map(str::to_string),
         }
+    }
+
+    fn headers_from(pairs: &[(&str, &str)]) -> reqwest::header::HeaderMap {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (name, value) in pairs {
+            headers.insert(
+                reqwest::header::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                reqwest::header::HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        headers
+    }
+
+    #[test]
+    fn parse_retry_after_prefers_standard_header() {
+        let headers = headers_from(&[
+            ("retry-after", "42"),
+            ("x-ratelimit-requests-reset", "99999999999999"),
+        ]);
+        assert_eq!(parse_retry_after(&headers), Some(42));
+    }
+
+    #[test]
+    fn parse_retry_after_converts_linear_reset_epoch_millis_to_delta() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let headers =
+            headers_from(&[("x-ratelimit-requests-reset", &(now_ms + 30_000).to_string())]);
+        // Allow a second of slack for the clock ticking between the two reads.
+        let seconds = parse_retry_after(&headers).expect("delta from reset header");
+        assert!((29..=31).contains(&seconds), "unexpected delta: {seconds}");
+    }
+
+    #[test]
+    fn parse_retry_after_handles_missing_and_elapsed_values() {
+        assert_eq!(parse_retry_after(&headers_from(&[])), None);
+        assert_eq!(
+            parse_retry_after(&headers_from(&[("retry-after", "not-a-number")])),
+            None
+        );
+        // A reset already in the past must not underflow into a huge wait.
+        assert_eq!(
+            parse_retry_after(&headers_from(&[("x-ratelimit-requests-reset", "1")])),
+            Some(0)
+        );
     }
 
     #[test]
