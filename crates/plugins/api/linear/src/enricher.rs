@@ -22,7 +22,9 @@ const CREATE_UPDATE_REMOVE_PARAMS: &[&str] = &["issueType"];
 const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "sort_by", "sort_order"];
 
 const PRIORITY_VALUES: &[&str] = &["urgent", "high", "normal", "low"];
-const STATE_CATEGORY_VALUES: &[&str] = &["backlog", "todo", "in_progress", "done", "cancelled"];
+/// Advertised values come straight from the client so the schema can never
+/// drift from what `build_issue_filter` actually accepts.
+use crate::client::STATE_CATEGORIES as STATE_CATEGORY_VALUES;
 const LABELS_OPERATOR_VALUES: &[&str] = &["and", "or"];
 
 impl DynamicLinearSchemaEnricher {

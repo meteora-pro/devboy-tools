@@ -813,6 +813,12 @@ fn map_comment(comment: &LinearComment) -> Comment {
     }
 }
 
+/// Unified status categories this provider accepts as a filter and emits as
+/// [`Issue::status_category`]. Single source of truth — the schema enricher
+/// advertises exactly these values.
+pub(crate) const STATE_CATEGORIES: &[&str] =
+    &["backlog", "todo", "in_progress", "done", "cancelled"];
+
 /// Seconds to wait before retrying, from a throttled Linear response.
 ///
 /// Prefers the standard `Retry-After` (delta-seconds form); falls back to
@@ -936,11 +942,21 @@ fn build_issue_filter(team_id: &str, filter: &IssueFilter) -> Result<Value> {
         }
     }
 
-    if let Some(category) = filter
+    if let Some(requested) = filter
         .state_category
         .as_deref()
-        .and_then(map_state_category)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
     {
+        // Reject instead of ignoring: silently dropping the clause would
+        // widen the query to every issue in the team, and the caller would
+        // read that as a genuine result set.
+        let category = map_state_category(requested).ok_or_else(|| {
+            Error::InvalidData(format!(
+                "unknown state category '{requested}' for Linear; expected one of: {}",
+                STATE_CATEGORIES.join(", ")
+            ))
+        })?;
         clauses.push(json!({
             "state": {
                 "type": {
@@ -1449,6 +1465,34 @@ mod tests {
             map_state(Some(&workflow_state("New", Some("something_new")))),
             "open"
         );
+    }
+
+    #[test]
+    fn build_issue_filter_rejects_unknown_state_category() {
+        let filter = IssueFilter {
+            state_category: Some("in-progress".to_string()),
+            ..Default::default()
+        };
+        let err = build_issue_filter("team-1", &filter).unwrap_err();
+        match err {
+            Error::InvalidData(message) => {
+                assert!(message.contains("in-progress"), "message: {message}");
+                assert!(message.contains("in_progress"), "message: {message}");
+            }
+            other => panic!("expected InvalidData, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_issue_filter_accepts_every_advertised_state_category() {
+        for category in STATE_CATEGORIES {
+            let filter = IssueFilter {
+                state_category: Some((*category).to_string()),
+                ..Default::default()
+            };
+            build_issue_filter("team-1", &filter)
+                .unwrap_or_else(|e| panic!("category {category} rejected: {e:?}"));
+        }
     }
 
     #[test]
