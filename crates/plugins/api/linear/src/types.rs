@@ -127,6 +127,9 @@ pub struct LinearWorkflowStatesData {
 pub struct LinearWorkflowStateConnection {
     #[serde(default)]
     pub nodes: Vec<LinearWorkflowStateWithId>,
+    #[serde(rename = "pageInfo")]
+    #[serde(default)]
+    pub page_info: Option<LinearPageInfo>,
 }
 
 #[derive(Debug, Deserialize)]

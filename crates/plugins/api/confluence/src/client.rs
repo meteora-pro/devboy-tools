@@ -352,12 +352,21 @@ impl ConfluenceClient {
         Ok(self.api_url(api_path, path))
     }
 
-    async fn legacy_rest_api_url(&self, path: &str) -> Result<String> {
-        let api_path = match self.flavor {
+    /// Prefix used by the v1 (legacy) REST surface.
+    ///
+    /// Distinct from `self.api_path`, which on Cloud points at `/wiki/api/v2`.
+    /// Anything that will be sent through `get_json_from_legacy_api` must
+    /// resolve relative to *this* — including cursors echoed back by the
+    /// server, or the prefix gets prepended twice and the request 404s.
+    fn legacy_api_path(&self) -> &'static str {
+        match self.flavor {
             ConfluenceFlavor::Cloud => "/wiki/rest/api",
             ConfluenceFlavor::SelfHosted => DEFAULT_CONFLUENCE_API_PATH,
-        };
-        Ok(self.api_url(api_path, path))
+        }
+    }
+
+    async fn legacy_rest_api_url(&self, path: &str) -> Result<String> {
+        Ok(self.api_url(self.legacy_api_path(), path))
     }
 
     #[cfg(test)]
@@ -475,6 +484,41 @@ impl ConfluenceClient {
         let request = self
             .http
             .put(self.rest_api_url(path))
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_json(request).await
+    }
+
+    /// POST against the v1 (legacy) surface.
+    ///
+    /// The `*_v1` operations are reached as a fallback when v2 fails, so they
+    /// must resolve against [`Self::legacy_api_path`] — `rest_api_url` points
+    /// at `/wiki/api/v2` on Cloud and would build an endpoint that does not
+    /// exist.
+    async fn post_json_to_legacy_api<T, B>(&self, path: &str, body: &B) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .post(self.legacy_rest_api_url(path).await?)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .json(body);
+        self.send_json(request).await
+    }
+
+    /// PUT against the v1 (legacy) surface. See [`Self::post_json_to_legacy_api`].
+    async fn put_json_to_legacy_api<T, B>(&self, path: &str, body: &B) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let request = self
+            .http
+            .put(self.legacy_rest_api_url(path).await?)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(body);
@@ -1624,9 +1668,81 @@ fn adf_to_markdown(adf: &Value) -> String {
     collapse_markdown_whitespace(&out)
 }
 
+/// Renders an ADF `table` as a GitHub-flavoured Markdown table.
+///
+/// Without an arm of its own a table fell through to the inline catch-all,
+/// which walks the row/cell hierarchy with no separators at all — a 2×2 table
+/// came out as the single run-on string "NameAgeAlice30".
+fn render_adf_table(node: &Value, out: &mut String) {
+    let Some(rows) = node.get("content").and_then(Value::as_array) else {
+        return;
+    };
+
+    let mut rendered: Vec<Vec<String>> = Vec::new();
+    let mut header_is_first_row = false;
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        if row.get("type").and_then(Value::as_str) != Some("tableRow") {
+            continue;
+        }
+        let Some(cells) = row.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        let mut cols = Vec::with_capacity(cells.len());
+        for cell in cells {
+            if row_idx == 0 && cell.get("type").and_then(Value::as_str) == Some("tableHeader") {
+                header_is_first_row = true;
+            }
+            let mut text = String::new();
+            if let Some(blocks) = cell.get("content").and_then(Value::as_array) {
+                for (idx, block) in blocks.iter().enumerate() {
+                    if idx > 0 {
+                        text.push(' ');
+                    }
+                    render_adf_block(block, &mut text);
+                }
+            }
+            // A literal pipe would break the row apart when re-read, and a
+            // newline — from a hardBreak or a list inside the cell — would
+            // split the row across lines and destroy the table structure.
+            cols.push(
+                text.trim()
+                    .replace('|', "\\|")
+                    .replace("\r\n", "<br>")
+                    .replace('\n', "<br>"),
+            );
+        }
+        rendered.push(cols);
+    }
+
+    if rendered.is_empty() {
+        return;
+    }
+
+    let width = rendered.iter().map(Vec::len).max().unwrap_or(0);
+    for (idx, row) in rendered.iter().enumerate() {
+        let mut cols = row.clone();
+        cols.resize(width, String::new());
+        out.push_str(&format!("| {} |", cols.join(" | ")));
+        out.push('\n');
+        if idx == 0 {
+            // GFM needs a delimiter row; synthesise one even when the source
+            // table has no header cells, or the rest is not parsed as a table.
+            let _ = header_is_first_row;
+            out.push_str(&format!("| {} |", vec!["---"; width].join(" | ")));
+            out.push('\n');
+        }
+    }
+    // Trim the trailing newline; the block joiner adds its own separator.
+    while out.ends_with('\n') {
+        out.pop();
+    }
+}
+
 fn render_adf_block(node: &Value, out: &mut String) {
     match node.get("type").and_then(Value::as_str).unwrap_or_default() {
         "paragraph" => render_adf_inline_nodes(node.get("content"), out),
+        "table" => render_adf_table(node, out),
         "heading" => {
             let level = node
                 .get("attrs")
@@ -1712,6 +1828,68 @@ fn render_adf_inline_nodes(content: Option<&Value>, out: &mut String) {
                     out.push_str(&text);
                 }
                 "hardBreak" => out.push('\n'),
+                // These carry their payload in `attrs`, not `content`. The
+                // catch-all below recurses into `content` and so emitted
+                // nothing at all for them — "@Bob, please review" silently
+                // became ", please review".
+                "mention" => {
+                    let attrs = node.get("attrs");
+                    let text = attrs
+                        .and_then(|a| a.get("text"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            attrs
+                                .and_then(|a| a.get("id"))
+                                .and_then(Value::as_str)
+                                .map(|id| format!("@{id}"))
+                        })
+                        .unwrap_or_else(|| "@unknown".to_string());
+                    out.push_str(&text);
+                }
+                "emoji" => {
+                    let attrs = node.get("attrs");
+                    let text = attrs
+                        .and_then(|a| a.get("text"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| {
+                            attrs
+                                .and_then(|a| a.get("shortName"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_default();
+                    out.push_str(&text);
+                }
+                "status" | "date" => {
+                    let attrs = node.get("attrs");
+                    if let Some(text) = attrs.and_then(|a| a.get("text")).and_then(Value::as_str) {
+                        out.push_str(text);
+                    } else if let Some(ts) = attrs
+                        .and_then(|a| a.get("timestamp"))
+                        .and_then(Value::as_str)
+                    {
+                        out.push_str(ts);
+                    }
+                }
+                "inlineCard" => {
+                    if let Some(url) = node
+                        .get("attrs")
+                        .and_then(|a| a.get("url"))
+                        .and_then(Value::as_str)
+                    {
+                        out.push_str(url);
+                    }
+                }
+                "media" | "mediaInline" => {
+                    let attrs = node.get("attrs");
+                    let alt = attrs
+                        .and_then(|a| a.get("alt"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("attachment");
+                    out.push_str(&format!("[{alt}]"));
+                }
                 _ => render_adf_inline_nodes(node.get("content"), out),
             }
         }
@@ -2100,12 +2278,64 @@ impl ConfluenceClient {
             })
     }
 
-    async fn resolve_space_by_key(&self, space_key: &str) -> Result<ConfluenceSpace> {
-        let spaces = self.get_spaces().await?;
-        spaces
-            .items
+    /// Walks every page of spaces, stopping as soon as `predicate` matches.
+    ///
+    /// `get_spaces` returns a single 100-item page. Searching only that page
+    /// made `resolve_space_by_key` report NotFound — and
+    /// `resolve_space_key_by_id` report None — for spaces that exist but sit
+    /// past the first page.
+    async fn find_space<F>(&self, predicate: F) -> Result<Option<KbSpace>>
+    where
+        F: Fn(&KbSpace) -> bool,
+    {
+        // Bounded so a server that keeps advertising another page cannot spin.
+        const MAX_PAGES: usize = 100;
+
+        let mut page = self.get_spaces().await?;
+        for _ in 0..MAX_PAGES {
+            if let Some(found) = page.items.iter().find(|space| predicate(space)) {
+                return Ok(Some(found.clone()));
+            }
+            let Some(pagination) = page.pagination.as_ref().filter(|p| p.has_more) else {
+                return Ok(None);
+            };
+            let Some(cursor) = pagination.next_cursor.clone() else {
+                return Ok(None);
+            };
+            page = self.list_spaces_page(&cursor).await?;
+        }
+        Err(Error::InvalidData(
+            "Confluence kept reporting more spaces than expected".to_string(),
+        ))
+    }
+
+    async fn list_spaces_page(&self, cursor: &str) -> Result<ProviderResult<KbSpace>> {
+        // Continue on whichever surface produced the cursor. `get_spaces()`
+        // serves page 1 from v2 when it is available, and a v2 cursor carries
+        // the v2 prefix — resolving it against the legacy prefix leaves the
+        // path intact and builds `/wiki/rest/api/wiki/api/v2/...`, a 404.
+        let v2_prefix = self.space_api_path.trim_end_matches('/');
+        let from_v2 = uses_v2_api(&self.space_api_path) && cursor.contains(v2_prefix);
+
+        let response: ConfluenceListResponse<ConfluenceSpace> = if from_v2 {
+            let path = path_from_cursor(cursor, &self.space_api_path);
+            self.get_json_from_api(&self.space_api_path, &path).await?
+        } else {
+            let path = path_from_cursor(cursor, self.legacy_api_path());
+            self.get_json_from_legacy_api(&path).await?
+        };
+        let pagination = map_pagination(&response, Some(100));
+        let items = response
+            .results
             .into_iter()
-            .find(|space| space.key == space_key)
+            .map(|space| map_space(&self.instance_url, space))
+            .collect::<Vec<_>>();
+        Ok(ProviderResult::new(items).with_pagination(pagination))
+    }
+
+    async fn resolve_space_by_key(&self, space_key: &str) -> Result<ConfluenceSpace> {
+        self.find_space(|space| space.key == space_key)
+            .await?
             .map(|space| ConfluenceSpace {
                 id: space.id,
                 key: space.key,
@@ -2119,11 +2349,9 @@ impl ConfluenceClient {
     }
 
     async fn resolve_space_key_by_id(&self, space_id: &str) -> Result<Option<String>> {
-        let spaces = self.get_spaces().await?;
-        Ok(spaces
-            .items
-            .into_iter()
-            .find(|space| space.id == space_id)
+        Ok(self
+            .find_space(|space| space.id == space_id)
+            .await?
             .map(|space| space.key))
     }
 
@@ -2199,7 +2427,7 @@ impl ConfluenceClient {
 
     async fn get_spaces_v1(&self) -> Result<ProviderResult<KbSpace>> {
         let response: ConfluenceListResponse<ConfluenceSpace> = self
-            .get_json("space?limit=100&type=global,personal")
+            .get_json_from_legacy_api("space?limit=100&type=global,personal")
             .await?;
         let pagination = map_pagination(&response, Some(100));
         let items = response
@@ -2214,7 +2442,8 @@ impl ConfluenceClient {
     async fn list_pages_v1(&self, params: ListPagesParams) -> Result<ProviderResult<KbPage>> {
         let limit = params.limit.unwrap_or(25);
         let path = if let Some(cursor) = params.cursor.as_ref() {
-            path_from_cursor(cursor, &self.api_path)
+            // Fetched via the legacy surface below, so strip the legacy prefix.
+            path_from_cursor(cursor, self.legacy_api_path())
         } else if let Some(parent_id) = params.parent_id.as_ref() {
             let offset = params.offset.unwrap_or(0);
             let query = [
@@ -2263,7 +2492,7 @@ impl ConfluenceClient {
         let path = format!(
             "content/{page_id}?expand=space,version,history.lastUpdated,body.storage,metadata.labels,ancestors"
         );
-        let page: ConfluencePage = self.get_json(&path).await?;
+        let page: ConfluencePage = self.get_json_from_legacy_api(&path).await?;
         let summary = map_page_summary(&self.instance_url, &page);
         let storage_content = page
             .body
@@ -2325,7 +2554,7 @@ impl ConfluenceClient {
                 .unwrap_or_default(),
         };
 
-        let page: ConfluencePage = self.post_json("content", &payload).await?;
+        let page: ConfluencePage = self.post_json_to_legacy_api("content", &payload).await?;
         self.add_labels(&page.id, &params.labels).await?;
         Ok(map_page_summary(&self.instance_url, &page))
     }
@@ -2337,7 +2566,7 @@ impl ConfluenceClient {
             "space,version,body.storage,ancestors"
         };
         let current_path = format!("content/{}?expand={current_expand}", params.page_id);
-        let current: ConfluencePage = self.get_json(&current_path).await?;
+        let current: ConfluencePage = self.get_json_from_legacy_api(&current_path).await?;
 
         let current_title = current.title.clone();
         let current_content = current
@@ -2398,7 +2627,7 @@ impl ConfluenceClient {
         };
 
         let path = format!("content/{}", params.page_id);
-        let page: ConfluencePage = self.put_json(&path, &payload).await?;
+        let page: ConfluencePage = self.put_json_to_legacy_api(&path, &payload).await?;
         if let Some(labels) = params.labels.as_ref() {
             let current_labels = extract_labels(&current);
             self.sync_labels(&params.page_id, labels, &current_labels)
@@ -2711,7 +2940,8 @@ impl KnowledgeBaseProvider for ConfluenceClient {
         let limit = params.limit.unwrap_or(25);
 
         let path = if let Some(cursor) = params.cursor.as_ref() {
-            path_from_cursor(cursor, &self.api_path)
+            // Fetched via the legacy surface below, so strip the legacy prefix.
+            path_from_cursor(cursor, self.legacy_api_path())
         } else {
             let cql = build_search_cql(&params);
             format!(
@@ -4544,6 +4774,166 @@ mod tests {
                 space_key: None,
                 cursor: None,
                 limit: Some(10),
+                raw_query: false,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+        assert!(result.items.is_empty());
+    }
+
+    #[test]
+    fn adf_tables_render_as_markdown_instead_of_a_run_on_string() {
+        let adf = json!({
+            "type": "doc",
+            "content": [{
+                "type": "table",
+                "content": [
+                    { "type": "tableRow", "content": [
+                        { "type": "tableHeader", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "Name" }] }]},
+                        { "type": "tableHeader", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "Age" }] }]}
+                    ]},
+                    { "type": "tableRow", "content": [
+                        { "type": "tableCell", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "Alice" }] }]},
+                        { "type": "tableCell", "content": [
+                            { "type": "paragraph", "content": [{ "type": "text", "text": "30" }] }]}
+                    ]}
+                ]
+            }]
+        });
+
+        let md = adf_to_markdown(&adf);
+        // Previously: "NameAgeAlice30".
+        assert!(md.contains("| Name | Age |"), "missing header row: {md}");
+        assert!(md.contains("| --- | --- |"), "missing delimiter row: {md}");
+        assert!(md.contains("| Alice | 30 |"), "missing body row: {md}");
+    }
+
+    #[test]
+    fn adf_table_cells_never_break_the_row_across_lines() {
+        let adf = json!({
+            "type": "doc",
+            "content": [{ "type": "table", "content": [
+                { "type": "tableRow", "content": [
+                    { "type": "tableCell", "content": [
+                        { "type": "paragraph", "content": [
+                            { "type": "text", "text": "one" },
+                            { "type": "hardBreak" },
+                            { "type": "text", "text": "two" }]}]},
+                    { "type": "tableCell", "content": [
+                        { "type": "bulletList", "content": [
+                            { "type": "listItem", "content": [
+                                { "type": "paragraph", "content": [{ "type": "text", "text": "a" }]}]},
+                            { "type": "listItem", "content": [
+                                { "type": "paragraph", "content": [{ "type": "text", "text": "b" }]}]}]}]}
+                ]}
+            ]}]
+        });
+
+        let md = adf_to_markdown(&adf);
+        // Every table line must still be a complete row: a stray newline
+        // inside a cell used to split the row and destroy the structure.
+        for line in md.lines().filter(|l| l.starts_with('|')) {
+            assert!(line.ends_with('|'), "row broken across lines: {md}");
+        }
+        assert!(md.contains("one<br>two"), "hardBreak not folded: {md}");
+    }
+
+    #[test]
+    fn adf_inline_nodes_with_attrs_payloads_are_not_dropped() {
+        let adf = json!({
+            "type": "doc",
+            "content": [{ "type": "paragraph", "content": [
+                { "type": "mention", "attrs": { "id": "u1", "text": "@Bob" } },
+                { "type": "text", "text": ", see " },
+                { "type": "inlineCard", "attrs": { "url": "https://example.com/x" } },
+                { "type": "text", "text": " " },
+                { "type": "status", "attrs": { "text": "DONE" } },
+                { "type": "emoji", "attrs": { "shortName": ":tada:" } },
+                { "type": "media", "attrs": { "alt": "diagram" } }
+            ]}]
+        });
+
+        let md = adf_to_markdown(&adf);
+        // Previously every one of these vanished, leaving ", see  ".
+        for expected in [
+            "@Bob",
+            "https://example.com/x",
+            "DONE",
+            ":tada:",
+            "[diagram]",
+        ] {
+            assert!(md.contains(expected), "{expected:?} was dropped from: {md}");
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_space_by_key_follows_a_v2_cursor_on_the_v2_surface() {
+        // Page 1 is served from the v2 surface, so its cursor carries the v2
+        // prefix. Resolving that against the legacy prefix left the path
+        // intact and built /rest/api/api/v2/... — an opaque 404 instead of a
+        // walk to the match.
+        let server = MockServer::start();
+        let page1 = server.mock(|when, then| {
+            when.method(GET).path("/api/v2/space").query_param("limit", "100");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":"1","key":"OTHER","name":"Other","type":"global","status":"current"}],"start":0,"limit":1,"size":1,"_links":{"next":"/api/v2/space?cursor=abc"}}"#,
+                );
+        });
+        let page2 = server.mock(|when, then| {
+            when.method(GET).path("/api/v2/space").query_param("cursor", "abc");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    r#"{"results":[{"id":"2","key":"WANTED","name":"Wanted","type":"global","status":"current"}],"start":1,"limit":1,"size":1,"_links":{}}"#,
+                );
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::SelfHosted)
+                .with_api_version(Some("v2"));
+        let space = client.resolve_space_by_key("WANTED").await.unwrap();
+
+        assert_eq!(space.key, "WANTED");
+        page1.assert();
+        page2.assert();
+    }
+
+    #[tokio::test]
+    async fn search_follows_a_cloud_cursor_without_doubling_the_legacy_prefix() {
+        // Cloud echoes cursors relative to /wiki/rest/api, while self.api_path
+        // points at /wiki/api/v2. Stripping with the wrong prefix left the
+        // path intact and produced /wiki/rest/api/wiki/rest/api/... — a 404 on
+        // every page past the first.
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/wiki/rest/api/content/search")
+                .query_param("start", "25");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":25,"limit":25,"size":0,"_links":{}}"#);
+        });
+
+        let client =
+            ConfluenceClient::new(server.base_url(), ConfluenceAuth::bearer("secret-token"))
+                .with_flavor(ConfluenceFlavor::Cloud);
+        let result = client
+            .search(SearchKbParams {
+                query: "architecture".into(),
+                space_key: None,
+                cursor: Some(
+                    "/wiki/rest/api/content/search?cql=text~%22architecture%22&limit=25&start=25"
+                        .into(),
+                ),
+                limit: Some(25),
                 raw_query: false,
             })
             .await

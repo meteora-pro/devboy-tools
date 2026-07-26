@@ -1660,33 +1660,20 @@ fn jira_link_type_name_and_reversed(link_type: &str) -> (&str, bool) {
     }
 }
 
-fn jira_link_type_allows_either_direction(link_type: &str, link_type_name: &str) -> bool {
-    if link_type_name == "Relates" {
-        return true;
-    }
-
-    !matches!(
-        link_type,
-        "blocks"
-            | "blocked_by"
-            | "relates_to"
-            | "duplicates"
-            | "duplicated_by"
-            | "clones"
-            | "cloned_by"
-            | "causes"
-            | "caused_by"
-            | "implements"
-            | "implemented_by"
-            | "created_by"
-            | "creates"
-            | "Blocks"
-            | "Duplicate"
-            | "Cloners"
-            | "Causes"
-            | "Implements"
-            | "Created By"
-    )
+/// Whether a link of this type may be matched regardless of which side the
+/// target sits on.
+///
+/// Only genuinely symmetric types qualify. Everything else — including custom
+/// types configured on the instance, whose direction we cannot know — is
+/// matched directionally, so `unlink_issues` is the exact inverse of
+/// `link_issues` for the same arguments.
+///
+/// This used to default to `true` for anything outside the built-in alias
+/// table, which meant a custom directional type ("Epic", "Gantt: Predecessor")
+/// could match a link pointing the *other* way and delete the wrong
+/// relationship while reporting success.
+fn jira_link_type_allows_either_direction(_link_type: &str, link_type_name: &str) -> bool {
+    link_type_name == "Relates"
 }
 
 fn jira_link_matches_target(
@@ -1702,6 +1689,21 @@ fn jira_link_matches_target(
 
     let outward_key = link.outward_issue.as_ref().map(|issue| issue.key.as_str());
     let inward_key = link.inward_issue.as_ref().map(|issue| issue.key.as_str());
+
+    // Decide symmetry from the link's own wording where Jira supplies it: a
+    // genuinely symmetric type reads the same in both directions ("relates to"
+    // / "relates to"). The name-based hint alone is not enough, because an
+    // admin can configure a *directional* custom type also called "Relates"
+    // — and treating that as symmetric would delete the link pointing the
+    // other way.
+    let allow_either_direction = match (
+        link.link_type.inward.as_deref(),
+        link.link_type.outward.as_deref(),
+    ) {
+        (Some(inward), Some(outward)) => inward.eq_ignore_ascii_case(outward),
+        // No descriptions in the payload — fall back to the name hint.
+        _ => allow_either_direction,
+    };
 
     if allow_either_direction {
         outward_key == Some(target_key) || inward_key == Some(target_key)
@@ -2745,6 +2747,27 @@ impl IssueProvider for JiraClient {
                 )
             })
             .ok_or_else(|| {
+                // Matching is directional for everything but symmetric types.
+                // If the link exists the other way round, say so instead of a
+                // bare "not found" — the alternative is deleting it silently.
+                let reversed_exists = !allow_either_direction
+                    && issue.fields.issuelinks.iter().any(|link| {
+                        jira_link_matches_target(
+                            link,
+                            link_type_name,
+                            &target_jira_key,
+                            !reversed,
+                            false,
+                        )
+                    });
+                if reversed_exists {
+                    return Error::NotFound(format!(
+                        "Jira link not found: {source_jira_key} -> {target_jira_key} \
+                         ({link_type_name}) — a link of this type exists in the opposite \
+                         direction. Re-run with the source and target swapped, or with the \
+                         reversed alias, if that is the one you meant to remove."
+                    ));
+                }
                 Error::NotFound(format!(
                     "Jira link not found: {} -> {} ({})",
                     source_jira_key, target_jira_key, link_type_name
@@ -6500,7 +6523,10 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn test_unlink_issues_custom_type_matches_either_direction() {
+        async fn test_unlink_issues_custom_type_does_not_delete_the_reverse_link() {
+            // A custom type's direction is unknown to us, so matching must be
+            // directional: the only link on PROJ-1 points the other way, and
+            // deleting it would destroy a relationship the caller did not name.
             let server = MockServer::start();
 
             let get_mock = server.mock(|when, then| {
@@ -6521,6 +6547,91 @@ mod tests {
 
             let delete_mock = server.mock(|when, then| {
                 when.method(DELETE).path("/issueLink/45");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            let err = client
+                .unlink_issues("PROJ-1", "PROJ-2", "Discovered while testing")
+                .await
+                .unwrap_err();
+
+            match &err {
+                Error::NotFound(message) => assert!(
+                    message.contains("opposite direction"),
+                    "error should point at the reversed link: {message}"
+                ),
+                other => panic!("unexpected error: {other:?}"),
+            }
+            get_mock.assert();
+            // Nothing was deleted.
+            assert_eq!(delete_mock.calls(), 0);
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_directional_type_named_relates_is_not_symmetric() {
+            // An admin can configure a custom, directional type also called
+            // "Relates". Deciding symmetry by name alone would match the link
+            // pointing the other way and delete the wrong relationship.
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200)
+                    .json_body(jira_issue_with_link(serde_json::json!({
+                        "id": "47",
+                        "type": {
+                            "name": "Relates",
+                            "inward": "is required by",
+                            "outward": "requires"
+                        },
+                        "inwardIssue": {
+                            "id": "10002",
+                            "key": "PROJ-2",
+                            "fields": { "summary": "Target" }
+                        }
+                    })));
+            });
+
+            let delete_mock = server.mock(|when, then| {
+                when.method(DELETE).path("/issueLink/47");
+                then.status(204);
+            });
+
+            let client = create_self_hosted_client(&server);
+            client
+                .unlink_issues("PROJ-1", "PROJ-2", "relates_to")
+                .await
+                .unwrap_err();
+
+            get_mock.assert();
+            assert_eq!(delete_mock.calls(), 0, "the reverse link must survive");
+        }
+
+        #[tokio::test]
+        async fn test_unlink_issues_custom_type_deletes_the_matching_outward_link() {
+            let server = MockServer::start();
+
+            let get_mock = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1")
+                    .query_param("fields", "issuelinks");
+                then.status(200)
+                    .json_body(jira_issue_with_link(serde_json::json!({
+                        "id": "46",
+                        "type": { "name": "Discovered while testing" },
+                        "outwardIssue": {
+                            "id": "10002",
+                            "key": "PROJ-2",
+                            "fields": { "summary": "Target" }
+                        }
+                    })));
+            });
+
+            let delete_mock = server.mock(|when, then| {
+                when.method(DELETE).path("/issueLink/46");
                 then.status(204);
             });
 
