@@ -19,7 +19,7 @@ pub struct DynamicLinearSchemaEnricher {
 }
 
 const CREATE_UPDATE_REMOVE_PARAMS: &[&str] = &["issueType"];
-const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery", "sort_by", "sort_order"];
+const GET_ISSUES_REMOVE_PARAMS: &[&str] = &["projectKey", "nativeQuery"];
 
 const PRIORITY_VALUES: &[&str] = &["urgent", "high", "normal", "low"];
 /// Advertised values come straight from the client so the schema can never
@@ -91,6 +91,14 @@ impl ToolEnricher for LinearSchemaEnricher {
             schema.set_description(
                 "assignee",
                 "Filter by assignee name, display name, or email.",
+            );
+            // Linear's PaginationOrderBy only exposes descending order, so
+            // advertise just that rather than letting a caller pick `asc`
+            // and get an error back.
+            schema.set_enum("sort_order", &["desc".to_string()]);
+            schema.set_description(
+                "sort_order",
+                "Linear paginates newest-first only; `asc` is not available",
             );
         }
     }

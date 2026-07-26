@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateIssueInput, Error, Issue, IssueFilter, IssueProvider, IssueStatus,
-    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result,
-    UpdateIssueInput, User,
+    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result, SortInfo,
+    SortOrder, UpdateIssueInput, User,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Map, Value, json};
@@ -68,8 +68,8 @@ query IssueById($id: String!) {
 "#;
 
 const ISSUES_QUERY: &str = r#"
-query Issues($first: Int!, $after: String, $filter: IssueFilter) {
-  issues(first: $first, after: $after, filter: $filter) {
+query Issues($first: Int!, $after: String, $filter: IssueFilter, $orderBy: PaginationOrderBy) {
+  issues(first: $first, after: $after, filter: $filter, orderBy: $orderBy) {
     nodes {
       id
       identifier
@@ -409,11 +409,13 @@ impl LinearClient {
         first: u32,
         after: Option<&str>,
         filter: Value,
+        order_by: &str,
     ) -> Result<LinearIssuesData> {
         let variables = json!({
             "first": first,
             "after": after,
             "filter": filter,
+            "orderBy": order_by,
         });
         self.graphql(ISSUES_QUERY, variables, &self.token).await
     }
@@ -463,7 +465,8 @@ impl LinearClient {
             ]
         });
 
-        let data = self.list_issues_page(1, None, filter).await?;
+        // Single exact-identifier lookup — ordering is irrelevant here.
+        let data = self.list_issues_page(1, None, filter, "updatedAt").await?;
         Ok(data.issues.nodes.into_iter().next())
     }
 
@@ -813,6 +816,41 @@ fn map_comment(comment: &LinearComment) -> Comment {
     }
 }
 
+/// Default sort field, matching the `get_issues` tool contract
+/// ("default: updated_at"). Linear's own default is `createdAt`, so it is
+/// always sent explicitly rather than relying on the server default.
+const DEFAULT_SORT_BY: &str = "updated_at";
+
+/// Maps the cross-provider `sort_by` value onto Linear's
+/// `PaginationOrderBy` enum, which only accepts these two fields.
+fn map_order_by(sort_by: Option<&str>) -> Result<&'static str> {
+    match sort_by.map(str::trim).unwrap_or(DEFAULT_SORT_BY) {
+        "created_at" => Ok("createdAt"),
+        "updated_at" => Ok("updatedAt"),
+        other => Err(Error::InvalidData(format!(
+            "unsupported sort_by '{other}' for Linear; expected one of: created_at, updated_at"
+        ))),
+    }
+}
+
+/// Linear paginates in descending order and exposes no ascending variant on
+/// `PaginationOrderBy`, so `desc` is accepted and `asc` is refused with a
+/// message naming the argument.
+///
+/// Deliberately **not** `ProviderUnsupported`: that variant means "this
+/// provider cannot handle this tool at all" and the MCP layer swallows it to
+/// try the next provider, which would surface the misleading
+/// "No provider supports 'get_issues'".
+fn validate_sort_order(sort_order: Option<&str>) -> Result<()> {
+    match sort_order.map(str::trim) {
+        None | Some("") | Some("desc") => Ok(()),
+        Some(other) => Err(Error::InvalidData(format!(
+            "unsupported sort_order '{other}' for Linear; only 'desc' is available \
+             because Linear's pagination has no ascending order"
+        ))),
+    }
+}
+
 /// Unified status categories this provider accepts as a filter and emits as
 /// [`Issue::status_category`]. Single source of truth — the schema enricher
 /// advertises exactly these values.
@@ -892,13 +930,6 @@ fn build_issue_filter(team_id: &str, filter: &IssueFilter) -> Result<Value> {
         return Err(Error::ProviderUnsupported {
             provider: "linear".to_string(),
             operation: "get_issues(native_query)".to_string(),
-        });
-    }
-
-    if filter.sort_by.is_some() || filter.sort_order.is_some() {
-        return Err(Error::ProviderUnsupported {
-            provider: "linear".to_string(),
-            operation: "get_issues(sort_by/sort_order)".to_string(),
         });
     }
 
@@ -1058,6 +1089,8 @@ impl IssueProvider for LinearClient {
         let offset = filter.offset.unwrap_or(0);
         let limit = filter.limit.unwrap_or(50).max(1);
         let total_needed = offset.saturating_add(limit);
+        validate_sort_order(filter.sort_order.as_deref())?;
+        let order_by = map_order_by(filter.sort_by.as_deref())?;
         let gql_filter = build_issue_filter(&self.team_id, &filter)?;
 
         let mut after: Option<String> = None;
@@ -1070,7 +1103,7 @@ impl IssueProvider for LinearClient {
             let remaining = total_needed.saturating_sub(fetched).max(1);
             let page_size = remaining.min(100);
             let data = self
-                .list_issues_page(page_size, after.as_deref(), gql_filter.clone())
+                .list_issues_page(page_size, after.as_deref(), gql_filter.clone(), order_by)
                 .await?;
 
             let page_info = data.issues.page_info;
@@ -1108,7 +1141,17 @@ impl IssueProvider for LinearClient {
                 has_more,
                 next_cursor,
             }),
-            sort_info: None,
+            sort_info: Some(SortInfo {
+                sort_by: Some(
+                    filter
+                        .sort_by
+                        .as_deref()
+                        .unwrap_or(DEFAULT_SORT_BY)
+                        .to_string(),
+                ),
+                sort_order: SortOrder::Desc,
+                available_sorts: vec!["created_at".to_string(), "updated_at".to_string()],
+            }),
         })
     }
 
@@ -1831,33 +1874,79 @@ mod tests {
         assert_eq!(page_2.calls(), 0);
     }
 
+    #[test]
+    fn map_order_by_covers_the_advertised_sort_fields() {
+        assert_eq!(map_order_by(Some("created_at")).unwrap(), "createdAt");
+        assert_eq!(map_order_by(Some("updated_at")).unwrap(), "updatedAt");
+        // Unset falls back to the documented tool default, sent explicitly
+        // because Linear's own server-side default is createdAt.
+        assert_eq!(map_order_by(None).unwrap(), "updatedAt");
+
+        let err = map_order_by(Some("priority")).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidData(m) if m.contains("priority") && m.contains("updated_at")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_sort_order_accepts_desc_and_names_the_argument_on_asc() {
+        validate_sort_order(None).unwrap();
+        validate_sort_order(Some("desc")).unwrap();
+
+        let err = validate_sort_order(Some("asc")).unwrap_err();
+        match &err {
+            // Must be InvalidData, not ProviderUnsupported: the MCP layer
+            // swallows ProviderUnsupported and reports the misleading
+            // "No provider supports 'get_issues'" instead.
+            Error::InvalidData(message) => {
+                assert!(message.contains("sort_order"), "message: {message}");
+                assert!(message.contains("asc"), "message: {message}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
     #[tokio::test]
-    async fn get_issues_rejects_unsupported_sorting() {
+    async fn get_issues_sends_order_by_and_reports_sort_info() {
+        let server = MockServer::start();
+        let page = server.mock(|when, then| {
+            when.method(POST)
+                .path("/graphql")
+                .body_includes("query Issues")
+                .body_includes(r#""orderBy":"createdAt""#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({
+                    "data": {
+                        "issues": {
+                            "nodes": [linear_issue("ENG-1", "One", "In Progress")],
+                            "pageInfo": { "hasNextPage": false, "endCursor": null }
+                        }
+                    }
+                }));
+        });
+
         let client = LinearClient::with_base_url(
-            "https://api.linear.app/graphql",
+            format!("{}/graphql", server.base_url()),
             "team-1",
             SecretString::from("lin_api_test".to_owned()),
         );
 
-        let err = client
+        let result = client
             .get_issues(IssueFilter {
-                sort_by: Some("updated_at".to_string()),
+                sort_by: Some("created_at".to_string()),
                 sort_order: Some("desc".to_string()),
                 ..Default::default()
             })
             .await
-            .unwrap_err();
+            .unwrap();
 
-        match err {
-            Error::ProviderUnsupported {
-                provider,
-                operation,
-            } => {
-                assert_eq!(provider, "linear");
-                assert_eq!(operation, "get_issues(sort_by/sort_order)");
-            }
-            other => panic!("unexpected error: {other:?}"),
-        }
+        let sort = result.sort_info.expect("sort_info reported");
+        assert_eq!(sort.sort_by.as_deref(), Some("created_at"));
+        assert_eq!(sort.sort_order, SortOrder::Desc);
+        assert_eq!(sort.available_sorts, vec!["created_at", "updated_at"]);
+        page.assert();
     }
 
     #[tokio::test]
