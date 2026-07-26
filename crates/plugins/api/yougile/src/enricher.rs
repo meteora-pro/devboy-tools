@@ -37,6 +37,18 @@ impl ToolEnricher for YouGileSchemaEnricher {
                 &["backlog", "todo", "in_progress", "done", "cancelled"],
                 "Filter by semantic status category. Maps YouGile board columns to shared status buckets using column-title heuristics.",
             );
+            // The shared schema calls this a username, but YouGile's
+            // `assignedTo` matches on the user id only.
+            schema.set_description(
+                "assignee",
+                "Filter by assignee **user id** (UUID) — YouGile does not match names or emails",
+            );
+            // A YouGile task exposes a single timestamp, surfaced as both
+            // created_at and updated_at, so both sorts resolve to it.
+            schema.set_description(
+                "sort_by",
+                "YouGile stores one timestamp per task; `created_at` and `updated_at` order by it identically",
+            );
         }
 
         let statuses: Vec<String> = self

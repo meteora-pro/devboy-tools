@@ -7,8 +7,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use devboy_core::{
     Comment, CreateIssueInput, CustomFieldValue, Error, Issue, IssueFilter, IssueProvider,
-    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result,
-    UpdateIssueInput, User,
+    MergeRequestProvider, Pagination, PipelineProvider, Provider, ProviderResult, Result, SortInfo,
+    SortOrder, UpdateIssueInput, User,
 };
 use reqwest::{Response, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
@@ -20,7 +20,7 @@ use tracing::warn;
 
 use crate::DEFAULT_YOUGILE_URL;
 use crate::types::{
-    YouGileChatMessage, YouGileColumn, YouGileListResponse, YouGileTask, YouGileUser,
+    YouGileChatMessage, YouGileColumn, YouGileListResponse, YouGilePaging, YouGileTask, YouGileUser,
 };
 
 /// YouGile client used by the workspace provider layer.
@@ -154,7 +154,7 @@ impl YouGileClient {
             if !page.paging.next {
                 break;
             }
-            offset = offset.saturating_add(page.paging.limit);
+            offset = advance_offset(offset, &page.paging, "/columns")?;
         }
 
         Ok(columns)
@@ -191,7 +191,7 @@ impl YouGileClient {
             if !page.paging.next {
                 break;
             }
-            offset = offset.saturating_add(page.paging.limit);
+            offset = advance_offset(offset, &page.paging, "/task-list")?;
         }
 
         Ok(tasks)
@@ -235,22 +235,10 @@ impl YouGileClient {
 
         tasks.sort_by_key(|task| std::cmp::Reverse(task.timestamp));
 
-        if let Some(sort_by) = filter.sort_by.as_deref() {
-            match sort_by {
-                "created_at" | "created" => {
-                    if matches!(filter.sort_order.as_deref(), Some("asc")) {
-                        tasks.sort_by_key(|task| task.timestamp);
-                    } else {
-                        tasks.sort_by_key(|task| std::cmp::Reverse(task.timestamp));
-                    }
-                }
-                unsupported => {
-                    warn!(
-                        sort_by = unsupported,
-                        "YouGile API does not expose native sorting for this field; keeping timestamp order"
-                    );
-                }
-            }
+        // Validated up front in `get_issues`, so by here the field is known
+        // to be one of the two timestamp aliases.
+        if matches!(filter.sort_order.as_deref(), Some("asc")) {
+            tasks.sort_by_key(|task| task.timestamp);
         }
 
         // Make sure column mapping covers every task we return.
@@ -573,6 +561,8 @@ fn validate_generic_update_fields(input: &UpdateIssueInput) -> Result<()> {
 #[async_trait]
 impl IssueProvider for YouGileClient {
     async fn get_issues(&self, filter: IssueFilter) -> Result<ProviderResult<Issue>> {
+        validate_sort_by(filter.sort_by.as_deref())?;
+        validate_assignee_filter(filter.assignee.as_deref())?;
         let columns = self.list_board_columns().await?;
         let column_titles: HashMap<String, String> = columns
             .iter()
@@ -600,13 +590,29 @@ impl IssueProvider for YouGileClient {
             );
         }
 
-        Ok(ProviderResult::new(items).with_pagination(Pagination {
+        let mut result = ProviderResult::new(items).with_pagination(Pagination {
             offset: offset as u32,
             limit: limit as u32,
             total: Some(total),
             has_more,
             next_cursor: None,
-        }))
+        });
+        result.sort_info = Some(SortInfo {
+            sort_by: Some(
+                filter
+                    .sort_by
+                    .as_deref()
+                    .unwrap_or("created_at")
+                    .to_string(),
+            ),
+            sort_order: if matches!(filter.sort_order.as_deref(), Some("asc")) {
+                SortOrder::Asc
+            } else {
+                SortOrder::Desc
+            },
+            available_sorts: vec!["created_at".to_string(), "updated_at".to_string()],
+        });
+        Ok(result)
     }
 
     async fn get_issue(&self, key: &str) -> Result<Issue> {
@@ -918,6 +924,55 @@ fn is_closed_task(task: &YouGileTask) -> bool {
     task.completed || task.archived || task.deleted
 }
 
+/// Advances the paging cursor, refusing to spin forever.
+///
+/// The loops that call this keep going while the server says `next: true`,
+/// stepping by the page size the server reports back. A `limit` of 0 would
+/// leave the offset unchanged and turn that into an infinite request loop —
+/// a hang is far worse than a surfaced error, so bail out instead.
+fn advance_offset(offset: u32, paging: &YouGilePaging, endpoint: &str) -> Result<u32> {
+    if paging.limit == 0 {
+        return Err(Error::InvalidData(format!(
+            "YouGile {endpoint} reported more pages but a page size of 0; refusing to loop forever"
+        )));
+    }
+    Ok(offset.saturating_add(paging.limit))
+}
+
+/// Maps the cross-provider `sort_by` value onto the single timestamp YouGile
+/// exposes on a task.
+///
+/// A YouGile task carries exactly one `timestamp`, which this provider
+/// surfaces as both `created_at` and `updated_at`. Both sort fields are
+/// therefore accepted and resolve to the same ordering; anything else is
+/// refused by name rather than silently ignored, so a caller never receives
+/// arbitrarily-ordered results believing the sort was applied.
+fn validate_sort_by(sort_by: Option<&str>) -> Result<()> {
+    match sort_by.map(str::trim) {
+        None | Some("") | Some("created_at") | Some("created") | Some("updated_at")
+        | Some("updated") => Ok(()),
+        Some(other) => Err(Error::InvalidData(format!(
+            "unsupported sort_by '{other}' for YouGile; expected one of: created_at, updated_at \
+             (both order by the task's single timestamp)"
+        ))),
+    }
+}
+
+/// YouGile's `assignedTo` filter matches on the user's **id**, not a name or
+/// email. The shared tool schema describes `assignee` as a username, so a
+/// caller following it would get an empty result set that is indistinguishable
+/// from "this person has no tasks". Fail with an explanation instead.
+fn validate_assignee_filter(assignee: Option<&str>) -> Result<()> {
+    match assignee.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(()),
+        Some(value) if looks_like_uuid(value) => Ok(()),
+        Some(value) => Err(Error::InvalidData(format!(
+            "YouGile filters assignees by user id, but '{value}' is not one; \
+             pass the user's id (a UUID) rather than a name or email"
+        ))),
+    }
+}
+
 fn matches_state_category(
     task: &YouGileTask,
     state_category: &str,
@@ -1146,6 +1201,52 @@ mod tests {
     use super::*;
     use httpmock::Method::{GET, POST, PUT};
     use httpmock::MockServer;
+
+    #[test]
+    fn advance_offset_refuses_to_spin_on_a_zero_page_size() {
+        let ok = YouGilePaging {
+            limit: 50,
+            offset: 0,
+            next: true,
+        };
+        assert_eq!(advance_offset(100, &ok, "/task-list").unwrap(), 150);
+
+        // limit == 0 would leave the offset unchanged and loop forever.
+        let stuck = YouGilePaging {
+            limit: 0,
+            offset: 0,
+            next: true,
+        };
+        let err = advance_offset(100, &stuck, "/task-list").unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidData(m) if m.contains("/task-list")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_sort_by_accepts_both_timestamp_aliases_and_names_the_rest() {
+        for ok in [None, Some(""), Some("created_at"), Some("updated_at")] {
+            validate_sort_by(ok).unwrap_or_else(|e| panic!("{ok:?} rejected: {e:?}"));
+        }
+        let err = validate_sort_by(Some("priority")).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidData(m) if m.contains("priority") && m.contains("created_at")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_assignee_filter_rejects_names_that_would_silently_match_nothing() {
+        validate_assignee_filter(None).unwrap();
+        validate_assignee_filter(Some("11111111-2222-3333-4444-555555555555")).unwrap();
+
+        let err = validate_assignee_filter(Some("alice@example.com")).unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidData(m) if m.contains("alice@example.com") && m.contains("user id")),
+            "unexpected error: {err:?}"
+        );
+    }
 
     #[test]
     fn new_uses_default_api_url() {
