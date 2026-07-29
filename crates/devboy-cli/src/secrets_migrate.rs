@@ -232,7 +232,7 @@ fn plan_all(store: &Arc<dyn CredentialStore>, keep_legacy: bool) -> Vec<Migratio
             Err(e) => {
                 eprintln!(
                     "warning: failed to probe legacy key '{}' (skipping): {e}",
-                    &key
+                    key
                 );
             }
         }

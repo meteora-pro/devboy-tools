@@ -33,23 +33,23 @@ DevBoy is a tool bundle — pick the mode that fits your workflow:
 
 ```bash
 # Show help
-npx devboy --help
+npx -y -p @devboy-tools/cli devboy --help
 
 # Configure a provider
-npx devboy config set github.owner <owner>
-npx devboy config set github.repo <repo>
-npx devboy config set-secret github.token <token>
+npx -y -p @devboy-tools/cli devboy config set github.owner <owner>
+npx -y -p @devboy-tools/cli devboy config set github.repo <repo>
+npx -y -p @devboy-tools/cli devboy config set-secret github.token <token>
 
 # Use tools directly
-npx devboy issues
-npx devboy mrs
+npx -y -p @devboy-tools/cli devboy issues
+npx -y -p @devboy-tools/cli devboy mrs
 ```
 
 ### MCP server (Claude Desktop, Claude Code, any MCP client)
 
 ```bash
 # Start MCP server over stdio
-npx devboy mcp
+npx -y -p @devboy-tools/cli devboy mcp
 ```
 
 ### Agent skills (call a single tool from a skill script)
@@ -58,21 +58,21 @@ The `tools call` subcommand takes a tool name and an optional positional JSON st
 
 ```bash
 # POSIX shells (bash, zsh, sh) — no args
-npx devboy tools call get_issues
+npx -y -p @devboy-tools/cli devboy tools call get_issues
 
 # POSIX shells — with JSON args
-npx devboy tools call get_issues '{"limit": 20}'
+npx -y -p @devboy-tools/cli devboy tools call get_issues '{"limit": 20}'
 ```
 
 ```bat
 :: Windows cmd.exe / PowerShell — escape inner quotes
-npx devboy tools call get_issues "{\"limit\": 20}"
+npx -y -p @devboy-tools/cli devboy tools call get_issues "{\"limit\": 20}"
 ```
 
 ### Claude Code
 
 ```bash
-claude mcp add devboy -- npx devboy mcp
+claude mcp add devboy -- npx -y -p @devboy-tools/cli devboy mcp
 ```
 
 ### Claude Desktop
@@ -84,7 +84,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "devboy": {
       "command": "npx",
-      "args": ["devboy", "mcp"]
+      "args": ["-y", "-p", "@devboy-tools/cli", "devboy", "mcp"]
     }
   }
 }

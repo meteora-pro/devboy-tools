@@ -468,6 +468,16 @@ async fn confluence_connectivity(
 ) -> Result<ConnectivityOutcome, String> {
     let client = http_client()?;
     let base_url = config.base_url.trim_end_matches('/');
+    if confluence_is_cloud(config) {
+        return confluence_cloud_connectivity(
+            &client,
+            base_url,
+            config,
+            token,
+            "https://api.atlassian.com",
+        )
+        .await;
+    }
     let api_paths = confluence_space_api_paths(config.api_version.as_deref());
 
     // Doctor probes every candidate API path concurrently rather than
@@ -548,6 +558,146 @@ async fn probe_confluence_endpoint(
         user: None,
         rate_limit: None,
     })
+}
+
+fn confluence_is_cloud(config: &ConfluenceConfig) -> bool {
+    match config.flavor {
+        Some(devboy_core::ConfluenceFlavor::Cloud) => true,
+        Some(devboy_core::ConfluenceFlavor::SelfHosted) => false,
+        None => config.cloud_id.is_some() || config.base_url.contains(".atlassian.net"),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AtlassianAccessibleResource {
+    id: String,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+async fn confluence_cloud_connectivity(
+    client: &Client,
+    base_url: &str,
+    config: &ConfluenceConfig,
+    token: &str,
+    cloud_api_base: &str,
+) -> Result<ConnectivityOutcome, String> {
+    let cloud_id = match config.cloud_id.as_deref() {
+        Some(cloud_id) => cloud_id.to_string(),
+        None if config.username.is_some() => {
+            return Err(
+                "Confluence Cloud with basic auth requires explicit confluence.cloud_id"
+                    .to_string(),
+            );
+        }
+        None => discover_confluence_cloud_id(client, base_url, token, cloud_api_base).await?,
+    };
+
+    let url = format!("{cloud_api_base}/ex/confluence/{cloud_id}/wiki/api/v2/space?limit=1");
+    let mut request = client
+        .request(Method::GET, &url)
+        .header(USER_AGENT, "devboy-tools")
+        .header(ACCEPT, "application/json");
+
+    request = if let Some(username) = config.username.as_deref() {
+        request.basic_auth(username, Some(token))
+    } else {
+        request.bearer_auth(token)
+    };
+
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("Network error: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(parse_error(status, body).1);
+    }
+
+    let payload: ConfluenceSpaceResponse = response
+        .json()
+        .await
+        .map_err(|error| format!("Invalid Confluence response: {error}"))?;
+
+    let message = match payload.results.into_iter().next() {
+        Some(space) => format!(
+            "Confluence Cloud API reachable for space {} ({}) [id: {}]",
+            space.key, space.name, space.id
+        ),
+        None => "Confluence Cloud API reachable".to_string(),
+    };
+
+    Ok(ConnectivityOutcome {
+        message,
+        user: None,
+        rate_limit: None,
+    })
+}
+
+async fn discover_confluence_cloud_id(
+    client: &Client,
+    base_url: &str,
+    token: &str,
+    cloud_api_base: &str,
+) -> Result<String, String> {
+    let response = client
+        .request(
+            Method::GET,
+            format!("{cloud_api_base}/oauth/token/accessible-resources"),
+        )
+        .header(USER_AGENT, "devboy-tools")
+        .header(ACCEPT, "application/json")
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| format!("Network error: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(parse_error(status, body).1);
+    }
+
+    let resources: Vec<AtlassianAccessibleResource> = response
+        .json()
+        .await
+        .map_err(|error| format!("Invalid Atlassian accessible-resources response: {error}"))?;
+
+    let wanted_origin = url_origin(base_url).ok_or_else(|| {
+        format!(
+            "Could not determine origin from Confluence base URL '{}'",
+            base_url
+        )
+    })?;
+
+    resources
+        .into_iter()
+        .find(|resource| {
+            resource
+                .url
+                .as_deref()
+                .and_then(url_origin)
+                .map(|origin| origin == wanted_origin)
+                .unwrap_or(false)
+        })
+        .map(|resource| resource.id)
+        .ok_or_else(|| {
+            format!(
+                "No Atlassian accessible resource matched Confluence base URL '{}'",
+                base_url
+            )
+        })
+}
+
+fn url_origin(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    let host = rest.split('/').next()?;
+    if host.is_empty() {
+        return None;
+    }
+    Some(format!("{}://{}", scheme.to_ascii_lowercase(), host))
 }
 
 enum ProbeError {
@@ -1065,8 +1215,12 @@ mod tests {
         let outcome = confluence_connectivity(
             &ConfluenceConfig {
                 base_url: server.base_url(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".to_string()),
                 username: Some("dev@example.com".to_string()),
+                client_id: None,
+                redirect_uri: None,
                 space_key: Some("ENG".to_string()),
             },
             "secret-token",
@@ -1112,8 +1266,12 @@ mod tests {
         let outcome = confluence_connectivity(
             &ConfluenceConfig {
                 base_url: server.base_url(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v2".to_string()),
                 username: Some("dev@example.com".to_string()),
+                client_id: None,
+                redirect_uri: None,
                 space_key: Some("ENG".to_string()),
             },
             "secret-token",
@@ -1123,6 +1281,147 @@ mod tests {
 
         assert!(outcome.message.contains("Confluence API reachable"));
         rest_mock.assert();
+    }
+
+    #[test]
+    fn confluence_is_cloud_respects_explicit_self_hosted_override() {
+        let config = ConfluenceConfig {
+            base_url: "https://team.atlassian.net".to_string(),
+            flavor: Some(devboy_core::ConfluenceFlavor::SelfHosted),
+            cloud_id: Some("cloud-123".to_string()),
+            api_version: None,
+            username: None,
+            client_id: None,
+            redirect_uri: None,
+            space_key: None,
+        };
+
+        assert!(!confluence_is_cloud(&config));
+    }
+
+    #[tokio::test]
+    async fn confluence_cloud_connectivity_discovers_cloud_id_for_bearer_auth() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET)
+                .path("/oauth/token/accessible-resources")
+                .header("authorization", "Bearer secret-token");
+            then.status(200).json_body(json!([
+                {
+                    "id": "cloud-123",
+                    "url": "https://team.atlassian.net"
+                }
+            ]));
+        });
+        let space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .header("authorization", "Bearer secret-token")
+                .query_param("limit", "1");
+            then.status(200).json_body(json!({
+                "results": [
+                    {
+                        "id": "1",
+                        "key": "ENG",
+                        "name": "Engineering"
+                    }
+                ]
+            }));
+        });
+
+        let client = http_client().unwrap();
+        let outcome = confluence_cloud_connectivity(
+            &client,
+            "https://team.atlassian.net",
+            &ConfluenceConfig {
+                base_url: "https://team.atlassian.net".to_string(),
+                flavor: Some(devboy_core::ConfluenceFlavor::Cloud),
+                cloud_id: None,
+                api_version: None,
+                username: None,
+                client_id: None,
+                redirect_uri: None,
+                space_key: Some("ENG".to_string()),
+            },
+            "secret-token",
+            &server.base_url(),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.message.contains("Confluence Cloud API reachable"));
+        space_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn confluence_cloud_connectivity_uses_explicit_cloud_id_for_basic_auth() {
+        let server = MockServer::start();
+        let space_mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/ex/confluence/cloud-123/wiki/api/v2/space")
+                .header(
+                    "authorization",
+                    "Basic ZGV2QGV4YW1wbGUuY29tOnNlY3JldC10b2tlbg==",
+                )
+                .query_param("limit", "1");
+            then.status(200).json_body(json!({
+                "results": [
+                    {
+                        "id": "1",
+                        "key": "ENG",
+                        "name": "Engineering"
+                    }
+                ]
+            }));
+        });
+
+        let client = http_client().unwrap();
+        let outcome = confluence_cloud_connectivity(
+            &client,
+            "https://team.atlassian.net",
+            &ConfluenceConfig {
+                base_url: "https://team.atlassian.net".to_string(),
+                flavor: Some(devboy_core::ConfluenceFlavor::Cloud),
+                cloud_id: Some("cloud-123".to_string()),
+                api_version: None,
+                username: Some("dev@example.com".to_string()),
+                client_id: None,
+                redirect_uri: None,
+                space_key: Some("ENG".to_string()),
+            },
+            "secret-token",
+            &server.base_url(),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.message.contains("Confluence Cloud API reachable"));
+        space_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn confluence_cloud_connectivity_requires_cloud_id_for_basic_auth() {
+        let client = http_client().unwrap();
+        let err = confluence_cloud_connectivity(
+            &client,
+            "https://team.atlassian.net",
+            &ConfluenceConfig {
+                base_url: "https://team.atlassian.net".to_string(),
+                flavor: Some(devboy_core::ConfluenceFlavor::Cloud),
+                cloud_id: None,
+                api_version: None,
+                username: Some("dev@example.com".to_string()),
+                client_id: None,
+                redirect_uri: None,
+                space_key: Some("ENG".to_string()),
+            },
+            "secret-token",
+            "https://api.atlassian.com",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.contains("explicit confluence.cloud_id"));
     }
 
     #[tokio::test]
@@ -1155,8 +1454,12 @@ mod tests {
             ContextConfig {
                 confluence: Some(ConfluenceConfig {
                     base_url: server.base_url(),
+                    flavor: None,
+                    cloud_id: None,
                     api_version: Some("v1".to_string()),
                     username: Some("dev@example.com".to_string()),
+                    client_id: None,
+                    redirect_uri: None,
                     space_key: Some("ENG".to_string()),
                 }),
                 ..Default::default()

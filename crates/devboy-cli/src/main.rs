@@ -25,14 +25,16 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use devboy_clickup::ClickUpClient;
 use devboy_confluence::{ConfluenceAuth, ConfluenceClient};
+use devboy_core::config::YouGileConfig;
 use devboy_core::{
     BuiltinToolsConfig, ClickUpConfig, Config, ContextConfig, GitHubConfig, GitLabConfig,
-    IssueFilter, IssueProvider, JiraConfig, MergeRequestProvider, MrFilter, Provider,
+    IssueFilter, IssueProvider, JiraConfig, LinearConfig, MergeRequestProvider, MrFilter, Provider,
     ProxyMcpServerConfig, SlackConfig, routing_strategy_slug,
 };
 use devboy_github::GitHubClient;
 use devboy_gitlab::GitLabClient;
 use devboy_jira::JiraClient;
+use devboy_linear::LinearClient;
 use devboy_mcp::protocol::ToolDefinition;
 use devboy_mcp::routing::{ProxyStatus, RoutingEngine};
 use devboy_mcp::signature_match::{ToolCatalogue, build_report};
@@ -44,6 +46,7 @@ use devboy_mcp::{
 use devboy_slack::SlackClient;
 use devboy_storage::{ChainStore, CredentialStore, wrap_with_cache};
 use devboy_telegram::TelegramClient;
+use devboy_yougile::YouGileClient;
 use dialoguer::{Confirm, Input, MultiSelect, Password};
 use doctor::{DoctorOptions, OutputFormat};
 use secrecy::{ExposeSecret, SecretString};
@@ -272,7 +275,7 @@ enum Commands {
 
     /// Test provider connection
     Test {
-        /// Provider to test (github, gitlab, clickup, jira, slack)
+        /// Provider to test (github, gitlab, clickup, jira, yougile, slack)
         provider: String,
     },
 
@@ -326,6 +329,16 @@ enum Commands {
     Trace {
         #[command(subcommand)]
         command: TraceCommands,
+    },
+
+    /// Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628).
+    ///
+    /// Discovers the authorization server from the upstream's `WWW-Authenticate`
+    /// challenge, registers a client if needed (RFC 7591), prints a code + URL to
+    /// approve in a browser, then stores auto-refreshing tokens.
+    Login {
+        /// Name of the `[[proxy_mcp_servers]]` entry to authorize.
+        server: String,
     },
 
     /// Run diagnostic checks for the local DevBoy setup
@@ -457,6 +470,12 @@ enum ConfigCommands {
 
     /// Show configuration file path
     Path,
+
+    /// Confluence Cloud OAuth setup helpers
+    ConfluenceOauth {
+        #[command(subcommand)]
+        command: ConfluenceOauthCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -527,6 +546,54 @@ enum ContextCommands {
     List,
     /// Switch active context
     Use { name: String },
+}
+
+#[derive(Subcommand)]
+enum ConfluenceOauthCommands {
+    /// Print the Atlassian OAuth 3LO authorization URL
+    Url {
+        /// Optional context name. Defaults to active context, then global config.
+        #[arg(long)]
+        context: Option<String>,
+        /// Optional state override. Generated automatically when omitted.
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// Exchange an Atlassian OAuth authorization code for tokens and store them
+    Exchange {
+        /// Authorization code returned by Atlassian
+        #[arg(long)]
+        code: String,
+        /// `state` value Atlassian returned on the redirect. Checked against
+        /// the one issued by `oauth url`; required whenever that command
+        /// generated it.
+        #[arg(long)]
+        state: Option<String>,
+        /// Optional context name. Defaults to active context, then global config.
+        #[arg(long)]
+        context: Option<String>,
+        /// Client secret override. When omitted, reads from keychain.
+        #[arg(long)]
+        client_secret: Option<String>,
+        /// Persist the provided client secret to keychain.
+        #[arg(long)]
+        store_client_secret: bool,
+    },
+    /// Refresh Atlassian OAuth tokens using the stored refresh token
+    Refresh {
+        /// Optional context name. Defaults to active context, then global config.
+        #[arg(long)]
+        context: Option<String>,
+        /// Refresh token override. When omitted, reads from keychain.
+        #[arg(long)]
+        refresh_token: Option<String>,
+        /// Client secret override. When omitted, reads from keychain.
+        #[arg(long)]
+        client_secret: Option<String>,
+        /// Persist the provided client secret to keychain.
+        #[arg(long)]
+        store_client_secret: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -959,7 +1026,11 @@ async fn main() -> Result<()> {
             }
 
             Some(Commands::Config { command }) => {
-                handle_config_command(command)?;
+                handle_config_command(command).await?;
+            }
+
+            Some(Commands::Login { server }) => {
+                cmd_login(&server).await?;
             }
 
             Some(Commands::Context { command }) => {
@@ -1109,6 +1180,7 @@ struct InitOptions {
     gitlab: Option<GitLabConfig>,
     clickup: Option<ClickUpConfig>,
     jira: Option<JiraConfig>,
+    linear: Option<LinearConfig>,
     slack: Option<SlackConfig>,
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
@@ -1241,6 +1313,7 @@ async fn handle_init_command(
             tool_prefix: None,
             transport,
             routing: None,
+            oauth: None,
         });
     }
 
@@ -1837,6 +1910,7 @@ fn build_config(options: &InitOptions) -> Config {
         || options.gitlab.is_some()
         || options.clickup.is_some()
         || options.jira.is_some()
+        || options.linear.is_some()
         || options.slack.is_some()
     {
         let context = ContextConfig {
@@ -1844,6 +1918,8 @@ fn build_config(options: &InitOptions) -> Config {
             gitlab: options.gitlab.clone(),
             clickup: options.clickup.clone(),
             jira: options.jira.clone(),
+            yougile: None,
+            linear: options.linear.clone(),
             fireflies: None,
             confluence: None,
             slack: options.slack.clone(),
@@ -2291,7 +2367,7 @@ fn register_forge_mcp_to_path(server_name: &str, config_path: &std::path::Path) 
 // Config Commands
 // =============================================================================
 
-fn handle_config_command(command: ConfigCommands) -> Result<()> {
+async fn handle_config_command(command: ConfigCommands) -> Result<()> {
     match command {
         ConfigCommands::Set { key, value } => {
             let mut config = Config::load().context("Failed to load config")?;
@@ -2424,6 +2500,65 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!();
             }
 
+            if let Some(confluence) = &config.confluence {
+                println!("[confluence]");
+                println!("  base_url = {}", confluence.base_url);
+                if let Some(flavor) = confluence.flavor {
+                    println!(
+                        "  flavor = {}",
+                        match flavor {
+                            devboy_core::ConfluenceFlavor::SelfHosted => "self_hosted",
+                            devboy_core::ConfluenceFlavor::Cloud => "cloud",
+                        }
+                    );
+                }
+                if let Some(cloud_id) = &confluence.cloud_id {
+                    println!("  cloud_id = {}", cloud_id);
+                }
+                if let Some(api_version) = &confluence.api_version {
+                    println!("  api_version = {}", api_version);
+                }
+                if let Some(username) = &confluence.username {
+                    println!("  username = {}", username);
+                }
+                if let Some(client_id) = &confluence.client_id {
+                    println!("  client_id = {}", client_id);
+                }
+                if let Some(redirect_uri) = &confluence.redirect_uri {
+                    println!("  redirect_uri = {}", redirect_uri);
+                }
+                if let Some(space_key) = &confluence.space_key {
+                    println!("  space_key = {}", space_key);
+                }
+                if store.exists("confluence.token") {
+                    println!("  token = ******* (in keychain)");
+                } else {
+                    println!("  token = (not set)");
+                }
+                if store.exists("confluence.refresh_token") {
+                    println!("  refresh_token = ******* (in keychain)");
+                }
+                if store.exists("confluence.client_secret") {
+                    println!("  client_secret = ******* (in keychain)");
+                }
+                println!();
+            }
+
+            if let Some(linear) = &config.linear {
+                println!("[linear]");
+                println!("  url = {}", linear.url);
+                println!("  team_id = {}", linear.team_id);
+                if let Some(team_key) = &linear.team_key {
+                    println!("  team_key = {}", team_key);
+                }
+                if store.exists("linear.token") {
+                    println!("  token = ******* (in keychain)");
+                } else {
+                    println!("  token = (not set)");
+                }
+                println!();
+            }
+
             if let Some(slack) = &config.slack {
                 println!("[slack]");
                 if let Some(team_id) = &slack.team_id {
@@ -2505,6 +2640,10 @@ fn handle_config_command(command: ConfigCommands) -> Result<()> {
                 println!("  devboy config set slack.workspace <workspace>");
                 println!("  devboy config set-secret slack.token <xoxb-token>");
             }
+        }
+
+        ConfigCommands::ConfluenceOauth { command } => {
+            handle_confluence_oauth_command(command).await?;
         }
 
         ConfigCommands::Path => {
@@ -2637,6 +2776,208 @@ fn handle_context_command(command: ContextCommands) -> Result<()> {
 // =============================================================================
 // Issues Command
 // =============================================================================
+
+/// `devboy login <server>` — OAuth 2.1 device flow (RFC 8628) against a proxy
+/// upstream. Discovers the AS, registers a client if needed, drives the device
+/// grant, and stores auto-refreshing tokens in the credential store.
+async fn cmd_login(server_name: &str) -> Result<()> {
+    use devboy_core::oauth::{self, DevicePollOutcome, OAuthTokens};
+
+    // Load the SAME config the proxy runtime uses (local .devboy.toml preferred,
+    // global fallback), so `login` finds proxies declared in .devboy.toml and
+    // writes client_id / tokens back to the file `proxy call` actually reads.
+    let (mut config, config_path) = load_runtime_config().context("Failed to load config")?;
+    let idx = config
+        .proxy_mcp_servers
+        .iter()
+        .position(|s| s.name == server_name)
+        .with_context(|| format!("No proxy server named '{server_name}' in .devboy.toml"))?;
+    let server = config.proxy_mcp_servers[idx].clone();
+    if server.auth_type != "oauth2" {
+        anyhow::bail!(
+            "proxy '{}' is auth_type = \"{}\", not \"oauth2\" — `devboy login` only \
+             applies to oauth2 proxies (bearer/api_key use `devboy config set-secret`)",
+            server.name,
+            server.auth_type
+        );
+    }
+    // No redirect-following: require_web_url guards each URL, but reqwest would
+    // otherwise follow a 302 to an unvalidated (internal/plaintext) host.
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .context("build oauth discovery http client")?;
+    let oauth_cfg = server.oauth.clone().unwrap_or_default();
+
+    // 1. Discover authorization-server metadata.
+    let meta = match &oauth_cfg.authorization_server {
+        Some(as_url) => oauth::fetch_as_metadata(&http, as_url).await,
+        None => {
+            // Probe the upstream for its RFC 9728 WWW-Authenticate challenge.
+            // Probe with a well-formed JSON-RPC `initialize` request (plus the
+            // MCP streamable-http Accept header). An empty/invalid body is
+            // rejected by the transport (e.g. 422) *before* the auth layer, so
+            // the RFC 9728 `WWW-Authenticate` challenge never comes back.
+            // Send a *complete* MCP initialize (protocolVersion/capabilities/
+            // clientInfo) — a server may validate the params before the auth
+            // layer and 422 an empty body, swallowing the WWW-Authenticate
+            // challenge. Mirrors the real handshake in devboy-mcp proxy.
+            let probe_body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": { "name": "devboy-cli", "version": env!("CARGO_PKG_VERSION") }
+                }
+            })
+            .to_string();
+            let resp = http
+                .post(&server.url)
+                .header("content-type", "application/json")
+                .header("accept", "application/json, text/event-stream")
+                .body(probe_body)
+                .send()
+                .await
+                .context("Failed to probe upstream for auth challenge")?;
+            // A server may return several challenges across multiple
+            // `WWW-Authenticate` headers (RFC 7235); the Bearer one carrying
+            // `resource_metadata` need not be first. Join them all so discovery
+            // sees every challenge, not just the first header value.
+            let www = resp
+                .headers()
+                .get_all("www-authenticate")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if www.is_empty() {
+                anyhow::bail!(
+                    "Upstream returned no WWW-Authenticate; set [proxy_mcp_servers.oauth] authorization_server"
+                );
+            }
+            oauth::discover(&http, &www).await
+        }
+    }
+    .map_err(|e| anyhow::anyhow!("OAuth discovery failed: {e}"))?;
+
+    // 2. Register a client if we don't have one yet (persist it for re-login).
+    let client_id = match oauth_cfg.client_id.clone() {
+        Some(id) => id,
+        None => {
+            let reg = meta.registration_endpoint.as_deref().context(
+                "Authorization server has no registration_endpoint; set [proxy_mcp_servers.oauth] client_id",
+            )?;
+            let id = oauth::register_client(&http, reg, "devboy-cli")
+                .await
+                .map_err(|e| anyhow::anyhow!("Client registration failed: {e}"))?;
+            let mut oc = server.oauth.clone().unwrap_or_default();
+            oc.client_id = Some(id.clone());
+            config.proxy_mcp_servers[idx].oauth = Some(oc);
+            config
+                .save_to(&config_path)
+                .context("Failed to persist client_id")?;
+            id
+        }
+    };
+
+    // Cache client_id + token_endpoint so the proxy refreshes headlessly later.
+    {
+        let mut oc = config.proxy_mcp_servers[idx]
+            .oauth
+            .clone()
+            .unwrap_or_default();
+        oc.client_id = Some(client_id.clone());
+        oc.token_endpoint = Some(meta.token_endpoint.clone());
+        config.proxy_mcp_servers[idx].oauth = Some(oc);
+        config
+            .save_to(&config_path)
+            .context("Failed to persist oauth config")?;
+    }
+
+    // 3. Device authorization request.
+    let device_ep = meta
+        .device_authorization_endpoint
+        .as_deref()
+        .context("Authorization server does not advertise a device_authorization_endpoint")?;
+    // Prefer configured scopes; otherwise fall back to the scopes the AS
+    // advertises (`scopes_supported`), matching ProxyOAuthConfig's documented
+    // behavior. Omit `scope` entirely only when neither is available.
+    let scope =
+        oauth_cfg.scopes.as_ref().map(|s| s.join(" ")).or_else(|| {
+            (!meta.scopes_supported.is_empty()).then(|| meta.scopes_supported.join(" "))
+        });
+    // RFC 8707 resource indicator: the MCP server we're authorizing against, so
+    // the AS binds the token's audience to it and the resource can validate it.
+    let resource = server.url.as_str();
+    let da = oauth::request_device_authorization(
+        &http,
+        device_ep,
+        &client_id,
+        scope.as_deref(),
+        Some(resource),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Device authorization failed: {e}"))?;
+
+    let verify = da
+        .verification_uri_complete
+        .as_deref()
+        .unwrap_or(&da.verification_uri);
+    println!("\nTo authorize '{server_name}', open:\n  {verify}");
+    println!("and confirm the code:  {}\n", da.user_code);
+    println!("Waiting for approval…");
+
+    // 4. Poll the token endpoint until granted (honoring interval / slow_down).
+    let mut interval = da.interval.max(1);
+    // Bound the wait by the device code's advertised lifetime, so a misbehaving
+    // AS that keeps answering `authorization_pending` can't hang the CLI forever.
+    let deadline =
+        std::time::Instant::now() + std::time::Duration::from_secs(da.expires_in.max(0) as u64);
+    let tokens = loop {
+        if std::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "Device code expired after {}s without approval — run `devboy login {server_name}` again",
+                da.expires_in
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        match oauth::poll_device_token_once(
+            &http,
+            &meta.token_endpoint,
+            &da.device_code,
+            &client_id,
+            Some(resource),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Token poll failed: {e}"))?
+        {
+            DevicePollOutcome::Pending => continue,
+            DevicePollOutcome::SlowDown => {
+                interval += 5;
+                continue;
+            }
+            DevicePollOutcome::Granted(resp) => {
+                break OAuthTokens::from_response(resp, chrono::Utc::now(), None)
+                    .map_err(|e| anyhow::anyhow!("Malformed token response: {e}"))?;
+            }
+        }
+    };
+
+    // 5. Persist tokens in the credential store — the proxy auto-refreshes hence.
+    let store = get_credential_store();
+    let json = serde_json::to_string(&tokens).context("Failed to serialize tokens")?;
+    store
+        .store(
+            &format!("proxy.{server_name}.oauth"),
+            &SecretString::from(json),
+        )
+        .context("Failed to store OAuth tokens")?;
+
+    println!("✓ Logged in to '{server_name}'. Tokens stored; the proxy will auto-refresh.");
+    Ok(())
+}
 
 async fn handle_issues_command(state: &str, limit: u32) -> Result<()> {
     let (config, _) = load_runtime_config()?;
@@ -2872,6 +3213,43 @@ async fn handle_test_command(provider: &str) -> Result<()> {
             }
         }
 
+        "yougile" => {
+            let yg = config.yougile.as_ref().context(
+                "YouGile not configured. Run: devboy config set yougile.board_id <board_id>",
+            )?;
+
+            let token = store
+                .get("yougile.token")
+                .context("Failed to get token")?
+                .context(
+                    "YouGile token not set. Run: devboy config set-secret yougile.token <token>",
+                )?;
+
+            println!("Testing YouGile connection...");
+            println!("  URL: {}", yg.url);
+            println!("  Board ID: {}", yg.board_id);
+
+            let client = YouGileClient::with_base_url(&yg.url, &yg.board_id, token);
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("YouGile connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("YouGile connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
         "jira" => {
             let jira = config
                 .jira
@@ -2904,6 +3282,49 @@ async fn handle_test_command(provider: &str) -> Result<()> {
                     println!("  Error: {}", e);
                     println!();
                     println!("Jira connection failed!");
+                    return Err(e.into());
+                }
+            }
+        }
+
+        "linear" => {
+            let linear = config.linear.as_ref().context(
+                "Linear not configured. Run: devboy config set linear.team_id <team_id>",
+            )?;
+
+            let token = store
+                .get("linear.token")
+                .context("Failed to get token")?
+                .context(
+                    "Linear token not set. Run: devboy config set-secret linear.token <lin_api_xxx>",
+                )?;
+
+            println!("Testing Linear connection...");
+            println!("  URL: {}", linear.url);
+            println!("  Team ID: {}", linear.team_id);
+            if let Some(team_key) = &linear.team_key {
+                println!("  Team Key: {}", team_key);
+            }
+
+            let mut client = LinearClient::with_base_url(&linear.url, &linear.team_id, token);
+            if let Some(team_key) = &linear.team_key {
+                client = client.with_team_key(team_key);
+            }
+
+            match client.get_current_user().await {
+                Ok(user) => {
+                    println!(
+                        "  Authenticated as: {} ({})",
+                        user.username,
+                        user.name.unwrap_or_default()
+                    );
+                    println!();
+                    println!("Linear connection successful!");
+                }
+                Err(e) => {
+                    println!("  Error: {}", e);
+                    println!();
+                    println!("Linear connection failed!");
                     return Err(e.into());
                 }
             }
@@ -2973,7 +3394,7 @@ async fn handle_test_command(provider: &str) -> Result<()> {
 
         _ => {
             println!("Unknown provider: {}", provider);
-            println!("Supported providers: github, gitlab, clickup, jira, slack");
+            println!("Supported providers: github, gitlab, clickup, jira, linear, slack");
         }
     }
 
@@ -3195,6 +3616,344 @@ async fn handle_mcp_command(no_config: bool) -> Result<()> {
 
     run_result?;
 
+    Ok(())
+}
+
+#[derive(Clone)]
+struct ConfluenceOauthTarget {
+    config: devboy_core::ConfluenceConfig,
+    secret_prefix: String,
+    label: String,
+}
+
+fn resolve_confluence_oauth_target(
+    config: &Config,
+    requested_context: Option<&str>,
+) -> Result<ConfluenceOauthTarget> {
+    if let Some(name) = requested_context {
+        let context = config
+            .contexts
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("Context '{}' not found", name))?;
+        let confluence = context
+            .confluence
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Context '{}' has no Confluence config", name))?;
+        return Ok(ConfluenceOauthTarget {
+            config: confluence,
+            secret_prefix: format!("contexts.{name}.confluence"),
+            label: name.to_string(),
+        });
+    }
+
+    if let Some(active) = config.resolve_active_context_name()
+        && let Some(context) = config.contexts.get(&active)
+        && let Some(confluence) = context.confluence.clone()
+    {
+        return Ok(ConfluenceOauthTarget {
+            config: confluence,
+            secret_prefix: format!("contexts.{active}.confluence"),
+            label: active,
+        });
+    }
+
+    if let Some(confluence) = config.confluence.clone() {
+        return Ok(ConfluenceOauthTarget {
+            config: confluence,
+            secret_prefix: "confluence".to_string(),
+            label: "global".to_string(),
+        });
+    }
+
+    Err(anyhow::anyhow!(
+        "Confluence is not configured in the active context or global config"
+    ))
+}
+
+fn get_secret_key(prefix: &str, field: &str) -> String {
+    format!("{prefix}.{field}")
+}
+
+fn read_secret_with_override(
+    store: &dyn CredentialStore,
+    key: &str,
+    override_value: Option<String>,
+    label: &str,
+) -> Result<String> {
+    if let Some(value) = override_value {
+        return Ok(value);
+    }
+    store
+        .get(key)?
+        .map(|secret| secret.expose_secret().to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!("{label} not set. Run: devboy config set-secret {key} <value>")
+        })
+}
+
+fn maybe_store_secret(
+    store: &dyn CredentialStore,
+    key: &str,
+    value: Option<&str>,
+    should_store: bool,
+) -> Result<()> {
+    if should_store && let Some(value) = value {
+        let secret = SecretString::from(value.to_string());
+        store.store(key, &secret)?;
+        println!("Stored {} in keychain", key);
+    }
+    Ok(())
+}
+
+/// Verifies the `state` echoed back by Atlassian against the one `oauth url`
+/// issued, then consumes it so a value can never be replayed.
+///
+/// Generating `state` without checking the round-trip leaves the parameter
+/// decorative. When no state was issued (the caller supplied their own via
+/// `--state`, or drove the authorization step out of band) there is nothing
+/// to compare against, so the check is skipped loudly rather than silently.
+fn verify_oauth_state(
+    store: &dyn devboy_storage::CredentialStore,
+    secret_prefix: &str,
+    provided: Option<&str>,
+) -> Result<()> {
+    let key = get_secret_key(secret_prefix, "oauth_state");
+    // Fail closed: a credential-store read error must not be mistaken for
+    // "no state was issued", which would skip verification entirely.
+    let stored = store
+        .get(&key)
+        .context("Failed to read the issued OAuth state from the credential store")?;
+
+    let Some(expected) = stored else {
+        if provided.is_some() {
+            tracing::warn!(
+                "No issued OAuth state on record; skipping verification of the supplied --state"
+            );
+        }
+        return Ok(());
+    };
+
+    let expected = expected.expose_secret();
+    let provided = provided.ok_or_else(|| {
+        anyhow::anyhow!(
+            "`oauth url` issued a state parameter, so --state is required: pass the `state` \
+             value from the redirect URL. This binds the authorization code to your request."
+        )
+    })?;
+
+    // Compare without an early exit on the first differing byte. The length
+    // is not secret here — it is fixed and public ("devboy-" + 32 hex chars) —
+    // so the length check leaks nothing about the nonce itself.
+    let matches = expected.len() == provided.len()
+        && expected
+            .bytes()
+            .zip(provided.bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0;
+
+    if !matches {
+        // Deliberately keep the stored value. Consuming it on failure would
+        // let a single wrong attempt clear the nonce, after which the next
+        // exchange finds nothing stored and skips verification altogether —
+        // turning a rejected attempt into a way to disable the check.
+        anyhow::bail!(
+            "OAuth state mismatch: the redirect did not come from the authorization request \
+             this CLI started. Discard the code and run `oauth url` again."
+        );
+    }
+
+    // Consume only on success, and surface a failure to do so: this runs
+    // before the code is exchanged, so erroring out here is safe and keeps
+    // the one-shot guarantee honest.
+    store
+        .delete(&key)
+        .context("Verified the OAuth state but failed to consume it; refusing to continue")?;
+    Ok(())
+}
+
+/// Generates the OAuth 2.0 `state` parameter — 128 bits from the OS CSPRNG,
+/// hex-encoded behind a `devboy-` marker.
+///
+/// Sourced from `getrandom`, the workspace's designated OS-level CSPRNG, so
+/// one implementation covers every platform: no `/dev/urandom` handling that
+/// breaks on Windows, and no PowerShell subprocess that breaks under a
+/// restrictive execution policy or on installs without it.
+fn generate_oauth_state() -> Result<String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut bytes = [0u8; 16];
+    getrandom::getrandom(&mut bytes)
+        .context("Failed to read OS randomness for OAuth state generation")?;
+
+    let mut state = String::with_capacity("devboy-".len() + bytes.len() * 2);
+    state.push_str("devboy-");
+    for byte in bytes {
+        state.push(HEX[(byte >> 4) as usize] as char);
+        state.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    Ok(state)
+}
+
+async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Result<()> {
+    match command {
+        ConfluenceOauthCommands::Url { context, state } => {
+            let (config, _) = load_runtime_config()?;
+            let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
+            let client_id = target
+                .config
+                .client_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence client_id is not configured"))?;
+            let redirect_uri = target
+                .config
+                .redirect_uri
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence redirect_uri is not configured"))?;
+            // Remember the issued value so `oauth exchange` can verify the
+            // one Atlassian echoes back. Without this round-trip the `state`
+            // parameter is decorative and provides no CSRF protection.
+            let state = match state {
+                Some(state) => state,
+                None => {
+                    let generated = generate_oauth_state()?;
+                    let store = get_credential_store();
+                    store.store(
+                        &get_secret_key(&target.secret_prefix, "oauth_state"),
+                        &SecretString::from(generated.clone()),
+                    )?;
+                    generated
+                }
+            };
+            let url = ConfluenceClient::oauth_authorize_url(
+                &client_id,
+                &redirect_uri,
+                &state,
+                &[
+                    "offline_access",
+                    "read:confluence-content.all",
+                    "write:confluence-content",
+                    "read:confluence-space.summary",
+                ],
+            );
+            println!("{url}");
+        }
+        ConfluenceOauthCommands::Exchange {
+            code,
+            state,
+            context,
+            client_secret,
+            store_client_secret,
+        } => {
+            let (config, _) = load_runtime_config()?;
+            let store = get_credential_store();
+            let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
+            verify_oauth_state(store.as_ref(), &target.secret_prefix, state.as_deref())?;
+            let client_id = target
+                .config
+                .client_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence client_id is not configured"))?;
+            let redirect_uri = target
+                .config
+                .redirect_uri
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence redirect_uri is not configured"))?;
+            let client_secret_key = get_secret_key(&target.secret_prefix, "client_secret");
+            let client_secret = read_secret_with_override(
+                store.as_ref(),
+                &client_secret_key,
+                client_secret,
+                "Confluence client secret",
+            )?;
+            let tokens = ConfluenceClient::exchange_oauth_code(
+                &client_id,
+                &client_secret,
+                &redirect_uri,
+                &code,
+            )
+            .await?;
+            let access_token = tokens.access_token.clone();
+            store.store(
+                &get_secret_key(&target.secret_prefix, "token"),
+                &access_token,
+            )?;
+            if let Some(refresh_token) = tokens.refresh_token.clone() {
+                store.store(
+                    &get_secret_key(&target.secret_prefix, "refresh_token"),
+                    &refresh_token,
+                )?;
+            }
+            maybe_store_secret(
+                store.as_ref(),
+                &client_secret_key,
+                Some(&client_secret),
+                store_client_secret,
+            )?;
+            println!("Stored Confluence OAuth access token for {}", target.label);
+            if tokens.refresh_token.is_some() {
+                println!("Stored Confluence OAuth refresh token for {}", target.label);
+            }
+            if let Some(expires_in) = tokens.expires_in {
+                println!("Access token expires in {} seconds", expires_in);
+            }
+        }
+        ConfluenceOauthCommands::Refresh {
+            context,
+            refresh_token,
+            client_secret,
+            store_client_secret,
+        } => {
+            let (config, _) = load_runtime_config()?;
+            let store = get_credential_store();
+            let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
+            let client_id = target
+                .config
+                .client_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Confluence client_id is not configured"))?;
+            let client_secret_key = get_secret_key(&target.secret_prefix, "client_secret");
+            let refresh_token_key = get_secret_key(&target.secret_prefix, "refresh_token");
+            let client_secret = read_secret_with_override(
+                store.as_ref(),
+                &client_secret_key,
+                client_secret,
+                "Confluence client secret",
+            )?;
+            let refresh_token = read_secret_with_override(
+                store.as_ref(),
+                &refresh_token_key,
+                refresh_token,
+                "Confluence refresh token",
+            )?;
+            let tokens =
+                ConfluenceClient::refresh_oauth_token(&client_id, &client_secret, &refresh_token)
+                    .await?;
+            let access_token = tokens.access_token.clone();
+            store.store(
+                &get_secret_key(&target.secret_prefix, "token"),
+                &access_token,
+            )?;
+            let refresh_token = tokens
+                .refresh_token
+                .clone()
+                .unwrap_or_else(|| SecretString::from(refresh_token));
+            store.store(&refresh_token_key, &refresh_token)?;
+            maybe_store_secret(
+                store.as_ref(),
+                &client_secret_key,
+                Some(&client_secret),
+                store_client_secret,
+            )?;
+            println!(
+                "Refreshed Confluence OAuth access token for {}",
+                target.label
+            );
+            if let Some(expires_in) = tokens.expires_in {
+                println!("Access token expires in {} seconds", expires_in);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -3501,6 +4260,7 @@ fn handle_proxy_add(
         tool_prefix: None,
         transport: transport_str.to_string(),
         routing: None,
+        oauth: None,
     };
 
     config.proxy_mcp_servers.push(proxy);
@@ -3552,6 +4312,45 @@ fn handle_proxy_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Build an OAuth token holder for an `auth_type = "oauth2"` proxy, loading the
+/// stored tokens + cached endpoints. Returns `Ok(None)` for non-oauth2 proxies;
+/// an error means the proxy isn't logged in yet (`devboy login <name>`).
+fn build_oauth_auth(
+    proxy_cfg: &ProxyMcpServerConfig,
+) -> Result<Option<Arc<devboy_mcp::oauth_auth::OAuthAuth>>> {
+    if proxy_cfg.auth_type != "oauth2" {
+        return Ok(None);
+    }
+    let hint = format!("run: devboy login {}", proxy_cfg.name);
+    let oc = proxy_cfg
+        .oauth
+        .as_ref()
+        .with_context(|| format!("proxy '{}' has no [oauth] config — {hint}", proxy_cfg.name))?;
+    let client_id = oc
+        .client_id
+        .clone()
+        .with_context(|| format!("proxy '{}' not logged in — {hint}", proxy_cfg.name))?;
+    let token_endpoint = oc
+        .token_endpoint
+        .clone()
+        .with_context(|| format!("proxy '{}' missing token_endpoint — {hint}", proxy_cfg.name))?;
+    let store: Arc<dyn CredentialStore> = Arc::from(get_credential_store());
+    let key = format!("proxy.{}.oauth", proxy_cfg.name);
+    let secret = store
+        .get(&key)?
+        .with_context(|| format!("proxy '{}' not logged in — {hint}", proxy_cfg.name))?;
+    let tokens: devboy_core::oauth::OAuthTokens = serde_json::from_str(secret.expose_secret())
+        .context("stored OAuth tokens are corrupt; re-login")?;
+    Ok(Some(Arc::new(devboy_mcp::oauth_auth::OAuthAuth::new(
+        tokens,
+        client_id,
+        token_endpoint,
+        proxy_cfg.url.clone(), // RFC 8707 resource indicator for refresh
+        key,
+        store,
+    ))))
+}
+
 async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> ProxyManager {
     let mut proxy_manager = ProxyManager::new();
     for proxy_cfg in &config.proxy_mcp_servers {
@@ -3566,6 +4365,16 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
 
         let transport = ProxyTransport::parse(&proxy_cfg.transport);
 
+        // For oauth2 upstreams, build the auto-refreshing token holder. Skip a
+        // proxy that isn't logged in rather than failing the whole manager.
+        let oauth = match build_oauth_auth(proxy_cfg) {
+            Ok(o) => o,
+            Err(e) => {
+                tracing::warn!("proxy '{}': {}", proxy_cfg.name, e);
+                continue;
+            }
+        };
+
         match McpProxyClient::connect(
             &proxy_cfg.name,
             &url,
@@ -3573,6 +4382,7 @@ async fn build_proxy_manager(config: &Config, store: &dyn CredentialStore) -> Pr
             token.as_ref(),
             &proxy_cfg.auth_type,
             transport,
+            oauth,
         )
         .await
         {
@@ -3620,6 +4430,7 @@ fn get_proxy_url_from_env(name: &str) -> Option<String> {
 /// - `DEVBOY_CONTEXTS_{NAME}_GITLAB_URL` + `_PROJECT_ID` -> GitLab provider
 /// - `DEVBOY_CONTEXTS_{NAME}_CLICKUP_LIST_ID` -> ClickUp provider
 /// - `DEVBOY_CONTEXTS_{NAME}_JIRA_URL` + `_PROJECT_KEY` + `_EMAIL` -> Jira provider
+/// - `DEVBOY_CONTEXTS_{NAME}_YOUGILE_BOARD_ID` -> YouGile provider
 /// - `DEVBOY_CONTEXTS_{NAME}_SLACK_WORKSPACE` or `_TEAM_ID` -> Slack provider
 ///
 /// Tokens are resolved via the credential store (which checks env vars first).
@@ -3709,7 +4520,7 @@ fn add_env_only_contexts(
 /// - "MY_PROJECT_GITLAB_URL" -> ("MY_PROJECT", "GITLAB", "URL")
 fn parse_context_env_key(key: &str) -> Option<(String, String, String)> {
     // Known provider prefixes (in order of specificity)
-    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA", "SLACK"];
+    let providers = ["GITHUB", "GITLAB", "CLICKUP", "JIRA", "YOUGILE", "SLACK"];
 
     for provider in providers {
         // Look for _PROVIDER_ in the key
@@ -3747,6 +4558,13 @@ struct EnvContextBuilder {
     jira_url: Option<String>,
     jira_project_key: Option<String>,
     jira_email: Option<String>,
+    // YouGile
+    yougile_url: Option<String>,
+    yougile_board_id: Option<String>,
+    // Linear
+    linear_url: Option<String>,
+    linear_team_id: Option<String>,
+    linear_team_key: Option<String>,
     // Slack
     slack_team_id: Option<String>,
     slack_workspace: Option<String>,
@@ -3784,6 +4602,13 @@ impl EnvContextBuilder {
             ("JIRA", "URL") => self.jira_url = Some(value),
             ("JIRA", "PROJECT_KEY") | ("JIRA", "PROJECT") => self.jira_project_key = Some(value),
             ("JIRA", "EMAIL") => self.jira_email = Some(value),
+            // YouGile
+            ("YOUGILE", "URL") | ("YOUGILE", "BASE_URL") => self.yougile_url = Some(value),
+            ("YOUGILE", "BOARD_ID") | ("YOUGILE", "BOARD") => self.yougile_board_id = Some(value),
+            // Linear
+            ("LINEAR", "URL") | ("LINEAR", "BASE_URL") => self.linear_url = Some(value),
+            ("LINEAR", "TEAM_ID") | ("LINEAR", "TEAM") => self.linear_team_id = Some(value),
+            ("LINEAR", "TEAM_KEY") | ("LINEAR", "KEY") => self.linear_team_key = Some(value),
             // Slack
             ("SLACK", "TEAM_ID") | ("SLACK", "TEAM") => self.slack_team_id = Some(value),
             ("SLACK", "WORKSPACE") => self.slack_workspace = Some(value),
@@ -3853,11 +4678,33 @@ impl EnvContextBuilder {
             None
         };
 
+        let yougile = if self.yougile_board_id.is_some() {
+            Some(YouGileConfig {
+                url: self
+                    .yougile_url
+                    .clone()
+                    .unwrap_or_else(|| "https://yougile.com/api-v2".to_string()),
+                board_id: self.yougile_board_id.clone().unwrap(),
+            })
+        } else {
+            None
+        };
+        let linear = self.linear_team_id.as_ref().map(|team_id| LinearConfig {
+            url: self
+                .linear_url
+                .clone()
+                .unwrap_or_else(|| "https://api.linear.app/graphql".to_string()),
+            team_id: team_id.clone(),
+            team_key: self.linear_team_key.clone(),
+        });
+
         let context = ContextConfig {
             github,
             gitlab,
             clickup,
             jira,
+            yougile,
+            linear,
             fireflies: None,
             confluence: None,
             slack: if self.slack_team_id.is_some()
@@ -3985,6 +4832,47 @@ fn add_context_providers_from_env(
         }
     }
 
+    if let Some(yougile) = &context.yougile {
+        if let Some(token) = get_token_for_context(store, context_name, "yougile") {
+            let client = YouGileClient::with_base_url(&yougile.url, &yougile.board_id, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added YouGile provider to env-only context '{}': {} (board {})",
+                context_name,
+                yougile.url,
+                yougile.board_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "YouGile configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
+    if let Some(linear) = &context.linear {
+        if let Some(token) = get_token_for_context(store, context_name, "linear") {
+            let mut client = LinearClient::with_base_url(&linear.url, &linear.team_id, token);
+            if let Some(team_key) = &linear.team_key {
+                client = client.with_team_key(team_key);
+            }
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Linear provider to env-only context '{}': {} (team {})",
+                context_name,
+                linear.url,
+                linear.team_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Linear configured via env for context '{}' but no token found",
+                context_name
+            );
+        }
+    }
+
     if let Some(confluence) = &context.confluence {
         if let Some(token) = get_token_for_context(store, context_name, "confluence") {
             let auth = match &confluence.username {
@@ -3994,8 +4882,23 @@ fn add_context_providers_from_env(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client = ConfluenceClient::new(&confluence.base_url, auth)
+            let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
+            if let Some(flavor) = confluence.flavor {
+                client = client.with_flavor(match flavor {
+                    devboy_core::ConfluenceFlavor::SelfHosted => {
+                        devboy_confluence::ConfluenceFlavor::SelfHosted
+                    }
+                    devboy_core::ConfluenceFlavor::Cloud => {
+                        devboy_confluence::ConfluenceFlavor::Cloud
+                    }
+                });
+            } else if confluence.cloud_id.is_some() {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = confluence.cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -4115,6 +5018,7 @@ async fn add_env_only_proxies_from_snapshot(
                 token.as_ref(),
                 "bearer",
                 ProxyTransport::StreamableHttp,
+                None,
             )
             .await
             {
@@ -4237,6 +5141,49 @@ fn add_context_providers(
         }
     }
 
+    if let Some(yougile) = &context.yougile {
+        if let Some(token) = get_token_for_context(store, context_name, "yougile") {
+            let client = YouGileClient::with_base_url(&yougile.url, &yougile.board_id, token);
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added YouGile provider to context '{}': {} (board {})",
+                context_name,
+                yougile.url,
+                yougile.board_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "YouGile configured in context '{}' but no token found (tried contexts.{}.yougile.token then yougile.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
+    if let Some(linear) = &context.linear {
+        if let Some(token) = get_token_for_context(store, context_name, "linear") {
+            let mut client = LinearClient::with_base_url(&linear.url, &linear.team_id, token);
+            if let Some(team_key) = &linear.team_key {
+                client = client.with_team_key(team_key);
+            }
+            server.add_provider_to_context(context_name, Arc::new(client));
+            tracing::info!(
+                "Added Linear provider to context '{}': {} (team {})",
+                context_name,
+                linear.url,
+                linear.team_id
+            );
+            added = true;
+        } else {
+            tracing::warn!(
+                "Linear configured in context '{}' but no token found (tried contexts.{}.linear.token then linear.token)",
+                context_name,
+                context_name
+            );
+        }
+    }
+
     if let Some(confluence) = &context.confluence {
         if let Some(token) = get_token_for_context(store, context_name, "confluence") {
             let auth = match &confluence.username {
@@ -4246,8 +5193,23 @@ fn add_context_providers(
                 },
                 None => ConfluenceAuth::BearerToken(token),
             };
-            let client = ConfluenceClient::new(&confluence.base_url, auth)
+            let mut client = ConfluenceClient::new(&confluence.base_url, auth)
                 .with_api_version(confluence.api_version.as_deref());
+            if let Some(flavor) = confluence.flavor {
+                client = client.with_flavor(match flavor {
+                    devboy_core::ConfluenceFlavor::SelfHosted => {
+                        devboy_confluence::ConfluenceFlavor::SelfHosted
+                    }
+                    devboy_core::ConfluenceFlavor::Cloud => {
+                        devboy_confluence::ConfluenceFlavor::Cloud
+                    }
+                });
+            } else if confluence.cloud_id.is_some() {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = confluence.cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             server.add_knowledge_base_provider_to_context(context_name, Arc::new(client));
             tracing::info!(
                 "Added Confluence knowledge base provider to context '{}': {}",
@@ -5375,8 +6337,12 @@ mod tests {
         let context = ContextConfig {
             confluence: Some(ConfluenceConfig {
                 base_url: "https://wiki.example.com".to_string(),
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".to_string()),
                 username: None,
+                client_id: None,
+                redirect_uri: None,
                 space_key: Some("ENG".to_string()),
             }),
             ..Default::default()
@@ -5390,6 +6356,106 @@ mod tests {
             server.active_knowledge_base_providers()[0].provider_name(),
             "confluence"
         );
+    }
+
+    #[test]
+    fn test_generate_oauth_state_uses_expected_shape() {
+        let state = generate_oauth_state().unwrap();
+
+        assert!(state.starts_with("devboy-"));
+        assert_eq!(state.len(), "devboy-".len() + 32);
+        assert!(
+            state["devboy-".len()..]
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
+    }
+
+    #[test]
+    fn test_verify_oauth_state_accepts_the_issued_value_once() {
+        let store = MemoryStore::with_credentials([(
+            "confluence.oauth_state".to_string(),
+            "devboy-abc123".to_string(),
+        )]);
+
+        verify_oauth_state(&store, "confluence", Some("devboy-abc123")).unwrap();
+        // Consumed: the same value must not authorise a second exchange.
+        assert!(store.get("confluence.oauth_state").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_verify_oauth_state_rejects_mismatch_and_missing() {
+        let store = MemoryStore::with_credentials([(
+            "confluence.oauth_state".to_string(),
+            "devboy-abc123".to_string(),
+        )]);
+        let err = verify_oauth_state(&store, "confluence", Some("devboy-tampered")).unwrap_err();
+        assert!(
+            err.to_string().contains("state mismatch"),
+            "unexpected error: {err}"
+        );
+
+        // Regression: a rejected attempt must NOT consume the nonce. Burning
+        // it would leave nothing stored, and the next exchange would then take
+        // the "no state issued" path and skip verification entirely — one bad
+        // guess would disable the check.
+        assert!(
+            store.get("confluence.oauth_state").unwrap().is_some(),
+            "a rejected state must stay on record"
+        );
+        verify_oauth_state(&store, "confluence", Some("devboy-tampered")).unwrap_err();
+        verify_oauth_state(&store, "confluence", Some("devboy-abc123")).unwrap();
+
+        let store = MemoryStore::with_credentials([(
+            "confluence.oauth_state".to_string(),
+            "devboy-abc123".to_string(),
+        )]);
+        let err = verify_oauth_state(&store, "confluence", None).unwrap_err();
+        assert!(
+            err.to_string().contains("--state is required"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_verify_oauth_state_skips_when_none_was_issued() {
+        // Caller supplied their own state via `--state` on `oauth url`, or
+        // drove authorization out of band — nothing to compare against.
+        let store = MemoryStore::with_credentials([]);
+        verify_oauth_state(&store, "confluence", Some("whatever")).unwrap();
+        verify_oauth_state(&store, "confluence", None).unwrap();
+    }
+
+    #[test]
+    fn test_generate_oauth_state_is_unpredictable() {
+        // The whole point of `state` is CSRF protection, so successive
+        // values must not repeat. The previous implementation derived it
+        // from a UNIX timestamp, which collides for calls within the same
+        // second — exactly what this guards against.
+        let states: std::collections::HashSet<String> =
+            (0..64).map(|_| generate_oauth_state().unwrap()).collect();
+        assert_eq!(states.len(), 64, "generated states must all be distinct");
+    }
+
+    #[test]
+    fn test_add_context_providers_registers_yougile_provider() {
+        let mut server = McpServer::new();
+        let store = MemoryStore::with_credentials([(
+            "contexts.default.yougile.token".to_string(),
+            "yg-secret".to_string(),
+        )]);
+        let context = ContextConfig {
+            yougile: Some(YouGileConfig {
+                url: "https://yougile.com/api-v2".to_string(),
+                board_id: "board-1".to_string(),
+            }),
+            ..Default::default()
+        };
+
+        let added = add_context_providers(&mut server, &store, "default", &context);
+
+        assert!(added);
+        assert_eq!(server.active_providers().len(), 1);
     }
 
     #[test]
@@ -5494,6 +6560,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
@@ -5520,6 +6587,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "sse".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
@@ -5550,6 +6618,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }),
             ..Default::default()
         };
@@ -6099,6 +7168,19 @@ args = ["old"]
     }
 
     #[test]
+    fn test_parse_context_env_key_yougile() {
+        let result = parse_context_env_key("OPS_YOUGILE_BOARD_ID");
+        assert_eq!(
+            result,
+            Some((
+                "OPS".to_string(),
+                "YOUGILE".to_string(),
+                "BOARD_ID".to_string()
+            ))
+        );
+    }
+
+    #[test]
     fn test_parse_context_env_key_invalid() {
         assert_eq!(parse_context_env_key("INVALID_KEY"), None);
         assert_eq!(parse_context_env_key("GITHUB_OWNER"), None); // Missing context name
@@ -6204,6 +7286,22 @@ args = ["old"]
         let context = builder.build();
         // Should return None because Jira requires all three fields
         assert!(context.is_none() || context.as_ref().map(|c| c.jira.is_none()).unwrap_or(true));
+    }
+
+    #[test]
+    fn test_env_context_builder_yougile() {
+        let mut builder = EnvContextBuilder::new("TEST".to_string());
+        builder.set_field("YOUGILE", "BOARD_ID", "board-123".to_string());
+        builder.set_field(
+            "YOUGILE",
+            "URL",
+            "https://company.yougile.com/api-v2".to_string(),
+        );
+
+        let context = builder.build().unwrap();
+        let yougile = context.yougile.unwrap();
+        assert_eq!(yougile.board_id, "board-123");
+        assert_eq!(yougile.url, "https://company.yougile.com/api-v2");
     }
 
     #[test]

@@ -510,6 +510,29 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::asset::SemanticAnalys
 pub fn devboy_core::asset::filename_from_url(url: &str) -> alloc::string::String
 pub fn devboy_core::asset::parse_markdown_attachments(markdown: &str) -> alloc::vec::Vec<devboy_core::asset::MarkdownAttachment>
 pub mod devboy_core::config
+pub enum devboy_core::config::ConfluenceFlavor
+pub devboy_core::config::ConfluenceFlavor::Cloud
+pub devboy_core::config::ConfluenceFlavor::SelfHosted
+impl core::clone::Clone for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::clone(&self) -> devboy_core::config::ConfluenceFlavor
+impl core::cmp::Eq for devboy_core::config::ConfluenceFlavor
+impl core::cmp::PartialEq for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::eq(&self, other: &devboy_core::config::ConfluenceFlavor) -> bool
+impl core::fmt::Debug for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::config::ConfluenceFlavor
+impl core::marker::StructuralPartialEq for devboy_core::config::ConfluenceFlavor
+impl serde_core::ser::Serialize for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::ConfluenceFlavor
+impl core::marker::Send for devboy_core::config::ConfluenceFlavor
+impl core::marker::Sync for devboy_core::config::ConfluenceFlavor
+impl core::marker::Unpin for devboy_core::config::ConfluenceFlavor
+impl core::marker::UnsafeUnpin for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ConfluenceFlavor
 pub enum devboy_core::config::RoutingStrategy
 pub devboy_core::config::RoutingStrategy::Local
 pub devboy_core::config::RoutingStrategy::LocalFirst
@@ -593,6 +616,7 @@ pub devboy_core::config::Config::format_pipeline: core::option::Option<devboy_co
 pub devboy_core::config::Config::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::config::Config::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::config::Config::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::config::Config::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::config::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::config::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::config::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
@@ -600,6 +624,7 @@ pub devboy_core::config::Config::secrets: core::option::Option<devboy_core::conf
 pub devboy_core::config::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::config::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::config::Config::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::config::Config::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::Config
 pub const devboy_core::config::Config::DEFAULT_CONTEXT_NAME: &'static str
 pub fn devboy_core::config::Config::config_dir() -> devboy_core::error::Result<std::path::PathBuf>
@@ -641,6 +666,10 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::Config
 pub struct devboy_core::config::ConfluenceConfig
 pub devboy_core::config::ConfluenceConfig::api_version: core::option::Option<alloc::string::String>
 pub devboy_core::config::ConfluenceConfig::base_url: alloc::string::String
+pub devboy_core::config::ConfluenceConfig::client_id: core::option::Option<alloc::string::String>
+pub devboy_core::config::ConfluenceConfig::cloud_id: core::option::Option<alloc::string::String>
+pub devboy_core::config::ConfluenceConfig::flavor: core::option::Option<devboy_core::config::ConfluenceFlavor>
+pub devboy_core::config::ConfluenceConfig::redirect_uri: core::option::Option<alloc::string::String>
 pub devboy_core::config::ConfluenceConfig::space_key: core::option::Option<alloc::string::String>
 pub devboy_core::config::ConfluenceConfig::username: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::config::ConfluenceConfig
@@ -665,8 +694,10 @@ pub devboy_core::config::ContextConfig::fireflies: core::option::Option<devboy_c
 pub devboy_core::config::ContextConfig::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::config::ContextConfig::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::config::ContextConfig::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::config::ContextConfig::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::config::ContextConfig::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::config::ContextConfig::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::config::ContextConfig::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::ContextConfig
 pub fn devboy_core::config::ContextConfig::configured_providers(&self) -> alloc::vec::Vec<&'static str>
 pub fn devboy_core::config::ContextConfig::has_any_provider(&self) -> bool
@@ -783,6 +814,25 @@ impl core::marker::Unpin for devboy_core::config::JiraConfig
 impl core::marker::UnsafeUnpin for devboy_core::config::JiraConfig
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::JiraConfig
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::JiraConfig
+pub struct devboy_core::config::LinearConfig
+pub devboy_core::config::LinearConfig::team_id: alloc::string::String
+pub devboy_core::config::LinearConfig::team_key: core::option::Option<alloc::string::String>
+pub devboy_core::config::LinearConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::clone(&self) -> devboy_core::config::LinearConfig
+impl core::fmt::Debug for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::LinearConfig
+impl core::marker::Send for devboy_core::config::LinearConfig
+impl core::marker::Sync for devboy_core::config::LinearConfig
+impl core::marker::Unpin for devboy_core::config::LinearConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::LinearConfig
 pub struct devboy_core::config::ProxyConfig
 pub devboy_core::config::ProxyConfig::routing: devboy_core::config::ProxyRoutingConfig
 pub devboy_core::config::ProxyConfig::secrets: devboy_core::config::ProxySecretsConfig
@@ -828,6 +878,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ProxyMatching
 pub struct devboy_core::config::ProxyMcpServerConfig
 pub devboy_core::config::ProxyMcpServerConfig::auth_type: alloc::string::String
 pub devboy_core::config::ProxyMcpServerConfig::name: alloc::string::String
+pub devboy_core::config::ProxyMcpServerConfig::oauth: core::option::Option<devboy_core::config::ProxyOAuthConfig>
 pub devboy_core::config::ProxyMcpServerConfig::routing: core::option::Option<devboy_core::config::ProxyRoutingOverride>
 pub devboy_core::config::ProxyMcpServerConfig::token_key: core::option::Option<alloc::string::String>
 pub devboy_core::config::ProxyMcpServerConfig::tool_prefix: core::option::Option<alloc::string::String>
@@ -848,6 +899,28 @@ impl core::marker::Unpin for devboy_core::config::ProxyMcpServerConfig
 impl core::marker::UnsafeUnpin for devboy_core::config::ProxyMcpServerConfig
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::ProxyMcpServerConfig
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ProxyMcpServerConfig
+pub struct devboy_core::config::ProxyOAuthConfig
+pub devboy_core::config::ProxyOAuthConfig::authorization_server: core::option::Option<alloc::string::String>
+pub devboy_core::config::ProxyOAuthConfig::client_id: core::option::Option<alloc::string::String>
+pub devboy_core::config::ProxyOAuthConfig::scopes: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub devboy_core::config::ProxyOAuthConfig::token_endpoint: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_core::config::ProxyOAuthConfig
+pub fn devboy_core::config::ProxyOAuthConfig::clone(&self) -> devboy_core::config::ProxyOAuthConfig
+impl core::default::Default for devboy_core::config::ProxyOAuthConfig
+pub fn devboy_core::config::ProxyOAuthConfig::default() -> devboy_core::config::ProxyOAuthConfig
+impl core::fmt::Debug for devboy_core::config::ProxyOAuthConfig
+pub fn devboy_core::config::ProxyOAuthConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::config::ProxyOAuthConfig
+pub fn devboy_core::config::ProxyOAuthConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::ProxyOAuthConfig
+pub fn devboy_core::config::ProxyOAuthConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::ProxyOAuthConfig
+impl core::marker::Send for devboy_core::config::ProxyOAuthConfig
+impl core::marker::Sync for devboy_core::config::ProxyOAuthConfig
+impl core::marker::Unpin for devboy_core::config::ProxyOAuthConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::ProxyOAuthConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::ProxyOAuthConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ProxyOAuthConfig
 pub struct devboy_core::config::ProxyRoutingConfig
 pub devboy_core::config::ProxyRoutingConfig::fallback_on_error: bool
 pub devboy_core::config::ProxyRoutingConfig::strategy: devboy_core::config::RoutingStrategy
@@ -1068,6 +1141,24 @@ impl core::marker::Unpin for devboy_core::config::TelegramConfig
 impl core::marker::UnsafeUnpin for devboy_core::config::TelegramConfig
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::TelegramConfig
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::TelegramConfig
+pub struct devboy_core::config::YouGileConfig
+pub devboy_core::config::YouGileConfig::board_id: alloc::string::String
+pub devboy_core::config::YouGileConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::clone(&self) -> devboy_core::config::YouGileConfig
+impl core::fmt::Debug for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::YouGileConfig
+pub fn devboy_core::config::YouGileConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::YouGileConfig
+impl core::marker::Send for devboy_core::config::YouGileConfig
+impl core::marker::Sync for devboy_core::config::YouGileConfig
+impl core::marker::Unpin for devboy_core::config::YouGileConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::YouGileConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::YouGileConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::YouGileConfig
 pub fn devboy_core::config::default_slack_required_scopes() -> alloc::vec::Vec<alloc::string::String>
 pub fn devboy_core::config::matches_glob(pattern: &str, name: &str) -> bool
 pub fn devboy_core::config::routing_strategy_slug(s: devboy_core::config::RoutingStrategy) -> alloc::string::String
@@ -1254,6 +1345,154 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::liveness::LivenessRes
 pub trait devboy_core::liveness::LivenessProbe: core::marker::Send + core::marker::Sync
 pub fn devboy_core::liveness::LivenessProbe::provider_name(&self) -> &str
 pub fn devboy_core::liveness::LivenessProbe::test<'life0, 'life1, 'async_trait>(&'life0 self, _token: &'life1 secrecy::SecretString) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::liveness::LivenessResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
+pub mod devboy_core::oauth
+pub enum devboy_core::oauth::DevicePollOutcome
+pub devboy_core::oauth::DevicePollOutcome::Granted(devboy_core::oauth::TokenResponse)
+pub devboy_core::oauth::DevicePollOutcome::Pending
+pub devboy_core::oauth::DevicePollOutcome::SlowDown
+impl core::fmt::Debug for devboy_core::oauth::DevicePollOutcome
+pub fn devboy_core::oauth::DevicePollOutcome::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::oauth::DevicePollOutcome
+impl core::marker::Send for devboy_core::oauth::DevicePollOutcome
+impl core::marker::Sync for devboy_core::oauth::DevicePollOutcome
+impl core::marker::Unpin for devboy_core::oauth::DevicePollOutcome
+impl core::marker::UnsafeUnpin for devboy_core::oauth::DevicePollOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::DevicePollOutcome
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::DevicePollOutcome
+pub enum devboy_core::oauth::OAuthError
+pub devboy_core::oauth::OAuthError::Http(alloc::string::String)
+pub devboy_core::oauth::OAuthError::Malformed(alloc::string::String)
+pub devboy_core::oauth::OAuthError::NoAuthorizationServer
+pub devboy_core::oauth::OAuthError::NoDeviceEndpoint
+pub devboy_core::oauth::OAuthError::NoResourceMetadata
+pub devboy_core::oauth::OAuthError::Oauth(alloc::string::String)
+impl core::error::Error for devboy_core::oauth::OAuthError
+impl core::fmt::Debug for devboy_core::oauth::OAuthError
+pub fn devboy_core::oauth::OAuthError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_core::oauth::OAuthError
+pub fn devboy_core::oauth::OAuthError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::oauth::OAuthError
+impl core::marker::Send for devboy_core::oauth::OAuthError
+impl core::marker::Sync for devboy_core::oauth::OAuthError
+impl core::marker::Unpin for devboy_core::oauth::OAuthError
+impl core::marker::UnsafeUnpin for devboy_core::oauth::OAuthError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::OAuthError
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::OAuthError
+pub struct devboy_core::oauth::AuthServerMetadata
+pub devboy_core::oauth::AuthServerMetadata::device_authorization_endpoint: core::option::Option<alloc::string::String>
+pub devboy_core::oauth::AuthServerMetadata::issuer: alloc::string::String
+pub devboy_core::oauth::AuthServerMetadata::registration_endpoint: core::option::Option<alloc::string::String>
+pub devboy_core::oauth::AuthServerMetadata::scopes_supported: alloc::vec::Vec<alloc::string::String>
+pub devboy_core::oauth::AuthServerMetadata::token_endpoint: alloc::string::String
+impl core::clone::Clone for devboy_core::oauth::AuthServerMetadata
+pub fn devboy_core::oauth::AuthServerMetadata::clone(&self) -> devboy_core::oauth::AuthServerMetadata
+impl core::fmt::Debug for devboy_core::oauth::AuthServerMetadata
+pub fn devboy_core::oauth::AuthServerMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::oauth::AuthServerMetadata
+pub fn devboy_core::oauth::AuthServerMetadata::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::oauth::AuthServerMetadata
+impl core::marker::Send for devboy_core::oauth::AuthServerMetadata
+impl core::marker::Sync for devboy_core::oauth::AuthServerMetadata
+impl core::marker::Unpin for devboy_core::oauth::AuthServerMetadata
+impl core::marker::UnsafeUnpin for devboy_core::oauth::AuthServerMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::AuthServerMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::AuthServerMetadata
+pub struct devboy_core::oauth::ClientRegistrationResponse
+pub devboy_core::oauth::ClientRegistrationResponse::client_id: alloc::string::String
+impl core::clone::Clone for devboy_core::oauth::ClientRegistrationResponse
+pub fn devboy_core::oauth::ClientRegistrationResponse::clone(&self) -> devboy_core::oauth::ClientRegistrationResponse
+impl core::fmt::Debug for devboy_core::oauth::ClientRegistrationResponse
+pub fn devboy_core::oauth::ClientRegistrationResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::oauth::ClientRegistrationResponse
+pub fn devboy_core::oauth::ClientRegistrationResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::oauth::ClientRegistrationResponse
+impl core::marker::Send for devboy_core::oauth::ClientRegistrationResponse
+impl core::marker::Sync for devboy_core::oauth::ClientRegistrationResponse
+impl core::marker::Unpin for devboy_core::oauth::ClientRegistrationResponse
+impl core::marker::UnsafeUnpin for devboy_core::oauth::ClientRegistrationResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::ClientRegistrationResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::ClientRegistrationResponse
+pub struct devboy_core::oauth::DeviceAuthResponse
+pub devboy_core::oauth::DeviceAuthResponse::device_code: alloc::string::String
+pub devboy_core::oauth::DeviceAuthResponse::expires_in: i64
+pub devboy_core::oauth::DeviceAuthResponse::interval: u64
+pub devboy_core::oauth::DeviceAuthResponse::user_code: alloc::string::String
+pub devboy_core::oauth::DeviceAuthResponse::verification_uri: alloc::string::String
+pub devboy_core::oauth::DeviceAuthResponse::verification_uri_complete: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_core::oauth::DeviceAuthResponse
+pub fn devboy_core::oauth::DeviceAuthResponse::clone(&self) -> devboy_core::oauth::DeviceAuthResponse
+impl core::fmt::Debug for devboy_core::oauth::DeviceAuthResponse
+pub fn devboy_core::oauth::DeviceAuthResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::oauth::DeviceAuthResponse
+pub fn devboy_core::oauth::DeviceAuthResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::oauth::DeviceAuthResponse
+impl core::marker::Send for devboy_core::oauth::DeviceAuthResponse
+impl core::marker::Sync for devboy_core::oauth::DeviceAuthResponse
+impl core::marker::Unpin for devboy_core::oauth::DeviceAuthResponse
+impl core::marker::UnsafeUnpin for devboy_core::oauth::DeviceAuthResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::DeviceAuthResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::DeviceAuthResponse
+pub struct devboy_core::oauth::OAuthTokens
+pub devboy_core::oauth::OAuthTokens::access_token: secrecy::SecretString
+pub devboy_core::oauth::OAuthTokens::expires_at: chrono::datetime::DateTime<chrono::offset::utc::Utc>
+pub devboy_core::oauth::OAuthTokens::refresh_token: secrecy::SecretString
+impl devboy_core::oauth::OAuthTokens
+pub fn devboy_core::oauth::OAuthTokens::from_response(resp: devboy_core::oauth::TokenResponse, now: chrono::datetime::DateTime<chrono::offset::utc::Utc>, prev_refresh: core::option::Option<&str>) -> core::result::Result<Self, devboy_core::oauth::OAuthError>
+pub fn devboy_core::oauth::OAuthTokens::is_near_expiry(&self, now: chrono::datetime::DateTime<chrono::offset::utc::Utc>, skew: chrono::Duration) -> bool
+impl core::clone::Clone for devboy_core::oauth::OAuthTokens
+pub fn devboy_core::oauth::OAuthTokens::clone(&self) -> devboy_core::oauth::OAuthTokens
+impl core::fmt::Debug for devboy_core::oauth::OAuthTokens
+pub fn devboy_core::oauth::OAuthTokens::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::oauth::OAuthTokens
+pub fn devboy_core::oauth::OAuthTokens::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::oauth::OAuthTokens
+pub fn devboy_core::oauth::OAuthTokens::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::oauth::OAuthTokens
+impl core::marker::Send for devboy_core::oauth::OAuthTokens
+impl core::marker::Sync for devboy_core::oauth::OAuthTokens
+impl core::marker::Unpin for devboy_core::oauth::OAuthTokens
+impl core::marker::UnsafeUnpin for devboy_core::oauth::OAuthTokens
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::OAuthTokens
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::OAuthTokens
+pub struct devboy_core::oauth::ProtectedResourceMetadata
+pub devboy_core::oauth::ProtectedResourceMetadata::authorization_servers: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for devboy_core::oauth::ProtectedResourceMetadata
+pub fn devboy_core::oauth::ProtectedResourceMetadata::clone(&self) -> devboy_core::oauth::ProtectedResourceMetadata
+impl core::fmt::Debug for devboy_core::oauth::ProtectedResourceMetadata
+pub fn devboy_core::oauth::ProtectedResourceMetadata::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::oauth::ProtectedResourceMetadata
+pub fn devboy_core::oauth::ProtectedResourceMetadata::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::oauth::ProtectedResourceMetadata
+impl core::marker::Send for devboy_core::oauth::ProtectedResourceMetadata
+impl core::marker::Sync for devboy_core::oauth::ProtectedResourceMetadata
+impl core::marker::Unpin for devboy_core::oauth::ProtectedResourceMetadata
+impl core::marker::UnsafeUnpin for devboy_core::oauth::ProtectedResourceMetadata
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::ProtectedResourceMetadata
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::ProtectedResourceMetadata
+pub struct devboy_core::oauth::TokenResponse
+pub devboy_core::oauth::TokenResponse::access_token: secrecy::SecretString
+pub devboy_core::oauth::TokenResponse::expires_in: core::option::Option<i64>
+pub devboy_core::oauth::TokenResponse::refresh_token: core::option::Option<secrecy::SecretString>
+pub devboy_core::oauth::TokenResponse::token_type: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_core::oauth::TokenResponse
+pub fn devboy_core::oauth::TokenResponse::clone(&self) -> devboy_core::oauth::TokenResponse
+impl core::fmt::Debug for devboy_core::oauth::TokenResponse
+pub fn devboy_core::oauth::TokenResponse::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::oauth::TokenResponse
+pub fn devboy_core::oauth::TokenResponse::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::oauth::TokenResponse
+impl core::marker::Send for devboy_core::oauth::TokenResponse
+impl core::marker::Sync for devboy_core::oauth::TokenResponse
+impl core::marker::Unpin for devboy_core::oauth::TokenResponse
+impl core::marker::UnsafeUnpin for devboy_core::oauth::TokenResponse
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::oauth::TokenResponse
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::oauth::TokenResponse
+pub async fn devboy_core::oauth::discover(http: &reqwest::async_impl::client::Client, www_authenticate: &str) -> core::result::Result<devboy_core::oauth::AuthServerMetadata, devboy_core::oauth::OAuthError>
+pub async fn devboy_core::oauth::fetch_as_metadata(http: &reqwest::async_impl::client::Client, issuer: &str) -> core::result::Result<devboy_core::oauth::AuthServerMetadata, devboy_core::oauth::OAuthError>
+pub async fn devboy_core::oauth::poll_device_token_once(http: &reqwest::async_impl::client::Client, token_endpoint: &str, device_code: &str, client_id: &str, resource: core::option::Option<&str>) -> core::result::Result<devboy_core::oauth::DevicePollOutcome, devboy_core::oauth::OAuthError>
+pub async fn devboy_core::oauth::refresh(http: &reqwest::async_impl::client::Client, token_endpoint: &str, refresh_token: &str, client_id: &str, resource: core::option::Option<&str>) -> core::result::Result<devboy_core::oauth::TokenResponse, devboy_core::oauth::OAuthError>
+pub async fn devboy_core::oauth::register_client(http: &reqwest::async_impl::client::Client, registration_endpoint: &str, client_name: &str) -> core::result::Result<alloc::string::String, devboy_core::oauth::OAuthError>
+pub async fn devboy_core::oauth::request_device_authorization(http: &reqwest::async_impl::client::Client, device_endpoint: &str, client_id: &str, scope: core::option::Option<&str>, resource: core::option::Option<&str>) -> core::result::Result<devboy_core::oauth::DeviceAuthResponse, devboy_core::oauth::OAuthError>
 pub mod devboy_core::provider
 pub trait devboy_core::provider::IssueProvider: core::marker::Send + core::marker::Sync
 pub fn devboy_core::provider::IssueProvider::add_comment<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, issue_key: &'life1 str, body: &'life2 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::Comment>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
@@ -3757,6 +3996,29 @@ impl core::marker::Unpin for devboy_core::asset::AssetContextKind
 impl core::marker::UnsafeUnpin for devboy_core::asset::AssetContextKind
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::asset::AssetContextKind
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::asset::AssetContextKind
+pub enum devboy_core::ConfluenceFlavor
+pub devboy_core::ConfluenceFlavor::Cloud
+pub devboy_core::ConfluenceFlavor::SelfHosted
+impl core::clone::Clone for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::clone(&self) -> devboy_core::config::ConfluenceFlavor
+impl core::cmp::Eq for devboy_core::config::ConfluenceFlavor
+impl core::cmp::PartialEq for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::eq(&self, other: &devboy_core::config::ConfluenceFlavor) -> bool
+impl core::fmt::Debug for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::config::ConfluenceFlavor
+impl core::marker::StructuralPartialEq for devboy_core::config::ConfluenceFlavor
+impl serde_core::ser::Serialize for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::ConfluenceFlavor
+pub fn devboy_core::config::ConfluenceFlavor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::ConfluenceFlavor
+impl core::marker::Send for devboy_core::config::ConfluenceFlavor
+impl core::marker::Sync for devboy_core::config::ConfluenceFlavor
+impl core::marker::Unpin for devboy_core::config::ConfluenceFlavor
+impl core::marker::UnsafeUnpin for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::ConfluenceFlavor
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ConfluenceFlavor
 pub enum devboy_core::ContentKind
 pub devboy_core::ContentKind::Binary
 pub devboy_core::ContentKind::Data
@@ -4360,6 +4622,7 @@ pub devboy_core::Config::format_pipeline: core::option::Option<devboy_core::conf
 pub devboy_core::Config::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::Config::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::Config::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::Config::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
@@ -4367,6 +4630,7 @@ pub devboy_core::Config::secrets: core::option::Option<devboy_core::config::Secr
 pub devboy_core::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::Config::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::Config::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::Config
 pub const devboy_core::config::Config::DEFAULT_CONTEXT_NAME: &'static str
 pub fn devboy_core::config::Config::config_dir() -> devboy_core::error::Result<std::path::PathBuf>
@@ -4408,6 +4672,10 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::Config
 pub struct devboy_core::ConfluenceConfig
 pub devboy_core::ConfluenceConfig::api_version: core::option::Option<alloc::string::String>
 pub devboy_core::ConfluenceConfig::base_url: alloc::string::String
+pub devboy_core::ConfluenceConfig::client_id: core::option::Option<alloc::string::String>
+pub devboy_core::ConfluenceConfig::cloud_id: core::option::Option<alloc::string::String>
+pub devboy_core::ConfluenceConfig::flavor: core::option::Option<devboy_core::config::ConfluenceFlavor>
+pub devboy_core::ConfluenceConfig::redirect_uri: core::option::Option<alloc::string::String>
 pub devboy_core::ConfluenceConfig::space_key: core::option::Option<alloc::string::String>
 pub devboy_core::ConfluenceConfig::username: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::config::ConfluenceConfig
@@ -4462,8 +4730,10 @@ pub devboy_core::ContextConfig::fireflies: core::option::Option<devboy_core::con
 pub devboy_core::ContextConfig::github: core::option::Option<devboy_core::config::GitHubConfig>
 pub devboy_core::ContextConfig::gitlab: core::option::Option<devboy_core::config::GitLabConfig>
 pub devboy_core::ContextConfig::jira: core::option::Option<devboy_core::config::JiraConfig>
+pub devboy_core::ContextConfig::linear: core::option::Option<devboy_core::config::LinearConfig>
 pub devboy_core::ContextConfig::slack: core::option::Option<devboy_core::config::SlackConfig>
 pub devboy_core::ContextConfig::telegram: core::option::Option<devboy_core::config::TelegramConfig>
+pub devboy_core::ContextConfig::yougile: core::option::Option<devboy_core::config::YouGileConfig>
 impl devboy_core::config::ContextConfig
 pub fn devboy_core::config::ContextConfig::configured_providers(&self) -> alloc::vec::Vec<&'static str>
 pub fn devboy_core::config::ContextConfig::has_any_provider(&self) -> bool
@@ -5326,6 +5596,25 @@ impl core::marker::Unpin for devboy_core::types::KbSpace
 impl core::marker::UnsafeUnpin for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::KbSpace
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::KbSpace
+pub struct devboy_core::LinearConfig
+pub devboy_core::LinearConfig::team_id: alloc::string::String
+pub devboy_core::LinearConfig::team_key: core::option::Option<alloc::string::String>
+pub devboy_core::LinearConfig::url: alloc::string::String
+impl core::clone::Clone for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::clone(&self) -> devboy_core::config::LinearConfig
+impl core::fmt::Debug for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::LinearConfig
+pub fn devboy_core::config::LinearConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::LinearConfig
+impl core::marker::Send for devboy_core::config::LinearConfig
+impl core::marker::Sync for devboy_core::config::LinearConfig
+impl core::marker::Unpin for devboy_core::config::LinearConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::LinearConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::LinearConfig
 pub struct devboy_core::ListCustomFieldsParams
 pub devboy_core::ListCustomFieldsParams::issue_type: core::option::Option<alloc::string::String>
 pub devboy_core::ListCustomFieldsParams::limit: core::option::Option<u32>
@@ -5989,6 +6278,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ProxyMatching
 pub struct devboy_core::ProxyMcpServerConfig
 pub devboy_core::ProxyMcpServerConfig::auth_type: alloc::string::String
 pub devboy_core::ProxyMcpServerConfig::name: alloc::string::String
+pub devboy_core::ProxyMcpServerConfig::oauth: core::option::Option<devboy_core::config::ProxyOAuthConfig>
 pub devboy_core::ProxyMcpServerConfig::routing: core::option::Option<devboy_core::config::ProxyRoutingOverride>
 pub devboy_core::ProxyMcpServerConfig::token_key: core::option::Option<alloc::string::String>
 pub devboy_core::ProxyMcpServerConfig::tool_prefix: core::option::Option<alloc::string::String>

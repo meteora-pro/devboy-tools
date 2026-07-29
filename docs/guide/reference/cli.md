@@ -15,6 +15,10 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy config get`↴](#devboy-config-get)
 * [`devboy config list`↴](#devboy-config-list)
 * [`devboy config path`↴](#devboy-config-path)
+* [`devboy config confluence-oauth`↴](#devboy-config-confluence-oauth)
+* [`devboy config confluence-oauth url`↴](#devboy-config-confluence-oauth-url)
+* [`devboy config confluence-oauth exchange`↴](#devboy-config-confluence-oauth-exchange)
+* [`devboy config confluence-oauth refresh`↴](#devboy-config-confluence-oauth-refresh)
 * [`devboy context`↴](#devboy-context)
 * [`devboy context list`↴](#devboy-context-list)
 * [`devboy context use`↴](#devboy-context-use)
@@ -78,6 +82,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
 * [`devboy trace end`↴](#devboy-trace-end)
+* [`devboy login`↴](#devboy-login)
 * [`devboy doctor`↴](#devboy-doctor)
 * [`devboy upgrade`↴](#devboy-upgrade)
 * [`devboy benchmark`↴](#devboy-benchmark)
@@ -107,6 +112,7 @@ DevBoy - AI-powered development tools
 * `secrets` — Discover and inspect declared secrets (metadata only — values are never shown)
 * `hooks` — Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
 * `trace` — Write to a skill's self-feedback session trace (ADR-015)
+* `login` — Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628)
 * `doctor` — Run diagnostic checks for the local DevBoy setup
 * `upgrade` — Upgrade devboy to the latest version
 * `benchmark` — Benchmark format pipeline on real open-source project data (JSON vs TOON)
@@ -194,6 +200,7 @@ Configuration management
 * `get` — Get a configuration value
 * `list` — List all configuration
 * `path` — Show configuration file path
+* `confluence-oauth` — Confluence Cloud OAuth setup helpers
 
 
 
@@ -248,6 +255,64 @@ List all configuration
 Show configuration file path
 
 **Usage:** `devboy config path`
+
+
+
+## `devboy config confluence-oauth`
+
+Confluence Cloud OAuth setup helpers
+
+**Usage:** `devboy config confluence-oauth <COMMAND>`
+
+###### **Subcommands:**
+
+* `url` — Print the Atlassian OAuth 3LO authorization URL
+* `exchange` — Exchange an Atlassian OAuth authorization code for tokens and store them
+* `refresh` — Refresh Atlassian OAuth tokens using the stored refresh token
+
+
+
+## `devboy config confluence-oauth url`
+
+Print the Atlassian OAuth 3LO authorization URL
+
+**Usage:** `devboy config confluence-oauth url [OPTIONS]`
+
+###### **Options:**
+
+* `--context <CONTEXT>` — Optional context name. Defaults to active context, then global config
+* `--state <STATE>` — Optional state override. Generated automatically when omitted
+
+
+
+## `devboy config confluence-oauth exchange`
+
+Exchange an Atlassian OAuth authorization code for tokens and store them
+
+**Usage:** `devboy config confluence-oauth exchange [OPTIONS] --code <CODE>`
+
+###### **Options:**
+
+* `--code <CODE>` — Authorization code returned by Atlassian
+* `--state <STATE>` — `state` value Atlassian returned on the redirect. Checked against the one issued by `oauth url`; required whenever that command generated it
+* `--context <CONTEXT>` — Optional context name. Defaults to active context, then global config
+* `--client-secret <CLIENT_SECRET>` — Client secret override. When omitted, reads from keychain
+* `--store-client-secret` — Persist the provided client secret to keychain
+
+
+
+## `devboy config confluence-oauth refresh`
+
+Refresh Atlassian OAuth tokens using the stored refresh token
+
+**Usage:** `devboy config confluence-oauth refresh [OPTIONS]`
+
+###### **Options:**
+
+* `--context <CONTEXT>` — Optional context name. Defaults to active context, then global config
+* `--refresh-token <REFRESH_TOKEN>` — Refresh token override. When omitted, reads from keychain
+* `--client-secret <CLIENT_SECRET>` — Client secret override. When omitted, reads from keychain
+* `--store-client-secret` — Persist the provided client secret to keychain
 
 
 
@@ -332,7 +397,7 @@ Test provider connection
 
 ###### **Arguments:**
 
-* `<PROVIDER>` — Provider to test (github, gitlab, clickup, jira, slack)
+* `<PROVIDER>` — Provider to test (github, gitlab, clickup, jira, yougile, slack)
 
 
 
@@ -1215,6 +1280,20 @@ Finalise a session — writes the closing event and updates `meta.json` with the
 * `--summary <SUMMARY>` — Human-readable summary
 
   Default value: ``
+
+
+
+## `devboy login`
+
+Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628).
+
+Discovers the authorization server from the upstream's `WWW-Authenticate` challenge, registers a client if needed (RFC 7591), prints a code + URL to approve in a browser, then stores auto-refreshing tokens.
+
+**Usage:** `devboy login <SERVER>`
+
+###### **Arguments:**
+
+* `<SERVER>` — Name of the `[[proxy_mcp_servers]]` entry to authorize
 
 
 

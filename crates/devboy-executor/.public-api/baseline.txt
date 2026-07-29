@@ -192,6 +192,25 @@ impl core::marker::Unpin for devboy_executor::context::JiraScope
 impl core::marker::UnsafeUnpin for devboy_executor::context::JiraScope
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::JiraScope
 impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::JiraScope
+pub enum devboy_executor::context::LinearScope
+pub devboy_executor::context::LinearScope::Team
+pub devboy_executor::context::LinearScope::Team::id: alloc::string::String
+pub devboy_executor::context::LinearScope::Team::key: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::clone(&self) -> devboy_executor::context::LinearScope
+impl core::fmt::Debug for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::LinearScope
+pub fn devboy_executor::context::LinearScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::LinearScope
+impl core::marker::Send for devboy_executor::context::LinearScope
+impl core::marker::Sync for devboy_executor::context::LinearScope
+impl core::marker::Unpin for devboy_executor::context::LinearScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::LinearScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::LinearScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::LinearScope
 pub enum devboy_executor::context::ProviderConfig
 pub devboy_executor::context::ProviderConfig::ClickUp
 pub devboy_executor::context::ProviderConfig::ClickUp::access_token: secrecy::SecretString
@@ -201,7 +220,9 @@ pub devboy_executor::context::ProviderConfig::Confluence
 pub devboy_executor::context::ProviderConfig::Confluence::api_version: core::option::Option<alloc::string::String>
 pub devboy_executor::context::ProviderConfig::Confluence::auth: devboy_executor::context::ConfluenceAuthConfig
 pub devboy_executor::context::ProviderConfig::Confluence::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Confluence::cloud_id: core::option::Option<alloc::string::String>
 pub devboy_executor::context::ProviderConfig::Confluence::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::Confluence::flavor: core::option::Option<devboy_confluence::client::ConfluenceFlavor>
 pub devboy_executor::context::ProviderConfig::Confluence::scope: devboy_executor::context::ConfluenceScope
 pub devboy_executor::context::ProviderConfig::Custom
 pub devboy_executor::context::ProviderConfig::Custom::config: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
@@ -226,6 +247,11 @@ pub devboy_executor::context::ProviderConfig::Jira::email: alloc::string::String
 pub devboy_executor::context::ProviderConfig::Jira::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::context::ProviderConfig::Jira::flavor: core::option::Option<devboy_jira::client::JiraFlavor>
 pub devboy_executor::context::ProviderConfig::Jira::scope: devboy_executor::context::JiraScope
+pub devboy_executor::context::ProviderConfig::Linear
+pub devboy_executor::context::ProviderConfig::Linear::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::Linear::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::Linear::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::Linear::scope: devboy_executor::context::LinearScope
 pub devboy_executor::context::ProviderConfig::Slack
 pub devboy_executor::context::ProviderConfig::Slack::access_token: secrecy::SecretString
 pub devboy_executor::context::ProviderConfig::Slack::base_url: alloc::string::String
@@ -237,6 +263,11 @@ pub devboy_executor::context::ProviderConfig::Telegram::access_token: secrecy::S
 pub devboy_executor::context::ProviderConfig::Telegram::base_url: alloc::string::String
 pub devboy_executor::context::ProviderConfig::Telegram::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::context::ProviderConfig::Telegram::scope: devboy_executor::context::TelegramScope
+pub devboy_executor::context::ProviderConfig::YouGile
+pub devboy_executor::context::ProviderConfig::YouGile::access_token: secrecy::SecretString
+pub devboy_executor::context::ProviderConfig::YouGile::base_url: alloc::string::String
+pub devboy_executor::context::ProviderConfig::YouGile::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::context::ProviderConfig::YouGile::scope: devboy_executor::context::YouGileScope
 impl devboy_executor::context::ProviderConfig
 pub fn devboy_executor::context::ProviderConfig::provider_name(&self) -> &str
 impl core::clone::Clone for devboy_executor::context::ProviderConfig
@@ -286,6 +317,24 @@ impl core::marker::Unpin for devboy_executor::context::TelegramScope
 impl core::marker::UnsafeUnpin for devboy_executor::context::TelegramScope
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::TelegramScope
 impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::TelegramScope
+pub enum devboy_executor::context::YouGileScope
+pub devboy_executor::context::YouGileScope::Board
+pub devboy_executor::context::YouGileScope::Board::id: alloc::string::String
+impl core::clone::Clone for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::clone(&self) -> devboy_executor::context::YouGileScope
+impl core::fmt::Debug for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_executor::context::YouGileScope
+pub fn devboy_executor::context::YouGileScope::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_executor::context::YouGileScope
+impl core::marker::Send for devboy_executor::context::YouGileScope
+impl core::marker::Sync for devboy_executor::context::YouGileScope
+impl core::marker::Unpin for devboy_executor::context::YouGileScope
+impl core::marker::UnsafeUnpin for devboy_executor::context::YouGileScope
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_executor::context::YouGileScope
+impl core::panic::unwind_safe::UnwindSafe for devboy_executor::context::YouGileScope
 pub struct devboy_executor::context::AdditionalContext
 pub devboy_executor::context::AdditionalContext::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::context::AdditionalContext::metadata: core::option::Option<devboy_executor::context::ProviderMetadata>
@@ -733,7 +782,9 @@ pub devboy_executor::ProviderConfig::Confluence
 pub devboy_executor::ProviderConfig::Confluence::api_version: core::option::Option<alloc::string::String>
 pub devboy_executor::ProviderConfig::Confluence::auth: devboy_executor::context::ConfluenceAuthConfig
 pub devboy_executor::ProviderConfig::Confluence::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::Confluence::cloud_id: core::option::Option<alloc::string::String>
 pub devboy_executor::ProviderConfig::Confluence::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::Confluence::flavor: core::option::Option<devboy_confluence::client::ConfluenceFlavor>
 pub devboy_executor::ProviderConfig::Confluence::scope: devboy_executor::context::ConfluenceScope
 pub devboy_executor::ProviderConfig::Custom
 pub devboy_executor::ProviderConfig::Custom::config: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
@@ -758,6 +809,11 @@ pub devboy_executor::ProviderConfig::Jira::email: alloc::string::String
 pub devboy_executor::ProviderConfig::Jira::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::ProviderConfig::Jira::flavor: core::option::Option<devboy_jira::client::JiraFlavor>
 pub devboy_executor::ProviderConfig::Jira::scope: devboy_executor::context::JiraScope
+pub devboy_executor::ProviderConfig::Linear
+pub devboy_executor::ProviderConfig::Linear::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::Linear::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::Linear::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::Linear::scope: devboy_executor::context::LinearScope
 pub devboy_executor::ProviderConfig::Slack
 pub devboy_executor::ProviderConfig::Slack::access_token: secrecy::SecretString
 pub devboy_executor::ProviderConfig::Slack::base_url: alloc::string::String
@@ -769,6 +825,11 @@ pub devboy_executor::ProviderConfig::Telegram::access_token: secrecy::SecretStri
 pub devboy_executor::ProviderConfig::Telegram::base_url: alloc::string::String
 pub devboy_executor::ProviderConfig::Telegram::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
 pub devboy_executor::ProviderConfig::Telegram::scope: devboy_executor::context::TelegramScope
+pub devboy_executor::ProviderConfig::YouGile
+pub devboy_executor::ProviderConfig::YouGile::access_token: secrecy::SecretString
+pub devboy_executor::ProviderConfig::YouGile::base_url: alloc::string::String
+pub devboy_executor::ProviderConfig::YouGile::extra: std::collections::hash::map::HashMap<alloc::string::String, serde_json::value::Value>
+pub devboy_executor::ProviderConfig::YouGile::scope: devboy_executor::context::YouGileScope
 impl devboy_executor::context::ProviderConfig
 pub fn devboy_executor::context::ProviderConfig::provider_name(&self) -> &str
 impl core::clone::Clone for devboy_executor::context::ProviderConfig

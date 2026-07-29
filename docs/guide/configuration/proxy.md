@@ -56,8 +56,8 @@ devboy config set-secret devboy-cloud.token <YOUR_TOKEN>
 |-------|----------|---------|-------------|
 | `name` | yes | — | Server name, used as tool prefix if `tool_prefix` not set |
 | `url` | yes | — | Server URL (SSE or Streamable HTTP endpoint) |
-| `auth_type` | no | `"none"` | Authentication type: `"bearer"`, `"api_key"`, or `"none"` |
-| `token_key` | no | — | Keychain key for the auth token |
+| `auth_type` | no | `"none"` | Authentication type: `"bearer"`, `"api_key"`, `"oauth2"`, or `"none"` |
+| `token_key` | no | — | Keychain key for the auth token (not used by `oauth2`) |
 | `tool_prefix` | no | `name` | Custom prefix for proxied tool names |
 | `transport` | no | `"sse"` | Transport protocol: `"sse"` or `"streamable-http"` |
 
@@ -65,6 +65,45 @@ devboy config set-secret devboy-cloud.token <YOUR_TOKEN>
 
 - **`sse`** — Legacy MCP transport. Uses GET for SSE stream, POST for requests. Used by most self-hosted MCP servers.
 - **`streamable-http`** — Modern HTTP POST-based transport with `mcp-session-id` header. Used by hosted MCP services.
+
+### OAuth 2.1 authentication (device flow)
+
+For upstream MCP servers that require OAuth 2.1 (per the MCP authorization spec),
+set `auth_type = "oauth2"` and log in once with the device flow. The proxy then
+injects a fresh Bearer per request and refreshes tokens automatically, so
+sessions survive the access-token TTL without any manual re-configuration.
+
+```toml
+[[proxy_mcp_servers]]
+name = "devboy-cloud"
+url = "https://app.devboy.pro/api/mcp?name=devboy-cloud"
+auth_type = "oauth2"
+transport = "streamable-http"
+
+# Optional — discovered automatically at login if omitted:
+# [proxy_mcp_servers.oauth]
+# authorization_server = "https://app.devboy.pro"
+# scopes = ["mcp:read", "mcp:write"]
+```
+
+Then authorize:
+
+```bash
+devboy login devboy-cloud
+# prints a URL + code to approve in a browser, then stores auto-refreshing tokens
+```
+
+`devboy login` (1) discovers the authorization server from the upstream's
+`WWW-Authenticate` challenge (RFC 9728 → RFC 8414), (2) registers a client if
+needed (RFC 7591) and caches the `client_id`, (3) runs the device authorization
+grant (RFC 8628) — you approve the printed `user_code` at the verification URL —
+and (4) stores the access + refresh tokens in the OS keychain.
+
+The proxy refreshes transparently (the refresh token is long-lived and rotated
+on use, so refreshes are single-flight and persisted immediately). Check state
+anytime with `devboy doctor` — it reports each `oauth2` proxy as *logged in* or
+*needs login* with the exact command to run. No `token_key` is needed for
+`oauth2`; tokens live under `proxy.<name>.oauth`.
 
 ### Multiple servers
 

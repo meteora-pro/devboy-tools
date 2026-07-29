@@ -2,13 +2,37 @@ import ConfigExtractor from '../../components/ConfigExtractor';
 
 # Confluence Integration
 
-DevBoy tools provide integration with Confluence Server and Data Center for reading and updating internal documentation through AI assistants. Confluence is the first provider in the **KnowledgeBase** category.
+DevBoy tools provide integration with Atlassian Confluence for reading and updating internal documentation through AI assistants. Both **Confluence Cloud** and **Confluence Server / Data Center** are supported. Confluence is the first provider in the **KnowledgeBase** category.
 
 <ConfigExtractor provider="confluence" />
 
+## Deployment flavors
+
+DevBoy supports two Confluence flavors:
+
+| Flavor | Typical URL | Notes |
+|--------|-------------|-------|
+| `cloud` | `https://team.atlassian.net` | Uses Atlassian Cloud routing and Cloud-specific auth behavior |
+| `self_hosted` | `https://wiki.company.com` | Covers Confluence Server and Data Center |
+
+Flavor can be set explicitly with `confluence.flavor`. When omitted, DevBoy auto-detects Cloud for `*.atlassian.net` URLs and otherwise defaults to `self_hosted`.
+
 ## Authentication
 
-Confluence self-hosted supports two authentication modes:
+Authentication depends on the deployment flavor.
+
+### Confluence Cloud
+
+Confluence Cloud supports:
+
+| Auth Method | Configuration | Notes |
+|-------------|---------------|-------|
+| OAuth 2.0 (Atlassian 3LO) | `confluence.client_id`, `confluence.redirect_uri`, keychain-stored tokens | Recommended for Cloud bearer auth |
+| Basic Auth | `confluence.username` + `confluence.token` | Uses email + Atlassian API token |
+
+### Self-hosted / Server / Data Center
+
+Self-hosted Confluence supports:
 
 | Auth Method | Configuration | Token Source |
 |-------------|---------------|--------------|
@@ -26,6 +50,9 @@ When `confluence.username` is set, DevBoy can use basic auth. Without a username
 ```bash
 # Set Confluence base URL
 devboy config set confluence.base_url https://wiki.company.com
+
+# Optional: force flavor instead of relying on auto-detection
+devboy config set confluence.flavor self_hosted
 
 # Optional: prefer the newer Data Center API where available
 devboy config set confluence.api_version v2
@@ -45,6 +72,53 @@ devboy config set confluence.username user@company.com
 devboy config set-secret confluence.token <password-or-token>
 ```
 
+### Confluence Cloud configuration
+
+```bash
+# Cloud is auto-detected for *.atlassian.net, but can be explicit
+devboy config set confluence.base_url https://team.atlassian.net
+devboy config set confluence.flavor cloud
+
+# Optional: cache the Atlassian cloud id
+devboy config set confluence.cloud_id cloud-123
+```
+
+### Confluence Cloud with basic auth
+
+```bash
+devboy config set confluence.base_url https://team.atlassian.net
+devboy config set confluence.flavor cloud
+devboy config set confluence.username user@company.com
+devboy config set confluence.cloud_id cloud-123
+devboy config set-secret confluence.token <atlassian-api-token>
+```
+
+`confluence.cloud_id` is required for Cloud basic auth. For Cloud bearer auth, DevBoy can discover it automatically from Atlassian `accessible-resources`.
+
+### Confluence Cloud OAuth setup
+
+```bash
+devboy config set confluence.base_url https://team.atlassian.net
+devboy config set confluence.flavor cloud
+devboy config set confluence.client_id <oauth-client-id>
+devboy config set confluence.redirect_uri http://localhost:8787/callback
+```
+
+Then:
+
+```bash
+devboy config confluence-oauth url
+devboy config confluence-oauth exchange --code <authorization-code>
+```
+
+To refresh the stored access token later:
+
+```bash
+devboy config confluence-oauth refresh
+```
+
+The access token and refresh token are stored in the keychain. The current runtime behavior expects a valid stored access token; token refresh is an explicit CLI action rather than an automatic background refresh.
+
 ### Configuration file
 
 Settings are stored in `~/.config/devboy-tools/config.toml`:
@@ -52,8 +126,21 @@ Settings are stored in `~/.config/devboy-tools/config.toml`:
 ```toml
 [confluence]
 base_url = "https://wiki.company.com"
+flavor = "self_hosted"
 api_version = "v2"
 username = "user@company.com"
+space_key = "ENG"
+```
+
+Cloud example:
+
+```toml
+[confluence]
+base_url = "https://team.atlassian.net"
+flavor = "cloud"
+cloud_id = "cloud-123"
+client_id = "atlassian-client-id"
+redirect_uri = "http://localhost:8787/callback"
 space_key = "ENG"
 ```
 
@@ -80,6 +167,8 @@ Confluence self-hosted installations are not uniform. DevBoy supports:
 
 Use `v2` for newer Data Center installs when available. If a v2 endpoint is missing, DevBoy falls back to the classic REST API for supported operations.
 
+For Confluence Cloud, DevBoy uses Atlassian Cloud routing and the Cloud API shape automatically. `api_version` is mainly relevant to self-hosted installations.
+
 ## MCP tools
 
 Once configured, the following MCP tools are available:
@@ -102,6 +191,8 @@ Confluence stores content in its own storage format. DevBoy handles conversion f
 - Reads return page content as Markdown.
 - Writes accept `contentType` values of `markdown`, `html`, or `storage`.
 - `markdown` is the best default for agent-generated docs.
+- Confluence Cloud reads can arrive as Atlassian Document Format (ADF); DevBoy converts ADF to Markdown for agent consumption.
+- Confluence Cloud writes are converted back into a Cloud-compatible representation automatically.
 
 ### Labels
 
@@ -179,6 +270,12 @@ devboy test confluence
 
 This checks connectivity against the spaces endpoint and confirms that the configured auth method can reach the API.
 
+Cloud-specific behavior:
+
+- Cloud bearer auth validates Atlassian `accessible-resources` discovery and then probes the Cloud v2 spaces endpoint.
+- Cloud basic auth requires `confluence.cloud_id` and probes the Cloud v2 spaces endpoint directly.
+- Self-hosted keeps the existing `/rest/api` / `/api/v2` connectivity path.
+
 ## Proxy support
 
 Confluence self-hosted instances are often only reachable through internal routing or gateway services. DevBoy supports proxy-mode provider wiring for Confluence using the same proxy mechanism used for other self-hosted providers.
@@ -195,13 +292,21 @@ Use this when:
 
 - Verify the token is valid and not expired
 - If using basic auth, check that `confluence.username` is set correctly
-- If using bearer auth, make sure the token is a Confluence PAT and not a Jira token
+- If using self-hosted bearer auth, make sure the token is a Confluence PAT and not a Jira token
+- If using Confluence Cloud bearer auth, confirm the token is an Atlassian OAuth access token with Confluence scopes
 
 ### "404 Not Found" error
 
 - Use the site root as `base_url`, for example `https://wiki.company.com`
-- Do not include `/rest/api` or `/api/v2` in `base_url`
+- For Cloud, use the site root such as `https://team.atlassian.net`
+- Do not include `/rest/api`, `/wiki/rest/api`, or `/api/v2` in `base_url`
 - If `api_version = "v2"` is configured, your instance may not expose all v2 endpoints; DevBoy will fall back where supported
+
+### "explicit confluence.cloud_id" error
+
+- This only applies to Confluence Cloud basic auth
+- Set `confluence.cloud_id` explicitly
+- With Cloud bearer auth, DevBoy can discover `cloud_id` automatically from Atlassian
 
 ### "space not found" error
 

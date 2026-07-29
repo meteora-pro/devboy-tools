@@ -23,6 +23,8 @@ devboy-gitlab = { workspace = true }
 devboy-github = { workspace = true }
 devboy-clickup = { workspace = true }
 devboy-jira = { workspace = true }
+devboy-yougile = { workspace = true }
+devboy-linear = { workspace = true }
 devboy-confluence = { workspace = true }
 devboy-fireflies = { workspace = true }
 devboy-slack = { workspace = true }

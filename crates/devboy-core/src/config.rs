@@ -55,6 +55,10 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearConfig>,
+    pub yougile: Option<YouGileConfig>,
+
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fireflies: Option<FirefliesConfig>,
@@ -152,7 +156,7 @@ pub struct ProxyMcpServerConfig {
     pub name: String,
     /// Server URL (SSE or Streamable HTTP endpoint)
     pub url: String,
-    /// Auth type: "bearer", "api_key", "none"
+    /// Auth type: "bearer", "api_key", "none", "oauth2"
     #[serde(default = "default_auth_none")]
     pub auth_type: String,
     /// Keychain key for auth token
@@ -170,6 +174,39 @@ pub struct ProxyMcpServerConfig {
     /// `fallback_on_error` to its default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<ProxyRoutingOverride>,
+    /// OAuth 2.1 settings (used when `auth_type = "oauth2"`). Optional — a minimal
+    /// config sets only `auth_type = "oauth2"` and lets discovery (RFC 9728/8414)
+    /// plus dynamic registration (RFC 7591) fill the rest on first `devboy login`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<ProxyOAuthConfig>,
+}
+
+/// OAuth 2.1 client settings for a proxy upstream (`auth_type = "oauth2"`).
+///
+/// Every field is optional so a minimal config just sets `auth_type = "oauth2"`;
+/// the missing pieces are resolved at `devboy login` time:
+/// - `authorization_server` — discovered from the upstream's RFC 9728
+///   `WWW-Authenticate: Bearer resource_metadata="…"` challenge, then its
+///   RFC 8414 authorization-server metadata;
+/// - `client_id` — obtained via RFC 7591 dynamic client registration and
+///   persisted back;
+/// - `scopes` — default to the server's advertised scopes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProxyOAuthConfig {
+    /// Registered OAuth `client_id`. Obtained via dynamic registration if unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// Requested scopes. Falls back to the server's advertised scopes if unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    /// Authorization Server base URL. Discovered from the upstream's RFC 9728
+    /// `WWW-Authenticate` challenge if unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization_server: Option<String>,
+    /// Token endpoint, cached from discovery at `devboy login` time so the proxy
+    /// refreshes without re-running discovery on every startup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_endpoint: Option<String>,
 }
 
 fn default_transport_sse() -> String {
@@ -178,6 +215,10 @@ fn default_transport_sse() -> String {
 
 fn default_auth_none() -> String {
     "none".to_string()
+}
+
+fn default_linear_url() -> String {
+    "https://api.linear.app/graphql".to_string()
 }
 
 /// Per-context provider configuration.
@@ -194,6 +235,10 @@ pub struct ContextConfig {
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jira: Option<JiraConfig>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linear: Option<LinearConfig>,
+    pub yougile: Option<YouGileConfig>,
 
     /// Fireflies.ai configuration (meeting notes)
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,6 +294,28 @@ pub struct JiraConfig {
     pub email: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinearConfig {
+    /// Linear GraphQL endpoint.
+    #[serde(default = "default_linear_url")]
+    pub url: String,
+    /// Default Linear team UUID used for issue operations.
+    pub team_id: String,
+    /// Optional human-readable team key (e.g. `ENG`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_key: Option<String>,
+}
+
+/// YouGile provider configuration (issue tracker).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct YouGileConfig {
+    /// YouGile API base URL.
+    #[serde(default = "default_yougile_url")]
+    pub url: String,
+    /// Default board ID used as the provider scope.
+    pub board_id: String,
+}
+
 /// Fireflies.ai provider configuration (meeting notes).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirefliesConfig {
@@ -260,15 +327,34 @@ pub struct FirefliesConfig {
 pub struct ConfluenceConfig {
     /// Confluence base URL, e.g. `https://wiki.example.com`.
     pub base_url: String,
+    /// Deployment flavor. Defaults to self-hosted when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor: Option<ConfluenceFlavor>,
+    /// Atlassian Cloud site id used by `api.atlassian.com` routes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_id: Option<String>,
     /// Preferred REST API generation when the instance supports multiple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_version: Option<String>,
     /// Username/email for basic auth when that auth mode is used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+    /// OAuth app client ID for Atlassian Cloud 3LO.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    /// OAuth redirect URI registered in the Atlassian app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redirect_uri: Option<String>,
     /// Optional default space hint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub space_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfluenceFlavor {
+    SelfHosted,
+    Cloud,
 }
 
 /// Slack provider configuration (messenger).
@@ -320,6 +406,10 @@ pub struct TelegramConfig {
     pub bot_username: Option<String>,
 }
 
+fn default_yougile_url() -> String {
+    "https://yougile.com/api-v2".to_string()
+}
+
 pub fn default_slack_required_scopes() -> Vec<String> {
     vec![
         "channels:read".to_string(),
@@ -333,6 +423,25 @@ pub fn default_slack_required_scopes() -> Vec<String> {
         "chat:write".to_string(),
         "users:read".to_string(),
     ]
+}
+
+fn parse_confluence_flavor(value: &str) -> Result<ConfluenceFlavor> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "self_hosted" | "self-hosted" | "selfhosted" | "server" | "dc" | "data_center"
+        | "data-center" => Ok(ConfluenceFlavor::SelfHosted),
+        "cloud" => Ok(ConfluenceFlavor::Cloud),
+        other => Err(Error::Config(format!(
+            "Unknown Confluence config field value for flavor: {}",
+            other
+        ))),
+    }
+}
+
+fn confluence_flavor_slug(flavor: ConfluenceFlavor) -> String {
+    match flavor {
+        ConfluenceFlavor::SelfHosted => "self_hosted".to_string(),
+        ConfluenceFlavor::Cloud => "cloud".to_string(),
+    }
 }
 
 fn is_default_slack_required_scopes(scopes: &[String]) -> bool {
@@ -1005,6 +1114,8 @@ impl Config {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.linear.is_some()
+            || self.yougile.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1026,6 +1137,12 @@ impl Config {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.linear.is_some() {
+            providers.push("linear");
+        }
+        if self.yougile.is_some() {
+            providers.push("yougile");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -1095,6 +1212,8 @@ impl Config {
             gitlab: self.gitlab.clone(),
             clickup: self.clickup.clone(),
             jira: self.jira.clone(),
+            linear: self.linear.clone(),
+            yougile: self.yougile.clone(),
             fireflies: self.fireflies.clone(),
             confluence: self.confluence.clone(),
             slack: self.slack.clone(),
@@ -1199,19 +1318,61 @@ impl Config {
                     }
                 }
             }
+            "linear" => {
+                let config = self.linear.get_or_insert_with(|| LinearConfig {
+                    url: default_linear_url(),
+                    team_id: String::new(),
+                    team_key: None,
+                });
+                match field {
+                    "url" | "base_url" => config.url = value.to_string(),
+                    "team_id" | "team" => config.team_id = value.to_string(),
+                    "team_key" | "key" => config.team_key = Some(value.to_string()),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown Linear config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
+            "yougile" => {
+                let config = self.yougile.get_or_insert_with(|| YouGileConfig {
+                    url: default_yougile_url(),
+                    board_id: String::new(),
+                });
+                match field {
+                    "url" | "base_url" => config.url = value.to_string(),
+                    "board_id" | "board" => config.board_id = value.to_string(),
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown YouGile config field: {}",
+                            field
+                        )));
+                    }
+                }
+            }
             "confluence" => {
                 let config = self.confluence.get_or_insert_with(|| ConfluenceConfig {
                     base_url: String::new(),
+                    flavor: None,
+                    cloud_id: None,
                     api_version: None,
                     username: None,
+                    client_id: None,
+                    redirect_uri: None,
                     space_key: None,
                 });
                 match field {
                     "base_url" | "url" => config.base_url = value.to_string(),
+                    "flavor" => config.flavor = Some(parse_confluence_flavor(value)?),
+                    "cloud_id" | "cloud" => config.cloud_id = Some(value.to_string()),
                     "api_version" | "api" | "version" => {
                         config.api_version = Some(value.to_string())
                     }
                     "username" | "email" | "user" => config.username = Some(value.to_string()),
+                    "client_id" => config.client_id = Some(value.to_string()),
+                    "redirect_uri" => config.redirect_uri = Some(value.to_string()),
                     "space_key" | "space" => config.space_key = Some(value.to_string()),
                     _ => {
                         return Err(Error::Config(format!(
@@ -1336,14 +1497,45 @@ impl Config {
                     ))),
                 }
             }
+            "linear" => {
+                let Some(config) = &self.linear else {
+                    return Ok(None);
+                };
+                match field {
+                    "url" | "base_url" => Ok(Some(config.url.clone())),
+                    "team_id" | "team" => Ok(Some(config.team_id.clone())),
+                    "team_key" | "key" => Ok(config.team_key.clone()),
+                    _ => Err(Error::Config(format!(
+                        "Unknown Linear config field: {}",
+                        field
+                    ))),
+                }
+            }
+            "yougile" => {
+                let Some(config) = &self.yougile else {
+                    return Ok(None);
+                };
+                match field {
+                    "url" | "base_url" => Ok(Some(config.url.clone())),
+                    "board_id" | "board" => Ok(Some(config.board_id.clone())),
+                    _ => Err(Error::Config(format!(
+                        "Unknown YouGile config field: {}",
+                        field
+                    ))),
+                }
+            }
             "confluence" => {
                 let Some(config) = &self.confluence else {
                     return Ok(None);
                 };
                 match field {
                     "base_url" | "url" => Ok(Some(config.base_url.clone())),
+                    "flavor" => Ok(config.flavor.map(confluence_flavor_slug)),
+                    "cloud_id" | "cloud" => Ok(config.cloud_id.clone()),
                     "api_version" | "api" | "version" => Ok(config.api_version.clone()),
                     "username" | "email" | "user" => Ok(config.username.clone()),
+                    "client_id" => Ok(config.client_id.clone()),
+                    "redirect_uri" => Ok(config.redirect_uri.clone()),
                     "space_key" | "space" => Ok(config.space_key.clone()),
                     _ => Err(Error::Config(format!(
                         "Unknown Confluence config field: {}",
@@ -1600,6 +1792,8 @@ impl ContextConfig {
             || self.gitlab.is_some()
             || self.clickup.is_some()
             || self.jira.is_some()
+            || self.linear.is_some()
+            || self.yougile.is_some()
             || self.fireflies.is_some()
             || self.confluence.is_some()
             || self.slack.is_some()
@@ -1620,6 +1814,12 @@ impl ContextConfig {
         }
         if self.jira.is_some() {
             providers.push("jira");
+        }
+        if self.linear.is_some() {
+            providers.push("linear");
+        }
+        if self.yougile.is_some() {
+            providers.push("yougile");
         }
         if self.confluence.is_some() {
             providers.push("confluence");
@@ -1929,15 +2129,93 @@ mod tests {
     }
 
     #[test]
+    fn test_set_and_get_linear() {
+        let mut config = Config::default();
+
+        config
+            .set("linear.url", "https://linear.example.com/graphql")
+            .unwrap();
+        config.set("linear.team_id", "team-123").unwrap();
+        config.set("linear.team_key", "ENG").unwrap();
+
+        assert_eq!(
+            config.get("linear.url").unwrap(),
+            Some("https://linear.example.com/graphql".to_string())
+        );
+        assert_eq!(
+            config.get("linear.base_url").unwrap(),
+            Some("https://linear.example.com/graphql".to_string())
+        );
+        assert_eq!(
+            config.get("linear.team_id").unwrap(),
+            Some("team-123".to_string())
+        );
+        assert_eq!(
+            config.get("linear.team").unwrap(),
+            Some("team-123".to_string())
+        );
+        assert_eq!(
+            config.get("linear.team_key").unwrap(),
+            Some("ENG".to_string())
+        );
+        assert_eq!(config.get("linear.key").unwrap(), Some("ENG".to_string()));
+    }
+
+    #[test]
+    fn test_set_and_get_yougile() {
+        let mut config = Config::default();
+
+        config
+            .set("yougile.url", "https://company.yougile.com/api-v2")
+            .unwrap();
+        config.set("yougile.board_id", "board-123").unwrap();
+
+        assert_eq!(
+            config.get("yougile.url").unwrap(),
+            Some("https://company.yougile.com/api-v2".to_string())
+        );
+        assert_eq!(
+            config.get("yougile.base_url").unwrap(),
+            Some("https://company.yougile.com/api-v2".to_string())
+        );
+        assert_eq!(
+            config.get("yougile.board_id").unwrap(),
+            Some("board-123".to_string())
+        );
+        assert_eq!(
+            config.get("yougile.board").unwrap(),
+            Some("board-123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_and_get_yougile_alias() {
+        let mut config = Config::default();
+
+        config.set("yougile.board", "board-456").unwrap();
+
+        assert_eq!(
+            config.get("yougile.board_id").unwrap(),
+            Some("board-456".to_string())
+        );
+    }
+
+    #[test]
     fn test_set_and_get_confluence() {
         let mut config = Config::default();
 
         config
             .set("confluence.base_url", "https://wiki.example.com")
             .unwrap();
+        config.set("confluence.flavor", "cloud").unwrap();
+        config.set("confluence.cloud_id", "cloud-123").unwrap();
         config.set("confluence.api_version", "v1").unwrap();
         config
             .set("confluence.username", "dev@example.com")
+            .unwrap();
+        config.set("confluence.client_id", "client-123").unwrap();
+        config
+            .set("confluence.redirect_uri", "http://localhost:8787/callback")
             .unwrap();
         config.set("confluence.space_key", "ENG").unwrap();
 
@@ -1950,12 +2228,28 @@ mod tests {
             Some("https://wiki.example.com".to_string())
         );
         assert_eq!(
+            config.get("confluence.flavor").unwrap(),
+            Some("cloud".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.cloud").unwrap(),
+            Some("cloud-123".to_string())
+        );
+        assert_eq!(
             config.get("confluence.api").unwrap(),
             Some("v1".to_string())
         );
         assert_eq!(
             config.get("confluence.username").unwrap(),
             Some("dev@example.com".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.client_id").unwrap(),
+            Some("client-123".to_string())
+        );
+        assert_eq!(
+            config.get("confluence.redirect_uri").unwrap(),
+            Some("http://localhost:8787/callback".to_string())
         );
         assert_eq!(
             config.get("confluence.space").unwrap(),
@@ -2019,6 +2313,15 @@ mod tests {
         assert!(config.set("jira.unknown", "value").is_err());
         config.set("jira.url", "https://jira.com").unwrap();
         assert!(config.get("jira.unknown").is_err());
+
+        // Linear unknown field
+        assert!(config.set("linear.unknown", "value").is_err());
+        config.set("linear.team_id", "team-1").unwrap();
+        assert!(config.get("linear.unknown").is_err());
+        // YouGile unknown field
+        assert!(config.set("yougile.unknown", "value").is_err());
+        config.set("yougile.board_id", "board-123").unwrap();
+        assert!(config.get("yougile.unknown").is_err());
     }
 
     #[test]
@@ -2029,6 +2332,8 @@ mod tests {
         assert_eq!(config.get("gitlab.url").unwrap(), None);
         assert_eq!(config.get("clickup.list_id").unwrap(), None);
         assert_eq!(config.get("jira.url").unwrap(), None);
+        assert_eq!(config.get("linear.team_id").unwrap(), None);
+        assert_eq!(config.get("yougile.url").unwrap(), None);
         assert_eq!(config.get("confluence.base_url").unwrap(), None);
         assert_eq!(config.get("telegram.base_url").unwrap(), None);
     }
@@ -2083,6 +2388,15 @@ mod tests {
                 project_key: "k".to_string(),
                 email: "e".to_string(),
             }),
+            linear: Some(LinearConfig {
+                url: "https://api.linear.app/graphql".to_string(),
+                team_id: "team-1".to_string(),
+                team_key: Some("ENG".to_string()),
+            }),
+            yougile: Some(YouGileConfig {
+                url: default_yougile_url(),
+                board_id: "board-1".to_string(),
+            }),
             fireflies: None,
             confluence: None,
             slack: None,
@@ -2102,13 +2416,34 @@ mod tests {
         };
 
         let providers = config.configured_providers();
-        assert_eq!(providers.len(), 5);
+        assert_eq!(providers.len(), 7);
         assert!(providers.contains(&"github"));
         assert!(providers.contains(&"gitlab"));
         assert!(providers.contains(&"clickup"));
         assert!(providers.contains(&"jira"));
+        assert!(providers.contains(&"linear"));
+        assert!(providers.contains(&"yougile"));
         assert!(providers.contains(&"telegram"));
         assert!(config.has_any_provider());
+    }
+
+    #[test]
+    fn test_legacy_default_context_includes_linear() {
+        let config = Config {
+            linear: Some(LinearConfig {
+                url: "https://api.linear.app/graphql".to_string(),
+                team_id: "team-legacy".to_string(),
+                team_key: Some("OPS".to_string()),
+            }),
+            ..Config::default()
+        };
+
+        let context = config
+            .legacy_default_context()
+            .expect("legacy default context should exist");
+        let linear = context.linear.expect("linear should be present");
+        assert_eq!(linear.team_id, "team-legacy");
+        assert_eq!(linear.team_key.as_deref(), Some("OPS"));
     }
 
     #[test]
@@ -2173,6 +2508,8 @@ mod tests {
             }),
             clickup: None,
             jira: None,
+            linear: None,
+            yougile: None,
             fireflies: None,
             confluence: None,
             slack: None,
@@ -2197,6 +2534,7 @@ mod tests {
         assert!(toml_str.contains("[telegram]"));
         assert!(!toml_str.contains("[clickup]"));
         assert!(!toml_str.contains("[jira]"));
+        assert!(!toml_str.contains("[yougile]"));
 
         // Parse back
         let parsed: Config = toml::from_str(&toml_str).unwrap();
@@ -2332,11 +2670,15 @@ mod tests {
                 project_key: "DEV".to_string(),
                 email: "dev@example.com".to_string(),
             }),
+            yougile: Some(YouGileConfig {
+                url: default_yougile_url(),
+                board_id: "board-2".to_string(),
+            }),
             ..Default::default()
         };
 
         let providers = context.configured_providers();
-        assert_eq!(providers, vec!["github", "jira"]);
+        assert_eq!(providers, vec!["github", "jira", "yougile"]);
         assert!(context.has_any_provider());
     }
 
@@ -2387,6 +2729,48 @@ mod tests {
     }
 
     #[test]
+    fn test_proxy_mcp_server_config_oauth2_full() {
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "devboy-cloud"
+            url = "https://app.devboy.pro/api/mcp"
+            auth_type = "oauth2"
+            transport = "streamable-http"
+
+            [proxy_mcp_servers.oauth]
+            client_id = "cli-abc123"
+            scopes = ["mcp:read", "mcp:write"]
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let proxy = &config.proxy_mcp_servers[0];
+        assert_eq!(proxy.auth_type, "oauth2");
+        let oauth = proxy.oauth.as_ref().expect("oauth block should parse");
+        assert_eq!(oauth.client_id.as_deref(), Some("cli-abc123"));
+        assert_eq!(
+            oauth.scopes,
+            Some(vec!["mcp:read".to_string(), "mcp:write".to_string()])
+        );
+        assert!(oauth.authorization_server.is_none());
+    }
+
+    #[test]
+    fn test_proxy_mcp_server_config_oauth2_minimal() {
+        // Minimal oauth2 config: only `auth_type`, no [oauth] block — discovery
+        // (RFC 9728/8414) + dynamic registration (RFC 7591) fill the rest at login.
+        let toml_str = r#"
+            [[proxy_mcp_servers]]
+            name = "srv"
+            url = "https://example.com/mcp"
+            auth_type = "oauth2"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let proxy = &config.proxy_mcp_servers[0];
+        assert_eq!(proxy.auth_type, "oauth2");
+        assert!(proxy.oauth.is_none());
+    }
+
+    #[test]
     fn test_proxy_mcp_server_config_multiple() {
         let toml_str = r#"
             [[proxy_mcp_servers]]
@@ -2418,6 +2802,7 @@ mod tests {
                 tool_prefix: Some("tst".to_string()),
                 transport: "streamable-http".to_string(),
                 routing: None,
+                oauth: None,
             }],
             ..Default::default()
         };
@@ -2443,6 +2828,7 @@ mod tests {
                 tool_prefix: None,
                 transport: "sse".to_string(),
                 routing: None,
+                oauth: None,
             }],
             ..Default::default()
         };

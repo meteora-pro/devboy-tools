@@ -28,6 +28,7 @@
 pub mod agent_safety;
 pub mod handlers;
 pub mod layered;
+pub mod oauth_auth;
 pub mod prefetch_adapter;
 pub mod protocol;
 pub mod proxy;

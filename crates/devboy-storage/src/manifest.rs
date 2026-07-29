@@ -117,7 +117,7 @@ pub enum ManifestError {
         path: PathBuf,
         /// Underlying TOML deserialization error.
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 
     /// One of the paths in the manifest did not satisfy the path
@@ -268,7 +268,7 @@ impl ProjectManifest {
     fn from_str_with_path(body: &str, path: &Path) -> Result<Self, ManifestError> {
         let raw: RawManifest = toml::from_str(body).map_err(|e| ManifestError::Parse {
             path: path.to_path_buf(),
-            source: e,
+            source: Box::new(e),
         })?;
 
         let required = parse_path_list(&raw.required, PathRole::Required)?;

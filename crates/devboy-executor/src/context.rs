@@ -60,6 +60,28 @@ pub enum JiraScope {
     MultiProject { keys: Vec<String> },
 }
 
+/// Scope for Linear API calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum LinearScope {
+    /// Single Linear team
+    Team {
+        /// Team UUID.
+        id: String,
+        /// Optional human-readable team key.
+        key: Option<String>,
+    },
+}
+
+/// Scope for YouGile API calls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum YouGileScope {
+    /// Single YouGile board.
+    Board {
+        /// Provider-native board identifier.
+        id: String,
+    },
+}
+
 /// Scope for Confluence API calls.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConfluenceScope {
@@ -139,10 +161,24 @@ pub enum ProviderConfig {
         flavor: Option<devboy_jira::JiraFlavor>,
         extra: HashMap<String, serde_json::Value>,
     },
+    Linear {
+        base_url: String,
+        access_token: SecretString,
+        scope: LinearScope,
+        extra: HashMap<String, serde_json::Value>,
+    },
+    YouGile {
+        base_url: String,
+        access_token: SecretString,
+        scope: YouGileScope,
+        extra: HashMap<String, serde_json::Value>,
+    },
     Confluence {
         base_url: String,
         auth: ConfluenceAuthConfig,
         scope: ConfluenceScope,
+        flavor: Option<devboy_confluence::ConfluenceFlavor>,
+        cloud_id: Option<String>,
         api_version: Option<String>,
         extra: HashMap<String, serde_json::Value>,
     },
@@ -181,6 +217,8 @@ impl ProviderConfig {
             Self::GitHub { .. } => "github",
             Self::ClickUp { .. } => "clickup",
             Self::Jira { .. } => "jira",
+            Self::Linear { .. } => "linear",
+            Self::YouGile { .. } => "yougile",
             Self::Confluence { .. } => "confluence",
             Self::Fireflies { .. } => "fireflies",
             Self::Slack { .. } => "slack",
@@ -293,6 +331,8 @@ mod tests {
             scope: ConfluenceScope::Space {
                 key: Some("ENG".into()),
             },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v1".into()),
             extra: HashMap::new(),
         };
@@ -323,6 +363,33 @@ mod tests {
             extra: HashMap::new(),
         };
         assert_eq!(config.provider_name(), "jira");
+    }
+
+    #[test]
+    fn test_provider_name_linear() {
+        let config = ProviderConfig::Linear {
+            base_url: "https://api.linear.app/graphql".into(),
+            access_token: token("lin_api_x"),
+            scope: LinearScope::Team {
+                id: "team-1".into(),
+                key: Some("ENG".into()),
+            },
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "linear");
+    }
+
+    #[test]
+    fn test_provider_name_yougile() {
+        let config = ProviderConfig::YouGile {
+            base_url: "https://yougile.com/api-v2".into(),
+            access_token: token("tok"),
+            scope: YouGileScope::Board {
+                id: "board-1".into(),
+            },
+            extra: HashMap::new(),
+        };
+        assert_eq!(config.provider_name(), "yougile");
     }
 
     #[test]

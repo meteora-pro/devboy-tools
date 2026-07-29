@@ -5,7 +5,8 @@ use devboy_core::{
 
 use crate::context::{
     ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-    ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
+    LinearScope, ProviderConfig, ProviderMetadata, ProxyConfig, SlackScope, TelegramScope,
+    YouGileScope,
 };
 
 /// Create a provider instance from a typed `ProviderConfig`.
@@ -128,6 +129,34 @@ pub fn create_provider(
             }),
         },
 
+        ProviderConfig::Linear {
+            base_url,
+            access_token,
+            scope,
+            ..
+        } => match scope {
+            LinearScope::Team { id, key } => {
+                let mut client =
+                    devboy_linear::LinearClient::with_base_url(base_url, id, access_token.clone());
+                if let Some(key) = key {
+                    client = client.with_team_key(key);
+                }
+                Ok(Box::new(client))
+            }
+        },
+        ProviderConfig::YouGile {
+            base_url,
+            access_token,
+            scope,
+            ..
+        } => match scope {
+            YouGileScope::Board { id } => Ok(Box::new(devboy_yougile::YouGileClient::with_base_url(
+                base_url,
+                id,
+                access_token.clone(),
+            ))),
+        },
+
         ProviderConfig::Confluence { .. } => Err(Error::ProviderUnsupported {
             provider: "confluence".into(),
             operation: "Confluence is a KnowledgeBaseProvider, not a Provider. Use create_knowledge_base_provider() instead.".into(),
@@ -162,11 +191,13 @@ pub fn create_knowledge_base_provider(
         ProviderConfig::Confluence {
             base_url,
             auth,
+            flavor,
+            cloud_id,
             api_version,
             scope: ConfluenceScope::Space { .. },
             ..
         } => {
-            let client = if let Some(proxy) = proxy {
+            let mut client = if let Some(proxy) = proxy {
                 devboy_confluence::ConfluenceClient::new(
                     &proxy.url,
                     devboy_confluence::ConfluenceAuth::None,
@@ -180,6 +211,14 @@ pub fn create_knowledge_base_provider(
                 devboy_confluence::ConfluenceClient::new(base_url, confluence_auth(auth))
                     .with_api_version(api_version.as_deref())
             };
+            if let Some(flavor) = flavor {
+                client = client.with_flavor(*flavor);
+            } else if cloud_id.is_some() {
+                client = client.with_flavor(devboy_confluence::ConfluenceFlavor::Cloud);
+            }
+            if let Some(cloud_id) = cloud_id.as_deref() {
+                client = client.with_cloud_id(cloud_id);
+            }
             Ok(Box::new(client))
         }
         other => Err(Error::ProviderUnsupported {
@@ -277,6 +316,25 @@ pub fn create_enricher(
             let jira_meta: devboy_jira::JiraMetadata =
                 serde_json::from_value(meta.data.clone()).ok()?;
             Some(Box::new(devboy_jira::JiraSchemaEnricher::new(jira_meta)))
+        }
+        ProviderConfig::Linear { .. } => {
+            if let Some(meta) = metadata {
+                let linear_meta: devboy_linear::LinearMetadata =
+                    serde_json::from_value(meta.data.clone()).ok()?;
+                Some(Box::new(
+                    devboy_linear::enricher::DynamicLinearSchemaEnricher::new(linear_meta),
+                ))
+            } else {
+                Some(Box::new(devboy_linear::LinearSchemaEnricher))
+            }
+        }
+        ProviderConfig::YouGile { .. } => {
+            let meta = metadata?;
+            let yougile_meta: devboy_yougile::YouGileMetadata =
+                serde_json::from_value(meta.data.clone()).ok()?;
+            Some(Box::new(devboy_yougile::YouGileSchemaEnricher::new(
+                yougile_meta,
+            )))
         }
         ProviderConfig::Confluence { .. } => None,
         ProviderConfig::Fireflies { .. } => {
@@ -401,6 +459,25 @@ mod tests {
     }
 
     #[test]
+    fn test_create_linear_provider() {
+        let config = ProviderConfig::Linear {
+            base_url: "https://api.linear.app/graphql".into(),
+            access_token: "lin_api_test".into(),
+            scope: LinearScope::Team {
+                id: "team-123".into(),
+                key: Some("ENG".into()),
+            },
+            extra: HashMap::new(),
+        };
+        let provider = create_provider(&config, None);
+        assert!(provider.is_ok());
+        assert_eq!(
+            IssueProvider::provider_name(provider.unwrap().as_ref()),
+            "linear"
+        );
+    }
+
+    #[test]
     fn test_create_confluence_knowledge_base_provider() {
         let config = ProviderConfig::Confluence {
             base_url: "https://wiki.example.com".into(),
@@ -410,6 +487,8 @@ mod tests {
             scope: ConfluenceScope::Space {
                 key: Some("ENG".into()),
             },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v1".into()),
             extra: HashMap::new(),
         };
@@ -431,6 +510,8 @@ mod tests {
             scope: ConfluenceScope::Space {
                 key: Some("ENG".into()),
             },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v1".into()),
             extra: HashMap::new(),
         };
@@ -450,6 +531,8 @@ mod tests {
                 token: "test-token".into(),
             },
             scope: ConfluenceScope::Space { key: None },
+            flavor: None,
+            cloud_id: None,
             api_version: None,
             extra: HashMap::new(),
         };
@@ -498,11 +581,83 @@ mod tests {
                 token: "test-token".into(),
             },
             scope: ConfluenceScope::Space { key: None },
+            flavor: None,
+            cloud_id: None,
             api_version: Some("v2".into()),
             extra: HashMap::new(),
         };
 
         let provider = create_knowledge_base_provider(&config, None).unwrap();
+        let _ = provider.get_spaces().await.unwrap();
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_confluence_knowledge_base_provider_honors_cloud_flavor() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                // `space?limit=&type=` is a v1 endpoint (v2 spells it
+                // `spaces` with different params), so on Cloud it must be
+                // requested under /wiki/rest/api — not /wiki/api/v2.
+                .path("/wiki/rest/api/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let config = ProviderConfig::Confluence {
+            base_url: server.base_url(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            flavor: Some(devboy_confluence::ConfluenceFlavor::Cloud),
+            cloud_id: Some("cloud-123".into()),
+            api_version: None,
+            extra: HashMap::new(),
+        };
+
+        let provider = create_knowledge_base_provider(&config, None).unwrap();
+        let _ = provider.get_spaces().await.unwrap();
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn test_create_confluence_knowledge_base_provider_explicit_self_hosted_overrides_detection()
+     {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET)
+                .path("/rest/api/space")
+                .query_param("limit", "100")
+                .query_param("type", "global,personal");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"results":[],"start":0,"limit":100,"size":0,"_links":{}}"#);
+        });
+
+        let config = ProviderConfig::Confluence {
+            base_url: "https://team.atlassian.net".into(),
+            auth: ConfluenceAuthConfig::BearerToken {
+                token: "test-token".into(),
+            },
+            scope: ConfluenceScope::Space { key: None },
+            flavor: Some(devboy_confluence::ConfluenceFlavor::SelfHosted),
+            cloud_id: None,
+            api_version: None,
+            extra: HashMap::new(),
+        };
+
+        let proxy = ProxyConfig {
+            url: server.base_url(),
+            headers: HashMap::new(),
+        };
+        let provider = create_knowledge_base_provider(&config, Some(&proxy)).unwrap();
         let _ = provider.get_spaces().await.unwrap();
 
         mock.assert();
@@ -605,6 +760,29 @@ mod tests {
                     "custom_fields": []
                 }
             }
+        }));
+        assert!(create_enricher(&config, Some(&meta)).is_some());
+    }
+
+    #[test]
+    fn test_create_enricher_linear_uses_metadata_when_present() {
+        let config = ProviderConfig::Linear {
+            base_url: "https://api.linear.app/graphql".into(),
+            access_token: "token".into(),
+            scope: LinearScope::Team {
+                id: "team-1".into(),
+                key: Some("ENG".into()),
+            },
+            extra: HashMap::new(),
+        };
+
+        assert!(create_enricher(&config, None).is_some());
+
+        let meta = ProviderMetadata::new(serde_json::json!({
+            "statuses": [
+                { "id": "1", "name": "Backlog", "category": "backlog" },
+                { "id": "2", "name": "In Review", "category": "in_progress" }
+            ]
         }));
         assert!(create_enricher(&config, Some(&meta)).is_some());
     }
@@ -786,6 +964,24 @@ mod tests {
         assert_eq!(
             IssueProvider::provider_name(provider.unwrap().as_ref()),
             "clickup"
+        );
+    }
+
+    #[test]
+    fn test_create_yougile_provider() {
+        let config = ProviderConfig::YouGile {
+            base_url: "https://yougile.com/api-v2".into(),
+            access_token: "tok".into(),
+            scope: YouGileScope::Board {
+                id: "board-123".into(),
+            },
+            extra: HashMap::new(),
+        };
+        let provider = create_provider(&config, None);
+        assert!(provider.is_ok());
+        assert_eq!(
+            IssueProvider::provider_name(provider.unwrap().as_ref()),
+            "yougile"
         );
     }
 

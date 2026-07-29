@@ -71,6 +71,18 @@ pub fn known_providers() -> Vec<ProviderInfo> {
             }],
         },
         ProviderInfo {
+            display_name: "Linear",
+            key: "linear",
+            default_categories: &[ToolCategory::IssueTracker],
+            conditional_categories: &[],
+        },
+        ProviderInfo {
+            display_name: "YouGile",
+            key: "yougile",
+            default_categories: &[ToolCategory::IssueTracker],
+            conditional_categories: &[],
+        },
+        ProviderInfo {
             display_name: "Confluence",
             key: "confluence",
             default_categories: &[ToolCategory::KnowledgeBase],
@@ -536,7 +548,7 @@ mod tests {
     use super::*;
     use crate::context::{
         ClickUpScope, ConfluenceAuthConfig, ConfluenceScope, GitHubScope, GitLabScope, JiraScope,
-        ProviderConfig, SlackScope, TelegramScope,
+        LinearScope, ProviderConfig, SlackScope, TelegramScope, YouGileScope,
     };
     use devboy_core::ToolEnricher;
     use std::collections::HashMap;
@@ -709,12 +721,29 @@ mod tests {
                 flavor: None,
                 extra: HashMap::new(),
             },
+            ProviderConfig::Linear {
+                base_url: "https://api.linear.app/graphql".into(),
+                access_token: "x".into(),
+                scope: LinearScope::Team {
+                    id: "team-1".into(),
+                    key: Some("ENG".into()),
+                },
+                extra: HashMap::new(),
+            },
+            ProviderConfig::YouGile {
+                base_url: "https://yougile.com/api-v2".into(),
+                access_token: "x".into(),
+                scope: YouGileScope::Board { id: "1".into() },
+                extra: HashMap::new(),
+            },
             ProviderConfig::Confluence {
                 base_url: "https://wiki.example.com".into(),
                 auth: ConfluenceAuthConfig::BearerToken { token: "x".into() },
                 scope: ConfluenceScope::Space {
                     key: Some("ENG".into()),
                 },
+                flavor: None,
+                cloud_id: None,
                 api_version: Some("v1".into()),
                 extra: HashMap::new(),
             },
@@ -750,6 +779,8 @@ mod tests {
                 ProviderConfig::GitHub { .. } => Some("github"),
                 ProviderConfig::ClickUp { .. } => Some("clickup"),
                 ProviderConfig::Jira { .. } => Some("jira"),
+                ProviderConfig::Linear { .. } => Some("linear"),
+                ProviderConfig::YouGile { .. } => Some("yougile"),
                 ProviderConfig::Confluence { .. } => Some("confluence"),
                 ProviderConfig::Fireflies { .. } => Some("fireflies"),
                 ProviderConfig::Slack { .. } => Some("slack"),
