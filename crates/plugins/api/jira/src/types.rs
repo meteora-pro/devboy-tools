@@ -229,6 +229,15 @@ pub struct JiraComment {
 #[derive(Debug, Clone, Deserialize)]
 pub struct JiraCommentsResponse {
     pub comments: Vec<JiraComment>,
+    /// Starting index of this page.
+    #[serde(default, rename = "startAt")]
+    pub start_at: Option<u32>,
+    /// Maximum number of results in this page.
+    #[serde(default, rename = "maxResults")]
+    pub max_results: Option<u32>,
+    /// Total comments available on the issue.
+    #[serde(default)]
+    pub total: Option<u32>,
 }
 
 // =============================================================================

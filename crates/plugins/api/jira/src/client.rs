@@ -21,10 +21,10 @@ use devboy_core::{
     CreateIssueInput, CreateStructureInput, Error, ForestModifyResult, GetForestOptions,
     GetStructureValuesInput, GetUsersOptions, Issue, IssueFilter, IssueLink, IssueProvider,
     IssueRelations, IssueStatus, ListProjectVersionsParams, MergeRequestProvider,
-    MoveStructureRowsInput, PipelineProvider, ProjectVersion, Provider, ProviderResult, Result,
-    SaveStructureViewInput, Structure, StructureColumnValue, StructureForest, StructureNode,
-    StructureRowValues, StructureValues, StructureView, StructureViewColumn, UpdateIssueInput,
-    UpsertProjectVersionInput, User,
+    MoveStructureRowsInput, Pagination, PipelineProvider, ProjectVersion, Provider, ProviderResult,
+    Result, SaveStructureViewInput, Structure, StructureColumnValue, StructureForest,
+    StructureNode, StructureRowValues, StructureValues, StructureView, StructureViewColumn,
+    UpdateIssueInput, UpsertProjectVersionInput, User,
 };
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
@@ -2519,15 +2519,40 @@ impl IssueProvider for JiraClient {
     }
 
     async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
+        self.get_comments_paginated(issue_key, None, None).await
+    }
+
+    async fn get_comments_paginated(
+        &self,
+        issue_key: &str,
+        offset: Option<u32>,
+        limit: Option<u32>,
+    ) -> Result<ProviderResult<Comment>> {
         let jira_key = parse_jira_key(issue_key);
-        let url = format!("{}/issue/{}/comment", self.base_url, jira_key);
+        let offset = offset.unwrap_or(0);
+        let limit = limit.unwrap_or(20);
+        let url = format!(
+            "{}/issue/{}/comment?startAt={offset}&maxResults={limit}",
+            self.base_url, jira_key
+        );
         let response: JiraCommentsResponse = self.get(&url).await?;
-        Ok(response
+        let page_offset = response.start_at.unwrap_or(offset);
+        let page_limit = response.max_results.unwrap_or(limit);
+        let total = response.total;
+        let comments = response
             .comments
             .iter()
             .map(|c| map_comment(c, self.flavor))
-            .collect::<Vec<_>>()
-            .into())
+            .collect::<Vec<_>>();
+        let has_more =
+            total.is_some_and(|total| page_offset.saturating_add(comments.len() as u32) < total);
+        Ok(ProviderResult::new(comments).with_pagination(Pagination {
+            offset: page_offset,
+            limit: page_limit,
+            total,
+            has_more,
+            next_cursor: None,
+        }))
     }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment> {
@@ -7067,8 +7092,14 @@ mod tests {
             let server = MockServer::start();
 
             server.mock(|when, then| {
-                when.method(GET).path("/issue/PROJ-1/comment");
+                when.method(GET)
+                    .path("/issue/PROJ-1/comment")
+                    .query_param("startAt", "0")
+                    .query_param("maxResults", "20");
                 then.status(200).json_body(serde_json::json!({
+                    "startAt": 0,
+                    "maxResults": 20,
+                    "total": 1,
                     "comments": [{
                         "id": "100",
                         "body": "Great work!",
@@ -7089,6 +7120,47 @@ mod tests {
             assert_eq!(comments[0].id, "100");
             assert_eq!(comments[0].body, "Great work!");
             assert_eq!(comments[0].author.as_ref().unwrap().username, "reviewer");
+        }
+
+        #[tokio::test]
+        async fn test_get_comments_paginates_and_returns_metadata() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/issue/PROJ-1/comment")
+                    .query_param("startAt", "20")
+                    .query_param("maxResults", "10");
+                then.status(200).json_body(serde_json::json!({
+                    "startAt": 20,
+                    "maxResults": 10,
+                    "total": 32,
+                    "comments": [{
+                        "id": "120",
+                        "body": "The twenty-first comment",
+                        "author": {
+                            "name": "reviewer",
+                            "displayName": "Reviewer"
+                        },
+                        "created": "2024-01-01T12:00:00.000+0000",
+                        "updated": "2024-01-01T12:00:00.000+0000"
+                    }]
+                }));
+            });
+
+            let client = create_self_hosted_client(&server);
+            let result = client
+                .get_comments_paginated("PROJ-1", Some(20), Some(10))
+                .await
+                .unwrap();
+
+            assert_eq!(result.items.len(), 1);
+            assert_eq!(result.items[0].id, "120");
+            let pagination = result.pagination.unwrap();
+            assert_eq!(pagination.offset, 20);
+            assert_eq!(pagination.limit, 10);
+            assert_eq!(pagination.total, Some(32));
+            assert!(pagination.has_more);
         }
 
         #[tokio::test]

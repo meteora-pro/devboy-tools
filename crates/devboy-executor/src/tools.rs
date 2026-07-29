@@ -52,11 +52,13 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "get_issue_comments".into(),
-            description: "Get comments for an issue.".into(),
+            description: "Get comments for an issue, optionally as a page.".into(),
             category: ToolCategory::IssueTracker,
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("Issue key"));
+                s.add_property("offset", PropertySchema::integer("Number of comments to skip (default: 0 when paginating)", Some(0.0), None));
+                s.add_property("limit", PropertySchema::integer("Maximum comments to return (default: 20 when paginating)", Some(1.0), Some(100.0)));
                 s.set_required("key", true);
                 s
             },
@@ -1302,6 +1304,23 @@ mod tests {
         let tools = base_tool_definitions();
         let get_issue = tools.iter().find(|t| t.name == "get_issue").unwrap();
         assert!(get_issue.input_schema.required.contains(&"key".to_string()));
+
+        let get_issue_comments = tools
+            .iter()
+            .find(|t| t.name == "get_issue_comments")
+            .unwrap();
+        assert!(
+            get_issue_comments
+                .input_schema
+                .properties
+                .contains_key("offset")
+        );
+        assert!(
+            get_issue_comments
+                .input_schema
+                .properties
+                .contains_key("limit")
+        );
 
         let create_mr = tools
             .iter()

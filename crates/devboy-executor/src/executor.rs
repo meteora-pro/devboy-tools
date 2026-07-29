@@ -834,6 +834,17 @@ struct KeyParam {
 }
 
 #[derive(Deserialize)]
+struct GetIssueCommentsParams {
+    key: String,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[serde(default)]
+    #[allow(dead_code)]
+    budget: Option<usize>,
+}
+
+#[derive(Deserialize)]
 struct GetIssueParams {
     key: String,
     #[serde(default = "default_true", rename = "includeComments")]
@@ -900,9 +911,11 @@ async fn execute_get_issue_comments(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: KeyParam = serde_json::from_value(args.clone())
+    let params: GetIssueCommentsParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
-    let result = provider.get_comments(&params.key).await?;
+    let result = provider
+        .get_comments_paginated(&params.key, params.offset, params.limit)
+        .await?;
     let meta = ResultMeta {
         pagination: result.pagination,
         sort_info: result.sort_info,
@@ -3312,6 +3325,19 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Comments(v, _) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_comments_accepts_pagination() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1", "offset": 1, "limit": 20});
+        let result = dispatch_tool("get_issue_comments", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(
+            matches!(result, ToolOutput::Comments(v, Some(meta)) if v.is_empty()
+            && meta.pagination.as_ref().is_some_and(|p| p.offset == 1 && p.limit == 20))
+        );
     }
 
     #[tokio::test]
