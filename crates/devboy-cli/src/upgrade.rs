@@ -143,6 +143,7 @@ fn extract_tar_gz(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Extract the devboy binary from a zip archive.
+#[cfg(target_os = "windows")]
 fn extract_zip(data: &[u8]) -> Result<Vec<u8>> {
     use std::io::Cursor;
     let reader = Cursor::new(data);
@@ -363,7 +364,14 @@ pub async fn run_upgrade(check_only: bool) -> Result<()> {
     let binary = if asset_name.ends_with(".tar.gz") {
         extract_tar_gz(&data)?
     } else if asset_name.ends_with(".zip") {
-        extract_zip(&data)?
+        #[cfg(target_os = "windows")]
+        {
+            extract_zip(&data)?
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            bail!("Unknown archive format: {}", asset_name);
+        }
     } else {
         bail!("Unknown archive format: {}", asset_name);
     };
@@ -501,76 +509,81 @@ mod tests {
         assert_eq!(result.unwrap(), content);
     }
 
-    #[test]
-    fn test_extract_zip_valid() {
-        use std::io::Cursor;
+    #[cfg(target_os = "windows")]
+    mod zip_tests {
+        use super::*;
 
-        let mut buf = Cursor::new(Vec::new());
-        {
-            let mut zip_writer = zip::ZipWriter::new(&mut buf);
-            let options = zip::write::SimpleFileOptions::default();
-            zip_writer.start_file("devboy.exe", options).unwrap();
-            std::io::Write::write_all(&mut zip_writer, b"fake exe content").unwrap();
-            zip_writer.finish().unwrap();
+        #[test]
+        fn test_extract_zip_valid() {
+            use std::io::Cursor;
+
+            let mut buf = Cursor::new(Vec::new());
+            {
+                let mut zip_writer = zip::ZipWriter::new(&mut buf);
+                let options = zip::write::SimpleFileOptions::default();
+                zip_writer.start_file("devboy.exe", options).unwrap();
+                std::io::Write::write_all(&mut zip_writer, b"fake exe content").unwrap();
+                zip_writer.finish().unwrap();
+            }
+
+            let zip_data = buf.into_inner();
+            let result = extract_zip(&zip_data);
+            assert!(result.is_ok(), "Should extract devboy.exe from zip");
+            assert_eq!(result.unwrap(), b"fake exe content");
         }
 
-        let zip_data = buf.into_inner();
-        let result = extract_zip(&zip_data);
-        assert!(result.is_ok(), "Should extract devboy.exe from zip");
-        assert_eq!(result.unwrap(), b"fake exe content");
-    }
+        #[test]
+        fn test_extract_zip_devboy_without_exe() {
+            use std::io::Cursor;
 
-    #[test]
-    fn test_extract_zip_devboy_without_exe() {
-        use std::io::Cursor;
+            let mut buf = Cursor::new(Vec::new());
+            {
+                let mut zip_writer = zip::ZipWriter::new(&mut buf);
+                let options = zip::write::SimpleFileOptions::default();
+                zip_writer.start_file("devboy", options).unwrap();
+                std::io::Write::write_all(&mut zip_writer, b"unix binary").unwrap();
+                zip_writer.finish().unwrap();
+            }
 
-        let mut buf = Cursor::new(Vec::new());
-        {
-            let mut zip_writer = zip::ZipWriter::new(&mut buf);
-            let options = zip::write::SimpleFileOptions::default();
-            zip_writer.start_file("devboy", options).unwrap();
-            std::io::Write::write_all(&mut zip_writer, b"unix binary").unwrap();
-            zip_writer.finish().unwrap();
+            let zip_data = buf.into_inner();
+            let result = extract_zip(&zip_data);
+            assert!(
+                result.is_ok(),
+                "Should extract devboy (without .exe) from zip"
+            );
+            assert_eq!(result.unwrap(), b"unix binary");
         }
 
-        let zip_data = buf.into_inner();
-        let result = extract_zip(&zip_data);
-        assert!(
-            result.is_ok(),
-            "Should extract devboy (without .exe) from zip"
-        );
-        assert_eq!(result.unwrap(), b"unix binary");
-    }
+        #[test]
+        fn test_extract_zip_missing_binary() {
+            use std::io::Cursor;
 
-    #[test]
-    fn test_extract_zip_missing_binary() {
-        use std::io::Cursor;
+            let mut buf = Cursor::new(Vec::new());
+            {
+                let mut zip_writer = zip::ZipWriter::new(&mut buf);
+                let options = zip::write::SimpleFileOptions::default();
+                zip_writer.start_file("readme.txt", options).unwrap();
+                std::io::Write::write_all(&mut zip_writer, b"not a binary").unwrap();
+                zip_writer.finish().unwrap();
+            }
 
-        let mut buf = Cursor::new(Vec::new());
-        {
-            let mut zip_writer = zip::ZipWriter::new(&mut buf);
-            let options = zip::write::SimpleFileOptions::default();
-            zip_writer.start_file("readme.txt", options).unwrap();
-            std::io::Write::write_all(&mut zip_writer, b"not a binary").unwrap();
-            zip_writer.finish().unwrap();
+            let zip_data = buf.into_inner();
+            let result = extract_zip(&zip_data);
+            assert!(result.is_err(), "Should fail when binary not in zip");
+            assert!(result.unwrap_err().to_string().contains("not found"));
         }
 
-        let zip_data = buf.into_inner();
-        let result = extract_zip(&zip_data);
-        assert!(result.is_err(), "Should fail when binary not in zip");
-        assert!(result.unwrap_err().to_string().contains("not found"));
+        #[test]
+        fn test_extract_zip_invalid_data() {
+            let result = extract_zip(b"not a zip file");
+            assert!(result.is_err(), "Should fail on invalid zip data");
+        }
     }
 
     #[test]
     fn test_extract_tar_gz_invalid_data() {
         let result = extract_tar_gz(b"not a tar.gz file");
         assert!(result.is_err(), "Should fail on invalid tar.gz data");
-    }
-
-    #[test]
-    fn test_extract_zip_invalid_data() {
-        let result = extract_zip(b"not a zip file");
-        assert!(result.is_err(), "Should fail on invalid zip data");
     }
 
     #[test]
