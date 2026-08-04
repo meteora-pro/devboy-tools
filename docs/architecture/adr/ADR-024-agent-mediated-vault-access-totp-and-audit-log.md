@@ -129,25 +129,38 @@ A new `Envelope::Totp` variant joins `Passphrase` / `Keychain` / `Recovery` in
 `crates/devboy-vault-crypto/src/format.rs`. At enrollment (`devboy secrets
 vault add-totp`) the CLI generates a random 32-byte TOTP secret, displays a
 `otpauth://` QR (rendered in the TUI; as an ASCII QR or a bare secret in
-headless mode), and stores an envelope wrapping `vault_key` under
-`HKDF(totp_secret)`.
+headless mode). The `totp_secret` is stored in the **OS keystore** (macOS
+Keychain / Windows DPAPI / Linux Secret Service — all per-user, **no `sudo`**),
+and `vault_key` is wrapped under `HKDF(totp_secret)`. The `totp_secret` is
+**never written to the vault file**, so possession of the file alone cannot
+derive the wrap key — the Argon2id passphrase envelope remains the sole
+at-rest protection, unchanged.
 
 - **Algorithm:** TOTP per [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238),
   SHA-1, 6 digits, 30-second step (the universal default; interoperable with
   every authenticator app).
-- **Envelope wrap:** the TOTP secret does *not* directly decrypt `vault_key`.
-  `vault_key` is wrapped under `HKDF-Extract(totp_secret, "devboy-vault-totp")`
-  in an AEAD envelope, exactly mirroring how the recovery envelope wraps under
-  `HKDF(bip39_seed)`. Adding TOTP is a header-only write; per-entry ciphertexts
-  are untouched.
-- **Verification on unlock:** the daemon recomputes the current TOTP from the
-  stored secret, compares in constant time, and accepts one step of clock skew
-  (±30 s). Failed attempts are rate-limited (default: 5 per 30 s, then a 60 s
-  lockout) to bound brute force on the 6-digit space.
+- **Storage & wrap (no at-rest regression):** the `totp_secret` lives in the OS
+  keystore under a fixed account (e.g. `dev.devboy.secrets.totp`), accessed via
+  the existing `keyring` crate. `vault_key` is AEAD-wrapped under
+  `HKDF-Extract(totp_secret, "devboy-vault-totp")`. A 6-digit code is far too
+  weak to derive a key, so the strong `totp_secret` — not the code — backs the
+  wrap, and it resides only in the OS keystore, never on disk beside the
+  ciphertext. This is the same pattern production TOTP-protected secret stores
+  use, and it requires no `sudo` (the OS keystore is per-user).
+- **Verification on unlock:** the daemon reads `totp_secret` from the OS
+  keystore, recomputes the current TOTP, compares in constant time, and accepts
+  one step of clock skew (±30 s). A match derives the wrap key and unwraps
+  `vault_key`. Failed attempts are rate-limited (default: 5 per 30 s, then a
+  60 s lockout) to bound brute force on the 6-digit space.
+- **Fallback where no OS keystore is available** (CI, headless Linux without a
+  Secret Service daemon): TOTP degrades to **session-scoped** — the daemon
+  holds `totp_secret` in memory, established during the initial
+  passphrase/Recovery unlock, and re-unlocks the vault in-session on re-lock.
+  A fresh daemon start in this mode requires the passphrase once; the daily
+  TOTP unlock is available only where the OS keystore is present.
 - **Recovery relationship:** TOTP enrollment does **not** remove the passphrase
   envelope. A user who loses the authenticator still recovers via passphrase or
-  BIP39 phrase. TOTP is a *convenience* unlock for the in-session case; it is
-  not a recovery path.
+  BIP39 phrase. TOTP is a *convenience* unlock, not a recovery path.
 
 ### 2. Configurable unlock window
 
@@ -384,8 +397,16 @@ cryptographically stronger than a hardware-backed keychain:
   builtins; a community plugin may reintroduce it for users who want it.
 - **ADR-023 `Envelope::Keychain` (Touch ID unlock) is removed.** Unlock methods
   after this ADR are `Passphrase` / `Totp` / `Recovery` only. The macOS-only,
-  keychain-backed biometric envelope was the last hard dependency on the OS
-  keychain; with it gone, the vault has no keychain dependency at all.
+  keychain-backed biometric envelope is removed as a *per-secret* unlock path.
+- **The OS keystore is retained for one narrow, opt-in role: the TOTP binding
+  (§1).** The `keyring` crate stays a dependency so `totp_secret` can reside in
+  the OS keystore (macOS Keychain / Windows DPAPI / Linux Secret Service,
+  per-user, no `sudo`) rather than on disk. This is an *optional machine
+  binding for the unlock secret*, not a primary secret store; where the OS
+  keystore is absent (CI/headless Linux) TOTP falls back to session-scoped and
+  the `keyring` dependency is simply unused. §6's intent — "the vault is the
+  primary cross-platform store, no *requirement* on the OS keychain" — holds;
+  the keychain is no longer required, only optionally reused for TOTP.
 - **ADR-005 is superseded** in its "keychain as primary, env as fallback"
   decision. ADR-005's `SecretString` discipline and its env-store fallback
   remain (the env-store is still the CI source); only the keychain-as-primary
