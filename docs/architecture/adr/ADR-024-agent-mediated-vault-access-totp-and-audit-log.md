@@ -16,13 +16,15 @@ superseded_by: null
 **proposed**
 
 This is an **umbrella** ADR that extends [ADR-023](./ADR-023-secret-store-ux-layer.md),
-in the same spirit as ADR-023's own umbrella over eight sub-decisions. The four
-sub-decisions here are designed against each other: the ephemeral unlock
-credential is what makes an agent-mediated unlock acceptable, the configurable
-window is what makes daily agentic work practical, the liveness verdict is the
-agent's only legitimate way to confirm a secret works, and the audit log is the
-tamper-evident record of both agent activity and leak events. Splitting them
-would multiply cross-references without adding clarity.
+in the same spirit as ADR-023's own umbrella over eight sub-decisions. The six
+sub-decisions here are designed against each other: the ephemeral TOTP unlock
+credential is what makes an agent-mediated unlock acceptable; the configurable
+window is what makes daily agentic work practical; the liveness verdict is the
+agent's only legitimate way to confirm a secret works; the audit log is the
+tamper-evident record of agent activity and leak events; per-path version
+history makes every agent edit reversible; and deprecating the OS keychain
+makes the vault a single cross-platform store. Splitting them would multiply
+cross-references without adding clarity.
 
 ## Context
 
@@ -65,9 +67,11 @@ Four gaps remain that ADR-023 does not close on its own.
    vault-encrypted audit log that the agent can write to through a code path
    which *physically cannot* persist a raw value.
 
-This ADR adds four sub-decisions, one per gap. Each is a narrow extension of an
-ADR-023 component; none re-opens ADR-023's trust-boundary contract except where
-this ADR states the relaxation explicitly and justifies it (sub-decision 3).
+This ADR adds six sub-decisions — four addressing the gaps above (§1–§4), plus
+per-path version history (§5) and the OS keychain/keyring deprecation (§6).
+Each is a narrow extension of an ADR-023 component; none re-opens ADR-023's
+trust-boundary contract except where this ADR states the relaxation explicitly
+and justifies it (sub-decision 3).
 
 ### Threat model alignment
 
@@ -141,9 +145,13 @@ at-rest protection, unchanged.
   every authenticator app).
 - **Storage & wrap (no at-rest regression):** the `totp_secret` lives in the OS
   keystore under a fixed account (e.g. `dev.devboy.secrets.totp`), accessed via
-  the existing `keyring` crate. `vault_key` is AEAD-wrapped under
-  `HKDF-Extract(totp_secret, "devboy-vault-totp")`. A 6-digit code is far too
-  weak to derive a key, so the strong `totp_secret` — not the code — backs the
+  the existing `keyring` crate. `vault_key` is AEAD-wrapped under a key derived
+  via HKDF-SHA256 — `Hkdf::<Sha256>::new(Some(salt), totp_secret)`
+  then `.expand(b"devboy-vault-totp-key-v1", &mut out)` — mirroring
+  `recovery::derive_recovery_key` (the secret is the HKDF input keying material;
+  `salt` and the `info` label are the other two parameters; `info` belongs in
+  the expand step, not in HKDF-Extract). A 6-digit code is far too weak to
+  derive a key, so the strong `totp_secret` — not the code — backs the
   wrap, and it resides only in the OS keystore, never on disk beside the
   ciphertext. This is the same pattern production TOTP-protected secret stores
   use, and it requires no `sudo` (the OS keystore is per-user).
@@ -174,10 +182,11 @@ guarantees (explicit lock, SIGTERM zeroize, process-exit zeroize).
 - **`max_unlock_ttl`** (per-user hard ceiling). Default **24 hours**. A user may
   raise it (the threat model already grants a local process broad access), but
   the default keeps the window bounded.
-- **`duration` parameter on `vault.unlock` / `secrets_unlock`.** Each unlock may
-  request a specific window `≤ max_unlock_ttl`. Use case: "I am leaving a long
-  task running overnight" → `duration = 24h`. Omitting `duration` uses
-  `unlock_ttl`.
+- **`duration` parameter on `vault.unlock` / `secrets_unlock` (seconds).** Each
+  unlock may request a specific window `≤ max_unlock_ttl`, expressed in seconds
+  to match the rest of the MCP surface (e.g. `age_seconds`, `ttl_seconds` in
+  ADR-023 §3.7). Use case: "I am leaving a long task running overnight" →
+  `duration = 86400` (24 h). Omitting `duration` uses `unlock_ttl`.
 - **Idle safety (opt-in).** A separate `idle_relock` value (default **off**
   when `unlock_ttl` is set, to preserve the daily-unlock intent; can be turned
   on for defense-in-depth) re-locks after N minutes of *inactivity* even inside
@@ -201,7 +210,7 @@ Two new tools join the `secrets_*` family registered in
 `AgentSafeReply` marker — neither returns a secret value.
 
 ```
-secrets_unlock(totp: string, duration?: number)
+secrets_unlock(totp: string, duration?: number)   // duration in seconds, ≤ max_unlock_ttl
   → { unlocked: true, expires_at: timestamp }
   | { error: "BadTotp" | "RateLimited" | "WrongMethod" }
   // The agent relays a TOTP the user typed in chat. The daemon verifies
@@ -260,7 +269,9 @@ same `vault_key`.
 
 `~/.devboy/secrets/audit-log.dvb` (separate file, same key). Format mirrors
 the vault's AEAD approach: a plaintext header (`AUDIT1`, version, entry count
-for truncation detection) followed by contiguous per-entry ciphertexts, each
+for truncation detection), a plaintext per-entry index (`seq → { nonce,
+ct_offset }`, so each entry's sequence number and nonce are available without
+decrypting the body), followed by contiguous per-entry ciphertexts, each
 
 ```
 XChaCha20-Poly1305(
@@ -269,12 +280,15 @@ XChaCha20-Poly1305(
                      text, replaced?: [{ path, count }] },
   key       = vault_key,
   nonce     = entry.nonce,
-  associated_data = "audit" utf-8 bytes || ts_bytes
+  associated_data = b"audit-v1" || seq_bytes   // seq from the plaintext index
 )
 ```
 
-Per-entry AEAD with `kind` and `ts` in AAD gives tamper evidence: a splice of
-one entry's ciphertext under another's index fails decryption. There is no
+`ts` lives inside the encrypted JSON (it is not trusted as AAD — AAD must be
+available verbatim at decrypt time). Per-entry AEAD with the plaintext
+sequence number in AAD gives tamper evidence: a splice of one entry's
+ciphertext under another's index fails decryption, because the AAD `seq` no
+longer matches. There is no
 whole-file Merkle tree; truncation is detected by the entry-count header, and
 the threat model already grants single-writer (the daemon) and filesystem
 permissions.
