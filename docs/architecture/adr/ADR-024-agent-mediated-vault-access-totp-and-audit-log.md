@@ -863,6 +863,71 @@ including `totp_secret` and `vault_key` — out of the agent's reach.
 against a hostile agent; acceptable only for a trusted single-user workstation.
 `doctor` must say so rather than imply the guarantees of levels 1–2.
 
+#### Two credential flows, and the rule that separates them
+
+The design has exactly two paths by which a credential reaches the daemon, and
+they are deliberately different shapes:
+
+```
+passphrase   user ──────────────────────────────────▶ daemon
+             (§7 trusted path; the agent is not in this path at all,
+              and has no tool that would accept a passphrase)
+
+TOTP code    user ──▶ agent ──▶ MCP ──▶ daemon
+             (the agent is a transport; it sees the code and cannot
+              do anything useful with it)
+```
+
+The asymmetry follows from one rule, which is worth stating because it decides
+any future credential too:
+
+> A credential may cross the agent surface **only if** it is ephemeral **and**
+> cannot perform a cold start.
+
+| | passphrase | TOTP code |
+|---|---|---|
+| Lifetime | permanent | one 30 s step, then spent |
+| What it opens | the vault from nothing | a session a human already opened this boot |
+| Can the agent derive it? | — | no (§1: secret is vault-resident and daemon-held) |
+| If it lands in a transcript | compromised forever | worthless |
+
+Both conditions are required. A TOTP code stored where the agent could read its
+secret would fail the second test even while passing the first, which is
+exactly the mistake the original §1 made.
+
+**Consequence for the passphrase prompt: it must not render into a terminal the
+agent controls.** If the agent spawned the shell, it owns the PTY master and
+can read everything typed into it — including input that is not echoed. A
+daemon-rendered prompt is only trustworthy on a channel the agent does not
+hold: its own GUI/TUI window, a separate terminal the user opened, or a
+platform primitive from the table below. "The daemon printed the prompt" is not
+sufficient; *where* it printed is the property that matters.
+
+**How the agent learns the unlock happened.** It does not observe the
+passphrase flow, so it polls `secrets_status()` or simply retries the failed
+operation after telling the user. There is deliberately no completion callback
+from the passphrase path to the agent — the agent is not a participant in it.
+
+**A rule to state in user-facing documentation:** *devboy never asks for your
+vault passphrase in an agent conversation.* No tool accepts one, so any chat
+message requesting it is either a confused agent or a hostile prompt, and the
+answer is always no. This is the secret framework's equivalent of "your bank
+will never ask for your PIN", and it is the user's half of the §7 contract —
+the framework can guarantee it never asks, but only the user can refuse to
+answer. A passphrase typed into a chat window has entered the transcript and
+should be treated as compromised: rotate it via `devboy secrets vault
+change-passphrase`.
+
+**Residual risk, stated openly.** Because the agent renders the TOTP request in
+its own conversation, it can ask for a code when nothing needs unlocking and
+obtain a premature unlock. §8 requires it to display the daemon-authored
+`user_message`, but nothing forces it to. The blast radius is bounded: the
+agent gains an unlock window it could have obtained anyway by waiting for the
+user's next legitimate unlock, and it still never receives `vault_key` or any
+secret value. Users who consider this unacceptable should use the `strict`
+profile of §2, where per-call approval makes each subsequent access a separate
+human decision.
+
 #### Platform trusted-path primitives
 
 Where the OS offers a real trusted path, use it in addition to the levels above:
@@ -1095,6 +1160,24 @@ instruction.
   the transcript *and* local socket access *and* acting within 30 s could
   replay the code. **Mitigation:** the replay guard rejects an already-spent
   time-step outright (§1), plus daemon rate-limiting and the socket UID check.
+- ⚠️ **A "daemon-rendered" prompt inside the agent's own terminal.** Moving
+  passphrase collection into the daemon achieves nothing if the prompt is
+  written to a PTY whose master the agent holds — it reads non-echoed input
+  there just as easily. **Mitigation:** §7 requires the prompt to render on a
+  channel the agent does not control (the daemon's own window, a separate
+  user-opened terminal, or a platform primitive); `doctor` should treat "prompt
+  channel owned by a descendant of the agent" as level 3, not level 2.
+- ⚠️ **The agent soliciting a TOTP code when nothing needs unlocking.** It
+  renders the request in its own conversation and can ignore the
+  daemon-authored `user_message`. **Mitigation:** bounded blast radius — a
+  premature unlock is one the agent could obtain by waiting anyway, and it
+  yields neither `vault_key` nor any value; the `strict` profile makes each
+  subsequent access a separate human decision.
+- ⚠️ **A user typing the passphrase into the chat window.** No tool accepts
+  one, so it cannot reach the daemon — but it has entered the transcript.
+  **Mitigation:** the documented rule that devboy never asks for the passphrase
+  in an agent conversation, plus a `change-passphrase` path for when it happens
+  anyway.
 - ⚠️ **A daemon spawned by the agent silently voids §1.** If the daemon is
   lazily started as a child of the agent, `ptrace_scope = 1` no longer
   separates them and `totp_secret` becomes readable — while every guarantee in
@@ -1324,8 +1407,11 @@ guarantee the deployment may not have.
   - `crates/devboy-secrets-agent/` + packaging — §7 process model: a
     daemon-rendered passphrase prompt (moving collection out of
     `crates/devboy-cli/src/secrets_cmd.rs`), systemd user unit / launchd
-    plist for independent startup, refusal to serve `secrets_unlock` when the
-    daemon's parent is the calling agent, and — for level 1 — a service UID
+    plist for independent startup, a prompt channel the agent does not own (its
+    own window / a separate terminal / a platform primitive — **not** a PTY
+    whose master a descendant of the agent holds), refusal to serve
+    `secrets_unlock` when the daemon's parent is the calling agent, and — for
+    level 1 — a service UID
     with a client-UID allow-list replacing the `peer_uid == geteuid()` check in
     `crates/devboy-secrets-agent/src/socket.rs`.
   - `crates/devboy-mcp/src/` — a `Remediation { actor, action, user_message,
@@ -1387,3 +1473,4 @@ guarantee the deployment may not have.
 | 2026-08-11 | Andrei Mazniak | **Reframed §1, §6; added §7.** §1: TOTP is no longer a passphrase replacement — `totp_secret` moves from the OS keystore into the encrypted vault + daemon memory, with a reserved slot, replay guard, and an explicit dependency on §7; the strength argument ("as strong as its keystore, never the 6 digits") is now stated as a rule. §6: keychain **demoted to opt-in** (`[secrets.keychain] enabled`, default `false`) instead of removed, with a per-platform table showing it only exceeds `0600` on macOS; `Envelope::Keyfile` added for unattended cold start; CI mode gains a real consumer; an implementation note records that the runtime default lives in `ChainStore`, not in `sources.toml`. §2: split into `convenient` / `strict` profiles, because a long window and per-call approval genuinely conflict. §7 (new): trusted-path process model — daemon under its own UID, daemon-rendered prompts, must not be a child of the agent, platform primitives, macOS keychain re-entering as anti-tamper, and the honest credential-vs-authorization limit. Threat model, Decision, Consequences, Alternatives 6–8 and Implementation updated to match. |
 | 2026-08-11 | Andrei Mazniak | **§6: CI / env-only mode promoted to a first-class contract.** Spelled out as a table what is and is not active when the environment is the sole source (no vault, daemon, keychain, prompt, approval, audit log or version history), so a pipeline can never hang on an invisible prompt or a D-Bus call. Pinned a five-step variable-resolution order that keeps **both** naming conventions working — ADR-005's `DEVBOY_GITHUB_TOKEN` / unprefixed `GITHUB_TOKEN` alongside ADR-021's `DEVBOY_SECRET__<PATH>` — since routing CI through only the latter would break existing pipelines silently. Required fail-fast behaviour (errors list every variable tried; writes return an explicit read-only error instead of disappearing into `MemoryStore`; vault-dependent MCP tools return `NotAvailableInCiMode`). Confirmed that heuristic CI variables raise a `doctor` notice but never flip the mode. Decision (6), Risks, Implementation and the docs plan updated to match. |
 | 2026-08-11 | Andrei Mazniak | **New §8: actionable errors.** Every failure reply now carries a `remediation { actor, action, user_message, retryable, retry_after_seconds }`, where `actor` tells the agent whether it can resolve the problem or must stop and fetch a human. Adds the full error → remediation table, and a **negative contract** covering the guesses that silently dismantle the other sub-decisions: never request the passphrase, never start the daemon (a self-spawned daemon is `ptrace`-able and voids §1/§7), never work around a missing secret via env/dotfiles/history, never retry past the stated backoff. Surfaces the ADR-020 manifest metadata (`retrieval_url`, `required_scopes`, `rotation_method`) that has never had a consumer, so `NotProvisioned` tells the user which token to create, with which scopes, and where. `user_message` is daemon-authored, which also closes the prompt-injection concern already listed in Risks. Sub-decision count 7 → 8; gap 6 added to Context; Decision (8), Consequences and Implementation updated. |
+| 2026-08-11 | Andrei Mazniak | **§7: the two credential flows made explicit.** The passphrase travels user → daemon with the agent outside the path entirely; a TOTP code travels user → agent → daemon with the agent as transport. States the rule the asymmetry follows from — *a credential may cross the agent surface only if it is ephemeral **and** cannot perform a cold start* — with the property table showing both conditions are load-bearing. Adds a requirement that was missing: the passphrase prompt must not render into a PTY the agent controls, since an agent that spawned the shell holds the master and reads non-echoed input regardless of which process printed the prompt (`doctor` must grade such a setup as level 3). Documents that the agent learns of an unlock by polling `secrets_status()` — there is deliberately no callback into a flow it does not participate in. Adds the user-facing rule *devboy never asks for your vault passphrase in an agent conversation*, and records the residual risk that the agent can solicit a TOTP code prematurely. Three matching entries added to Risks. |
