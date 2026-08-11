@@ -68,4 +68,5 @@ fn _audit_compile_fence() {
     // themselves. It carries manifest metadata and fixed text —
     // never a value.
     assert_safe::<crate::remediation::Remediation>();
+    assert_safe::<crate::secrets_validate::SecretsValidateReply>();
 }

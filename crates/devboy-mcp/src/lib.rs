@@ -37,6 +37,7 @@ pub mod remediation;
 pub mod routing;
 pub mod secrets_provision;
 pub mod secrets_tool;
+pub mod secrets_validate;
 pub mod server;
 pub mod signature_match;
 pub mod speculation;

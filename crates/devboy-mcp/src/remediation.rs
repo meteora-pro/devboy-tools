@@ -170,6 +170,9 @@ pub struct RemediationContext {
     pub retry_after_seconds: Option<u64>,
     /// Platform-specific command that starts the daemon.
     pub daemon_start_command: Option<String>,
+    /// Declared expiry date from the manifest, surfaced by
+    /// verdict replies.
+    pub expires_at_hint: Option<String>,
 }
 
 impl RemediationContext {

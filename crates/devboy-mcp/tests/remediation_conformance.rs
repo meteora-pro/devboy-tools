@@ -186,6 +186,7 @@ fn remediation_never_carries_a_value() {
         env_candidates: vec![SENTINEL.to_string()],
         retry_after_seconds: Some(1),
         daemon_start_command: Some(SENTINEL.to_string()),
+        expires_at_hint: Some(SENTINEL.to_string()),
     };
 
     // The sentinel *will* appear, because every one of those
