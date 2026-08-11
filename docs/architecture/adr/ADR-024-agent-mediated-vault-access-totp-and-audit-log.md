@@ -1,30 +1,38 @@
 ---
 id: ADR-024
-title: Agent-mediated vault access — TOTP unlock, configurable unlock window, liveness verdicts, and the encrypted audit log
+title: Agent-mediated vault access — TOTP re-unlock, configurable unlock window, liveness verdicts, encrypted audit log, versioning, keychain demotion, and the trusted-path process model
 status: proposed
 date: 2026-08-04
 deciders: ["Andrei Mazniak"]
-tags: ["security", "secrets", "agent", "audit", "rotation", "core"]
+tags: ["security", "secrets", "agent", "audit", "rotation", "trusted-path", "core"]
 supersedes: null
 superseded_by: null
 ---
 
-# ADR-024: Agent-mediated vault access — TOTP unlock, configurable unlock window, liveness verdicts, and the encrypted audit log
+# ADR-024: Agent-mediated vault access — TOTP re-unlock, audit log, versioning, keychain demotion, and the trusted-path process model
 
 ## Status
 
 **proposed**
 
 This is an **umbrella** ADR that extends [ADR-023](./ADR-023-secret-store-ux-layer.md),
-in the same spirit as ADR-023's own umbrella over eight sub-decisions. The six
-sub-decisions here are designed against each other: the ephemeral TOTP unlock
-credential is what makes an agent-mediated unlock acceptable; the configurable
-window is what makes daily agentic work practical; the liveness verdict is the
-agent's only legitimate way to confirm a secret works; the audit log is the
-tamper-evident record of agent activity and leak events; per-path version
-history makes every agent edit reversible; and deprecating the OS keychain
-makes the vault a single cross-platform store. Splitting them would multiply
+in the same spirit as ADR-023's own umbrella over eight sub-decisions. The seven
+sub-decisions here are designed against each other: the vault-resident TOTP
+secret is what lets an agent-mediated re-unlock prove human presence without
+any OS keystore; the configurable window is what makes daily agentic work
+practical; the liveness verdict is the agent's only legitimate way to confirm a
+secret works; the audit log is the tamper-evident record of agent activity and
+leak events; per-path version history makes every agent edit reversible;
+demoting the OS keychain to an opt-in makes the vault a single cross-platform
+store; and the trusted-path process model is what makes all six of the above
+meaningful in the presence of a same-UID agent. Splitting them would multiply
 cross-references without adding clarity.
+
+The last one is load-bearing and easy to miss: an unlock method is only as
+strong as the process that collects it. §1–§6 describe *what* is stored and
+*how* it is unlocked; §7 describes *who* may observe the unlock. Without §7,
+§1–§6 protect the vault from everything except the one adversary this ADR is
+actually about.
 
 ## Context
 
@@ -36,7 +44,7 @@ strict and intentional: the agent surface never carries a secret value, the
 unlock modal is agent-bypassing, and the daemon zeroizes the vault key after a
 fixed 15-minute idle window.
 
-Four gaps remain that ADR-023 does not close on its own.
+Five gaps remain that ADR-023 does not close on its own.
 
 1. **No agent-mediated unlock for the re-lock-during-session case.** ADR-023's
    daemon unlocks through a UI modal that the agent does not mediate, which is
@@ -67,54 +75,97 @@ Four gaps remain that ADR-023 does not close on its own.
    vault-encrypted audit log that the agent can write to through a code path
    which *physically cannot* persist a raw value.
 
-This ADR adds six sub-decisions — four addressing the gaps above (§1–§4), plus
-per-path version history (§5) and the OS keychain/keyring deprecation (§6).
-Each is a narrow extension of an ADR-023 component; none re-opens ADR-023's
-trust-boundary contract except where this ADR states the relaxation explicitly
-and justifies it (sub-decision 3).
+5. **Every unlock method is collected by a process the agent can replace.**
+   ADR-023 calls the unlock modal "agent-bypassing", but nothing in the design
+   makes it so. The daemon, the CLI, and the agent all run under the **same
+   UID**, and the passphrase prompt lives inside the CLI process
+   (`dialoguer::Password` in `crates/devboy-cli/src/secrets_cmd.rs`). An agent
+   that can run a shell — which is the normal case, not an exotic one — can
+   replace the `devboy` binary on `PATH`, edit the shell rc file, or set
+   `LD_PRELOAD`, and harvest the passphrase the next time the user types it.
+   No choice of unlock *method* fixes this: passphrase, keyfile, TOTP, and
+   hardware token are all equally exposed when the collecting process is
+   untrusted. This is a gap in the **process model**, not in the cryptography,
+   and it silently weakens all four gaps above.
+
+This ADR adds seven sub-decisions — five addressing the gaps above (§1–§4 and
+§7), plus per-path version history (§5) and the OS keychain/keyring demotion
+(§6). Each is a narrow extension of an ADR-023 component; none re-opens
+ADR-023's trust-boundary contract except where this ADR states the relaxation
+explicitly and justifies it (sub-decision 3).
 
 ### Threat model alignment
 
 This ADR inherits the threat model of ADR-020 / ADR-023: protection against
 *accidental* leakage by humans, by agents acting in good faith, and by routine
 tooling. It does **not** claim isolation against a malicious, shell-capable
-agent. Sub-decision 3 (agent-mediated TOTP unlock) is a *deliberate, scoped
-relaxation* of the "unlock is agent-bypassing" rule, justified solely by the
-*ephemerality* of the relayed credential (a TOTP code is dead in ~30 s). The
-relaxation applies to the unlock credential only; it never applies to secret
-values, which remain on the ADR-023 invariant ("agent never sees value").
+agent that has already achieved persistence on the machine.
+
+Within that boundary this ADR **raises** the bar in one specific direction:
+the agent is treated as an *untrusted same-UID process* rather than as a
+trusted part of the toolchain. Three consequences follow, and they shape §1,
+§3 and §7:
+
+- **The agent must never hold `vault_key`.** It holds a socket connection and
+  asks the daemon; the daemon decides. This is already ADR-023's design, but
+  it only holds if the daemon is not readable by the agent — see §7.
+- **Ephemerality alone does not justify relaying a credential.** An earlier
+  draft of this ADR justified `secrets_unlock(totp)` by the ~30 s lifetime of
+  a TOTP code. That reasoning is insufficient on its own: a credential the
+  agent can *derive* is not a credential at all, however short-lived. The
+  actual justification is that the TOTP secret lives where the agent cannot
+  reach it (§1), which makes a valid code **evidence of human presence**. The
+  30 s window bounds replay; it does not create the guarantee.
+- **The relaxation applies to the unlock credential only.** It never applies
+  to secret values, which remain on the ADR-023 invariant ("agent never sees
+  value").
+
+What remains explicitly out of scope: an agent that has already replaced the
+binaries or the shell environment can wait for a legitimate unlock and act
+inside the window. §7 states this limit rather than papering over it.
 
 ## Decision
 
-> **Decision:** (1) Add a TOTP unlock envelope to the local vault. (2) Replace
-> the fixed 15-minute idle re-lock with a configurable unlock window
-> (`unlock_ttl`, bounded by a per-user `max_unlock_ttl`, optionally shortened
-> by an idle safety). (3) Expose an agent-mediated `secrets_unlock(totp,
-> duration?)` MCP tool — the one place an unlock credential crosses the agent
-> surface — and a verdict-only `secrets_validate(path, liveness)` tool. (4) Add
-> an encrypted, append-only audit log-store to the vault, written through a
-> `vault_log_append` MCP tool whose server-side write path enforces a
-> value→alias scrub, so a raw secret value is *physically incapable* of being
-> persisted. (5) Make every agent-mediated write/rotate/delete reversible via
-> per-path version history and soft-delete; permanent purge is a user-only
-> action. (6) Deprecate the OS keychain/keyring dependency (ADR-005/021/023):
-> the encrypted local vault, unlocked via passphrase/TOTP/recovery, becomes the
-> primary cross-platform store, with no keychain dependency in the in-tree
-> builtins.
+> **Decision:** (1) Add a TOTP **re-unlock** method whose secret lives inside
+> the encrypted vault and is held in daemon memory after a passphrase unlock —
+> no OS keystore, and not a replacement for the passphrase. (2) Replace the
+> fixed 15-minute idle re-lock with a configurable unlock window (`unlock_ttl`,
+> bounded by a per-user `max_unlock_ttl`, optionally shortened by an idle
+> safety), shipped as two named profiles rather than one default. (3) Expose an
+> agent-mediated `secrets_unlock(totp, duration?)` MCP tool — the one place an
+> unlock credential crosses the agent surface — and a verdict-only
+> `secrets_validate(path, liveness)` tool. (4) Add an encrypted, append-only
+> audit log-store to the vault, written through a `vault_log_append` MCP tool
+> whose server-side write path enforces a value→alias scrub, so a raw secret
+> value is *physically incapable* of being persisted. (5) Make every
+> agent-mediated write/rotate/delete reversible via per-path version history
+> and soft-delete; permanent purge is a user-only action. (6) **Demote** the OS
+> keychain/keyring (ADR-005/021/023) from primary store to an **opt-in**
+> source, disabled by default on every platform: the encrypted local vault is
+> the default store, `env-store` is the CI default, and the in-tree keychain
+> source stays available behind an explicit setting. (7) Adopt a **trusted-path
+> process model**: the daemon runs under its own UID, collects the passphrase
+> and per-call approvals itself, and must not be a child of the agent — because
+> no unlock method is stronger than the process that collects it.
 
 ### 0. Universality and vendor neutrality
 
 `devboy-tools` is integration-agnostic and commercial-vendor-neutral (see CI
 guard #243). This ADR defines **only** capabilities of the secret framework
 itself — envelope kinds, a configurable daemon window, MCP tools, an on-disk
-audit store, and version history. It specifies **no** dependency on any
-particular agent, terminal, multiplexer, proxy, or companion product:
+audit store, version history, and the daemon's own process model. It specifies
+**no** dependency on any particular agent, terminal, multiplexer, proxy, or
+companion product:
 
 - The MCP tools speak the standard MCP tool surface; any MCP-compatible coding
   agent is an equal consumer.
 - The daemon's TUI/GUI unlock (ADR-023 §3.4) and any terminal-based,
   non-graphical integration are interchangeable entry points for the same
-  `vault.unlock` call.
+  `vault.unlock` call. §7 constrains *where the credential is collected*, not
+  which front-end triggers the unlock: any integration may ask the daemon to
+  begin an unlock, but none of them may collect the passphrase on its behalf.
+  That constraint is vendor-neutral — it names a process boundary, not a
+  product.
 - An agent-side convenience layer (a hook or skill authored in the agent's own
   configuration, a status indicator, a launcher wrapper) is **out of scope for
   this repository**. Such a layer adapts to the surfaces defined here; it does
@@ -127,48 +178,112 @@ entirely on its own side against the public MCP/daemon surface. The correctness
 and security properties in this ADR hold regardless of which integration (if
 any) is present.
 
-### 1. TOTP unlock envelope
+### 1. TOTP re-unlock — a vault-resident secret, not a keystore binding
 
-A new `Envelope::Totp` variant joins `Passphrase` / `Keychain` / `Recovery` in
-`crates/devboy-vault-crypto/src/format.rs`. At enrollment (`devboy secrets
-vault add-totp`) the CLI generates a random 32-byte TOTP secret, displays a
-`otpauth://` QR (rendered in the TUI; as an ASCII QR or a bare secret in
-headless mode). The `totp_secret` is stored in the **OS keystore** (macOS
-Keychain / Windows DPAPI / Linux Secret Service — all per-user, **no `sudo`**),
-and `vault_key` is wrapped under `HKDF(totp_secret)`. The `totp_secret` is
-**never written to the vault file**, so possession of the file alone cannot
-derive the wrap key — the Argon2id passphrase envelope remains the sole
-at-rest protection, unchanged.
+#### Why TOTP cannot replace the passphrase
 
-- **Algorithm:** TOTP per [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238),
-  SHA-1, 6 digits, 30-second step (the universal default; interoperable with
-  every authenticator app).
-- **Storage & wrap (no at-rest regression):** the `totp_secret` lives in the OS
-  keystore under a fixed account (e.g. `dev.devboy.secrets.totp`), accessed via
-  the existing `keyring` crate. `vault_key` is AEAD-wrapped under a key derived
-  via HKDF-SHA256 — `Hkdf::<Sha256>::new(Some(salt), totp_secret)`
-  then `.expand(b"devboy-vault-totp-key-v1", &mut out)` — mirroring
-  `recovery::derive_recovery_key` (the secret is the HKDF input keying material;
-  `salt` and the `info` label are the other two parameters; `info` belongs in
-  the expand step, not in HKDF-Extract). A 6-digit code is far too weak to
-  derive a key, so the strong `totp_secret` — not the code — backs the
-  wrap, and it resides only in the OS keystore, never on disk beside the
-  ciphertext. This is the same pattern production TOTP-protected secret stores
-  use, and it requires no `sudo` (the OS keystore is per-user).
-- **Verification on unlock:** the daemon reads `totp_secret` from the OS
-  keystore, recomputes the current TOTP, compares in constant time, and accepts
-  one step of clock skew (±30 s). A match derives the wrap key and unwraps
-  `vault_key`. Failed attempts are rate-limited (default: 5 per 30 s, then a
-  60 s lockout) to bound brute force on the 6-digit space.
-- **Fallback where no OS keystore is available** (CI, headless Linux without a
-  Secret Service daemon): TOTP degrades to **session-scoped** — the daemon
-  holds `totp_secret` in memory, established during the initial
-  passphrase/Recovery unlock, and re-unlocks the vault in-session on re-lock.
-  A fresh daemon start in this mode requires the passphrase once; the daily
-  TOTP unlock is available only where the OS keystore is present.
-- **Recovery relationship:** TOTP enrollment does **not** remove the passphrase
-  envelope. A user who loses the authenticator still recovers via passphrase or
-  BIP39 phrase. TOTP is a *convenience* unlock, not a recovery path.
+An earlier draft of this ADR treated TOTP as a *convenience unlock*: type six
+digits in the morning instead of a long passphrase. That framing is wrong, and
+the reason is worth stating as a rule, because it generalizes to any
+"convenient" unlock method:
+
+> The strength of a TOTP unlock equals the strength of wherever `totp_secret`
+> is stored — **never** the ~20 bits of the code.
+
+A code is always derivable from the secret. So a TOTP unlock is at best as
+strong as its secret store, and never stronger than the passphrase that
+protects the vault itself. If `totp_secret` sits anywhere an attacker (or an
+agent) can read — a keyfile, a world-readable keystore, a plaintext blob beside
+the vault — then TOTP contributes **exactly zero** additional protection
+against that attacker: they compute the code themselves.
+
+This is not hypothetical. On Linux the Secret Service hands a stored secret to
+**any process in the user's session** with no per-application ACL, which is the
+same protection as `chmod 0600`. Binding `totp_secret` to that keystore and
+calling the result a second factor would be theatre.
+
+The passphrase therefore remains the **only** cold-start unlock method
+(alongside Recovery, and the opt-in keyfile of §6). TOTP is repositioned to the
+one job it can actually do.
+
+#### What TOTP is for: proving human presence to a same-UID agent
+
+The real problem TOTP solves is gap 1 + gap 5 together: an agent session runs
+for hours, the daemon re-locks, and the agent needs the vault back — but the
+agent is exactly the party we do not want deciding that. A TOTP code the agent
+**cannot derive** is evidence that a human, holding a second device, approved
+the re-unlock.
+
+That property requires `totp_secret` to be somewhere the agent cannot read. It
+does not require an OS keystore — and given the Linux behaviour above, an OS
+keystore would not deliver it anyway. Instead:
+
+> `totp_secret` is stored **inside the encrypted vault** and lives in **daemon
+> memory** after a passphrase unlock. It never exists in plaintext on disk, and
+> the agent cannot read the daemon's memory (§7).
+
+#### Lifecycle
+
+```
+cold start (boot / daemon restart)
+  passphrase (Argon2id)  →  vault_key  →  read totp_secret  →  hold in daemon RAM
+
+re-lock (unlock_ttl expiry, idle_relock, explicit vault.lock)
+  zeroize vault_key      →  totp_secret STAYS in RAM
+
+re-unlock (agent-mediated, §3)
+  6 digits  →  verify against RAM copy  →  HKDF(totp_secret)  →  unwrap vault_key
+```
+
+There is no circular dependency: `Envelope::Totp` is only ever consulted for a
+*re*-unlock, at which point `totp_secret` is already resident. A daemon that has
+never been unlocked in this boot has no TOTP path — by design.
+
+- **Envelope.** `Envelope::Totp { totp_salt, wrapped_key }` joins `Passphrase`
+  and `Recovery` in `crates/devboy-vault-crypto/src/format.rs`. (It does *not*
+  join `Keychain`, which §6 removes.) Adding an envelope is a header-only write
+  that never touches per-entry ciphertext, as the existing module doc states.
+- **Algorithm.** TOTP per [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238),
+  SHA-1, 6 digits, 30-second step — the universal default, interoperable with
+  every authenticator app.
+- **Wrap.** `vault_key` is AEAD-wrapped under a key derived via HKDF-SHA256:
+  `Hkdf::<Sha256>::new(Some(totp_salt), totp_secret)` then
+  `.expand(b"devboy-vault-totp-key-v1", &mut out)` — mirroring
+  `recovery::derive_recovery_key`. The strong 32-byte secret backs the wrap;
+  the 6-digit code only gates access to it.
+- **Reserved storage slot.** `totp_secret` is held as a vault entry under a
+  reserved path (`__totp/secret`) that is **not resolvable through
+  `secret.get`, not listed by `secrets_list`, and not exportable** — following
+  the existing `__sources/` convention for source-credentials
+  (`crates/devboy-storage/src/router_credentials.rs`). Without this the whole
+  scheme collapses: an agent would simply ask the unlocked daemon for the TOTP
+  secret and mint its own codes.
+- **Replay guard.** The daemon records the last accepted time-step and rejects
+  any code from that step or earlier (RFC 6238 §5.2). A code the agent
+  observed while relaying it cannot be reused within its own window.
+- **Rate limiting.** 5 failed attempts per 30 s, then a 60 s lockout, bounding
+  brute force over the 6-digit space.
+- **Clock skew.** ±1 step (±30 s) accepted, subject to the replay guard.
+- **Enrollment.** `devboy secrets vault add-totp` requires an unlocked vault,
+  generates a random 32-byte secret, writes it to `__totp/secret`, creates
+  `Envelope::Totp`, and displays an `otpauth://` QR (TUI QR, ASCII QR, or bare
+  secret in headless mode) for the user's authenticator app.
+- **Recovery relationship.** Enrollment never removes the passphrase envelope.
+  A user who loses the authenticator still unlocks by passphrase or BIP39
+  phrase. TOTP is neither a recovery path nor a cold-start path.
+- **Dependency on §7.** This entire sub-decision rests on the agent being
+  unable to read daemon memory. If the daemon runs under the agent's UID *and*
+  as its child, `ptrace` is permitted under the common
+  `kernel.yama.ptrace_scope = 1` policy and `totp_secret` is readable. **A
+  lazily-started daemon spawned by the agent must not be trusted for the TOTP
+  path** — see §7.
+
+#### What this does not claim
+
+TOTP does not protect against an agent that has already replaced binaries and
+waits for the user to unlock legitimately; it gates the *transition* from
+locked to unlocked, not the window that follows. That limit belongs to §2's
+profile choice and §7's honest boundary.
 
 ### 2. Configurable unlock window
 
@@ -197,11 +312,37 @@ guarantees (explicit lock, SIGTERM zeroize, process-exit zeroize).
   `SIGTERM_GRACE`, and process-exit drop of `vault_key` all remain. The window
   is a maximum, not a promise that the key survives the whole window.
 
+#### Two profiles, because one default cannot serve both goals
+
+A long unlock window and a strong anti-agent posture pull in opposite
+directions, and this ADR refuses to hide that behind a single default. A wide
+window is what makes daily agentic work bearable; it is also precisely the
+window in which a compromised agent operates freely, because §7's trusted path
+protects the *transition* into the unlocked state, not the duration of it.
+
+Two named profiles are therefore shipped, selected by
+`[secrets] profile = "convenient" | "strict"`:
+
+| | `convenient` (default) | `strict` |
+|---|---|---|
+| `unlock_ttl` | 8 h | 15 min |
+| `max_unlock_ttl` | 24 h | 1 h |
+| `idle_relock` | off | 5 min |
+| `approve_on_use` floor | honour per-path setting | forced to `per-call` |
+| approval UI | daemon-rendered (§7) | daemon-rendered (§7) |
+| intended for | a developer laptop running a trusted agent | shared hosts, high-value paths, untrusted or unattended agents |
+
+`strict` is not merely "smaller numbers": forcing `approve_on_use` to
+`per-call` is what turns each secret access into a human decision, which is the
+only mitigation for the "agent waits for a legitimate unlock" attack. A user may
+still override any individual value; the profiles exist so that the *coherent*
+combinations are one setting away rather than four.
+
 The tradeoff is stated openly: a longer window means `vault_key` resides in
 memory longer, widening the surface if the host is compromised while unlocked.
 This is the user's explicit choice, bounded by `max_unlock_ttl`, and it is
 consistent with ADR-023's threat model (which already accepts that a local
-process can read the keychain and `/proc/self/environ`).
+process can read `/proc/self/environ`).
 
 ### 3. Agent-mediated unlock and liveness over MCP
 
@@ -233,18 +374,25 @@ secrets_validate(path: string, liveness?: boolean)
 This is the single point at which this ADR relaxes ADR-023's "unlock is
 agent-bypassing" rule. The justification is narrow and stated as a contract:
 
-- **The relayed credential is ephemeral.** A TOTP code is valid for one 30 s
-  step. A transcript that contains `428193` is useless to an attacker who reads
-  it more than ~30 s later, unlike a master passphrase (persistent forever) or
-  a secret value (persistent forever). The whole acceptability rests on this
-  ephemeralness.
+- **The agent cannot derive the credential.** This is the load-bearing
+  property, and it comes from §1: `totp_secret` lives inside the encrypted
+  vault and in daemon memory, never in a place the agent can read. A valid code
+  therefore constitutes *evidence that a human with a second device approved
+  the re-unlock*. Relaying a credential the agent could compute itself would be
+  meaningless regardless of how briefly it lived.
+- **Ephemerality bounds replay; it does not create the guarantee.** A code is
+  valid for one 30 s step, and the daemon's replay guard (§1) rejects a step
+  that was already spent — so an agent that observed the code while relaying it
+  cannot reuse it even inside its own window. This limits blast radius; it is
+  not the reason the scheme is sound.
 - **The master passphrase is never relayed.** The agent has no tool that
   accepts a passphrase; `secrets_unlock` takes a TOTP only. An agent that asks
-  the user for the passphrase is not using this protocol and is out of scope.
+  the user for the passphrase is not using this protocol and is out of scope —
+  and under §7 the passphrase prompt is not something the agent can render
+  convincingly in the first place.
 - **The daemon rate-limits and binds to the local socket.** `secrets_unlock`
   rejects after 5 failed attempts per 30 s and verifies the peer UID on the
-  UNIX socket (already required by ADR-023 §3.3). A replay requires both a
-  fresh TOTP *and* local socket access.
+  UNIX socket (already implemented, `crates/devboy-secrets-agent/src/socket.rs`).
 - **Secret values are still never returned.** The relaxation is exclusively
   about the unlock credential. The `AgentSafeReply` invariant on values is
   untouched; the grep gate and negative test in ADR-023 §3.7 continue to apply.
@@ -255,10 +403,14 @@ conversation — e.g. "vault locked, enter your TOTP" — relays the typed code 
 `secrets_unlock`, and retries. No GUI modal, no separate window: the unlock
 happens in-band. A companion agent-side integration (a hook or skill authored
 in the agent's own configuration, not in this repository) can catch the
-`Locked` error and inject the prompt automatically. The *initial* unlock of
-the day, before the agent starts, still goes through a shell-level
-TUI/biometric prompt (full security, no agent in the loop); the agent-mediated
-path is only for the mid-session re-lock case.
+`Locked` error and inject the prompt automatically.
+
+The *cold-start* unlock, before the agent starts, goes through the
+daemon-rendered passphrase prompt of §7 — no agent in the loop, and no process
+the agent can substitute. The agent-mediated path exists only for the
+mid-session re-lock case, and only after a human has already established
+`totp_secret` in daemon memory by unlocking with the passphrase at least once
+this boot.
 
 ### 4. Encrypted audit log-store with enforced value→alias scrub
 
@@ -381,69 +533,240 @@ framework's contract, however, the agent's writes and deletes are strictly
 non-destructive: nothing an agent can do through the MCP surface is
 irreversible, and only the user holds the irreversible operation (purge).
 
-### 6. Deprecate the OS keychain/keyring — the vault is the primary store
+### 6. Demote the OS keychain/keyring to an opt-in — the vault is the default store
 
-With TOTP unlock (§1), a configurable window (§2), version history (§5), and
-the encrypted local vault from ADR-023, the secret framework is usable as a
+With the passphrase unlock, a configurable window (§2), version history (§5),
+and the encrypted local vault from ADR-023, the secret framework is usable as a
 **standalone, cross-platform store with no dependence on the OS keychain or
-Secret Service**. This ADR therefore deprecates the keychain/keyring dependency
-that ADR-005 established and ADR-021 carried forward as a built-in source.
+Secret Service**. This ADR therefore **demotes** the keychain from the primary
+store that ADR-005 established — but does **not** remove it from the tree.
 
-The motivation is portability and uniformity, not a claim that the vault is
-cryptographically stronger than a hardware-backed keychain:
+An earlier draft removed the in-tree `keychain` source outright. That is the
+wrong instrument: removal forces users who legitimately want OS-native backing
+onto a community plugin, and it collides with §7, where the macOS keychain
+turns out to provide something nothing else in this design does. The correct
+instrument is a default flip plus an explicit setting.
 
-- The OS keychain is unavailable in CI runners, bare containers, headless Linux
-  without a Secret Service daemon, and locked-down corporate Macs where
-  keychain access prompts on every read. Every one of these forced a fallback
-  path in ADR-005/021; the fallback became the common case.
-- The vault (Argon2id KDF + XChaCha20-Poly1305 AEAD, ADR-023 §3.1) plus the
-  TOTP/passphrase unlock is **identically available on every platform** the
-  binary runs on — no D-Bus, no `Security` framework, no Windows Cred Manager.
-- A single store means a single audit surface, a single rotation flow, and a
-  single version-history implementation, instead of one per backend.
+#### What the keychain actually buys, per platform
 
-**What changes:**
+The decision is easier once the marketing is stripped away. "OS keychain" names
+three quite different mechanisms:
 
-- **ADR-021 `keychain` source is deprecated** as a built-in. `local-vault`
-  becomes the `[default]` source and the recommended store for every path that
-  is not explicitly routed to an external source (1Password, Vault, env-store).
-  The `keychain` `SecretSource` implementation is removed from the in-tree
-  builtins; a community plugin may reintroduce it for users who want it.
-- **ADR-023 `Envelope::Keychain` (Touch ID unlock) is removed.** Unlock methods
-  after this ADR are `Passphrase` / `Totp` / `Recovery` only. The macOS-only,
-  keychain-backed biometric envelope is removed as a *per-secret* unlock path.
-- **The OS keystore is retained for one narrow, opt-in role: the TOTP binding
-  (§1).** The `keyring` crate stays a dependency so `totp_secret` can reside in
-  the OS keystore (macOS Keychain / Windows DPAPI / Linux Secret Service,
-  per-user, no `sudo`) rather than on disk. This is an *optional machine
-  binding for the unlock secret*, not a primary secret store; where the OS
-  keystore is absent (CI/headless Linux) TOTP falls back to session-scoped and
-  the `keyring` dependency is simply unused. §6's intent — "the vault is the
-  primary cross-platform store, no *requirement* on the OS keychain" — holds;
-  the keychain is no longer required, only optionally reused for TOTP.
-- **ADR-005 is superseded** in its "keychain as primary, env as fallback"
-  decision. ADR-005's `SecretString` discipline and its env-store fallback
-  remain (the env-store is still the CI source); only the keychain-as-primary
-  role is replaced by the vault.
+| Platform | Backend | Who can read it | Effective strength |
+|---|---|---|---|
+| **macOS** | Keychain Services | only processes matching the item's ACL — **bound to code signature** — otherwise a user prompt | **Stronger than a file.** The only anti-tamper primitive available to us (see §7) |
+| Windows | DPAPI / Credential Manager | any process running as the same user | ≈ `chmod 0600` |
+| Linux (desktop) | Secret Service via D-Bus | **any process in the user's session** — the API has no per-application ACL | ≈ `chmod 0600`, plus a D-Bus dependency |
+| Linux (headless), containers, CI | — | not available at all | — |
+
+So on Linux and Windows the keychain costs a dependency, a daemon, and a class
+of prompt failures while delivering the protection of a `0600` file. Only on
+macOS does it deliver a property — **code-identity binding** — that no other
+mechanism here can replace. That asymmetry is what the new default encodes.
+
+#### What changes
+
+- **Default store, interactive use: `local-vault`.** It is identically
+  available on every platform the binary runs on — no D-Bus, no `Security`
+  framework, no Credential Manager — and gives one audit surface, one rotation
+  flow, and one version-history implementation instead of one per backend.
+- **Default store, CI/headless: `env-store`.** Secrets arrive from the CI
+  system's own vault as environment variables; there is nothing to unlock. This
+  preserves ADR-005's env fallback as the CI answer.
+- **The keychain source stays in-tree and is disabled by default**, on every
+  platform including macOS. It is enabled by an explicit setting:
+
+  ```toml
+  [secrets.keychain]
+  enabled = true          # default: false
+  ```
+
+  and, once enabled, may be selected as `[default].source` or targeted by an
+  individual `[[route]]` in `sources.toml`. No code is deleted; nothing needs a
+  community plugin; the user opts in.
+- **`Envelope::Keychain` is removed** — but for a reason independent of the
+  above, and the two must not be conflated. The variant is **dead code**:
+  `Vault::add_keychain_envelope` has no call sites, every production
+  `InitialUnlock` sets `with_keychain_account: None`, and the module
+  documentation concedes that the wrap key is protected by the standard ACL and
+  **not** by Touch ID, so the advertised biometric property was never
+  implemented. Unlock methods become `Passphrase` / `Totp` / `Recovery`
+  (+ `Keyfile`, below). Enabling `[secrets.keychain]` re-enables the keychain
+  as a *store*; it does not resurrect a per-secret biometric envelope that
+  never worked.
+- **New `Envelope::Keyfile` — opt-in, for unattended cold start.** A 32-byte
+  keyfile whose HKDF output wraps `vault_key`, letting a daemon start without a
+  human. This is the honest replacement for "the keychain unlocked it for me",
+  and it is available on every platform. Two rules make it more than a key left
+  beside the lock:
+  1. The keyfile defaults **outside** the vault's own directory —
+     `<state_dir>/devboy-tools/vault.key`, not `<config_dir>/…/secrets/` —
+     so that a backup, cloud sync, or accidental `git add` of the config tree
+     does not carry both halves.
+  2. It is refused unless its permissions are `0600` and it is owned by the
+     invoking user.
+
+  A keyfile does not defend against a same-UID process; neither does the
+  keychain on Linux or Windows. It defends against the *file*-level leak, which
+  is the realistic accident.
+- **CI mode becomes real.** `crates/devboy-storage/src/ci.rs` already defines
+  `CiPolicy` with `prefer_env_store: true` and `detect_ci_mode(--ci, DEVBOY_CI,
+  [runtime] ci)`, but nothing consumes the policy — today the detection result
+  only prints a warning. This ADR gives it a consumer: under CI mode the
+  default source is `env-store`, `local-vault` unlock is refused rather than
+  prompted, unavailable sources are skipped silently, and each routing decision
+  is emitted at info level. The `[runtime] ci` config section referenced by
+  that module's documentation is added, since it does not currently exist.
+- **ADR-005 is *partially* superseded** — specifically its "keychain as
+  primary, env as fallback" decision. Its `SecretString` discipline and its
+  env-store fallback remain in force; the frontmatter therefore keeps
+  `supersedes: null`, because a partial replacement of one decision is not a
+  supersession of the ADR.
+
+#### Implementation note: where "the default" actually lives today
+
+This matters for anyone implementing the above, because the ADR-021/023 routing
+model is not yet the thing that resolves tokens.
+
+Two stacks coexist. The router (`sources.toml`, `[default].source`,
+`PathResolver`) is what ADR-021/023/024 describe — and it currently has **no
+runtime consumer**; `RouterConfig::load_from` even returns an empty config when
+the file is absent, so the router is opt-in and inert. Every provider token in
+the CLI and the MCP server is instead resolved by
+`ChainStore::default_chain() = [EnvVarStore, KeychainStore]` in
+`crates/devboy-storage/src/lib.rs`, selected in `crates/devboy-cli/src/main.rs`
+and gated solely by `DEVBOY_SKIP_KEYCHAIN`.
+
+Flipping `[default].source` therefore changes what `doctor` reports and what the
+GUI opens, and **nothing else**. Landing this sub-decision means changing the
+chain constructor and its gates as well — and replacing `ci_chain()`'s
+`MemoryStore` (writes silently vanish) with the local vault, which is
+acceptable as a test shim but not as a default.
+
+#### Threat-model tradeoff, stated openly
+
+Demoting the keychain gives up OS-native protection *by default* on macOS,
+where it was real. The vault compensates with Argon2id, AEAD with path-as-AAD,
+version history, and §7's process model — but none of those is a secure
+element, and none replicates macOS's code-identity binding. That property is
+important enough that §7 recommends re-enabling the keychain on macOS
+specifically as an anti-tamper measure rather than as a store. On Linux and
+Windows nothing of substance is lost, because there was nothing beyond `0600`
+to lose.
 
 **Migration.** `devboy secrets migrate` (extended from ADR-020 §8) walks legacy
-keychain entries, reads each value once (the one time keychain access is
-required), writes it as the first version of the corresponding vault path, and
-removes the keychain entry on explicit user confirmation. Until a user runs the
-migration, the legacy keychain reader stays available behind a flag; after
-migration, `[secrets] migration_complete = true` disables it.
+keychain entries, reads each value once, writes it as the first version of the
+corresponding vault path, and removes the keychain entry on explicit user
+confirmation. Until a user runs the migration, the legacy keychain reader stays
+available regardless of `[secrets.keychain] enabled`; after migration,
+`[secrets] migration_complete = true` disables it. Existing users are not
+locked out by the default flip.
 
-**Threat-model tradeoff (stated openly).** Dropping the keychain removes the
-OS-native hardware/biometric protection that a platform keychain provides. The
-vault compensates with Argon2id (brute-force resistance on the passphrase), TOTP
-(ephemeral agent-relayable unlock without exposing the passphrase), AEAD with
-path-as-AAD (swap-attack resistance), and version history (reversibility). The
-net posture is **portability and uniformity at the cost of OS-native
-protection** — acceptable under ADR-020's threat model, which guards against
-accidental leakage and explicitly does not claim isolation against a
-shell-capable local process. Users who specifically need hardware-backed
-protection can still install a community keychain source plugin (§6 of ADR-021
-defines the plugin protocol) and route selected paths to it.
+### 7. Trusted path — the process model that makes §1–§6 mean anything
+
+#### The problem
+
+ADR-023 describes the unlock modal as "agent-bypassing", but nothing in the
+implementation makes it so. The daemon, the CLI, and the agent all run under
+the **same UID**, and the passphrase is collected by `dialoguer::Password`
+*inside the CLI process* (`crates/devboy-cli/src/secrets_cmd.rs`) — the very
+process an agent with shell access can replace on `PATH`, wrap via
+`LD_PRELOAD`, or shadow through a shell rc file.
+
+The consequence is uncomfortable and worth stating plainly: **no choice of
+unlock method fixes this.** Passphrase, keyfile, TOTP, hardware token — all are
+equally exposed when the process collecting them is untrusted. §1's careful
+placement of `totp_secret` beyond the agent's reach is worth nothing if the
+agent simply harvests the passphrase that unlocks the vault in the first place.
+
+This is a **process-model** problem, and it needs a process-model answer.
+
+#### The principle
+
+> Anything requiring the user's trust — collecting the passphrase, approving a
+> secret access, displaying *what* is being requested — must happen in a
+> process the agent can neither read nor substitute.
+
+Three concentric levels, in decreasing order of strength. An implementation
+should reach for the strongest available and degrade explicitly, reporting the
+achieved level through `doctor` rather than silently.
+
+**Level 1 — separate UID (target).** The daemon runs under its own service
+account; its binary is not writable by the user, so the agent cannot replace
+it. It collects the passphrase itself and renders approval prompts itself; the
+CLI only signals "an unlock is needed". A substituted CLI can then request
+operations but can never observe the passphrase, and `ptrace` across UIDs is
+denied outright.
+
+  Note for implementers: the socket currently authenticates peers by
+  `peer_uid == geteuid()` (`crates/devboy-secrets-agent/src/socket.rs`). Under
+  a split UID that predicate becomes wrong and must be replaced by an explicit
+  allow-list of client UIDs; keeping the equality check would either lock out
+  the legitimate user or, if "fixed" by widening it, authenticate everyone.
+
+**Level 2 — same UID, independent lifecycle (fallback).** Where a service
+account cannot be created (unprivileged install, per-user setup), the daemon
+runs as the user but is started by systemd user unit / launchd / login shell —
+**never lazily spawned by the agent**. Under the common
+`kernel.yama.ptrace_scope = 1` policy a process may only `ptrace` its
+descendants, so a daemon that is not the agent's child keeps its memory —
+including `totp_secret` and `vault_key` — out of the agent's reach.
+
+  This makes an operational rule normative: **a lazily-started daemon whose
+  parent is the agent must not be trusted for the §1 TOTP path**, and should
+  refuse to serve `secrets_unlock`. Otherwise §1's guarantee silently
+  evaporates on exactly the machines that need it.
+
+**Level 3 — same UID, agent-parented (degraded).** No meaningful protection
+against a hostile agent; acceptable only for a trusted single-user workstation.
+`doctor` must say so rather than imply the guarantees of levels 1–2.
+
+#### Platform trusted-path primitives
+
+Where the OS offers a real trusted path, use it in addition to the levels above:
+
+| Platform | Primitive | What it gives |
+|---|---|---|
+| **Windows** | `CredUIPromptForWindowsCredentials` with `CREDUIWIN_SECURE_PROMPT` (secure desktop); SAS handled by the kernel | A genuine trusted path — input cannot be observed or spoofed by a user-mode process |
+| **macOS** | `LocalAuthentication` (`LAContext.evaluatePolicy`); Authorization Services rendering in `SecurityAgent`, a separate process under its own UID | Input never reaches the calling process. No SAS equivalent, so a *visual* imitation remains possible — but the imitation cannot obtain the real result |
+| **Linux** | None for user-session applications. polkit governs system actions; PAM runs inside the calling process; `systemd-ask-password` is system-scoped | Fall back to level 1/2. **Wayland** matters here: it has no global input capture, whereas **X11 permits any client to grab the keyboard**, making passphrase entry indefensible on X11 |
+
+**macOS keychain, re-entering as anti-tamper.** §6 disables the keychain as a
+store by default, and on Linux/Windows that costs nothing. On macOS, however,
+keychain ACLs are bound to the **code signature** of the reading process — the
+only mechanism in this entire design that distinguishes "the real `devboy`"
+from "a replaced binary at the same path". A substituted binary does not
+inherit access; the system prompts instead.
+
+Users on macOS who want defence against binary substitution should therefore
+enable `[secrets.keychain]` and store the vault's keyfile or an unlock-gating
+token there — not as a secret store, but as a **code-identity check**. This is
+a genuinely different role from the one §6 demotes, and the configuration
+surface should name it as such rather than reusing "keychain = my secrets live
+here".
+
+#### The honest limit
+
+Everything above protects the **credential**. None of it protects the
+**authorization**:
+
+> An agent that has achieved persistence can simply wait for the user to unlock
+> legitimately and act inside the open window.
+
+No prompt, no secure desktop, no hardware token prevents this — the human
+approved a real unlock, and the agent is a valid client of the resulting
+session. The only mitigations are shrinking the window and requiring a fresh
+human decision per access, which is precisely the `strict` profile of §2
+(`unlock_ttl = 15 min`, `approve_on_use` forced to `per-call`, prompts rendered
+by the daemon). That is a real cost in friction, which is why it is a profile
+and not the default.
+
+The complete answer lies outside this repository: run the agent under a
+**different UID, namespace, or container without access to the user's home
+directory**, so that the file-level boundary becomes real rather than
+notional. This ADR cannot impose that — it is a property of how the agent is
+launched — but the process model here is designed so that such a deployment
+strengthens it automatically rather than requiring a redesign.
 
 ## Consequences
 
@@ -452,8 +775,17 @@ defines the plugin protocol) and route selected paths to it.
 - ✅ **Mid-session re-lock stops being fatal.** An agent running for hours can
   ask the user for a TOTP in-band and continue, without a GUI modal or leaving
   the terminal.
-- ✅ **Daily unlock is one TOTP.** `unlock_ttl` defaulting to a working day
-  removes the 15-minute re-lock friction while keeping an explicit ceiling.
+- ✅ **TOTP now carries a property it can actually deliver.** With
+  `totp_secret` vault-resident and daemon-held, a valid code is evidence of
+  human presence that the agent cannot fabricate — instead of a shorter
+  passphrase whose strength silently collapsed to that of its keystore.
+- ✅ **The unlock stack no longer depends on any OS keystore.** Passphrase
+  works everywhere; `Envelope::Keyfile` covers unattended cold start; TOTP
+  covers in-session re-unlock. CI, containers, and headless Linux stop being
+  fallback paths and become ordinary ones.
+- ✅ **Daily friction stays low.** `unlock_ttl` defaulting to a working day
+  removes the 15-minute re-lock churn while keeping an explicit ceiling, and
+  the `strict` profile is one setting away when the posture matters more.
 - ✅ **The agent can confirm a secret works without seeing it.** `secrets_validate`
   returns a verdict; liveness stays server-side.
 - ✅ **The audit log is tamper-evident and cannot store a raw value.** Agent
@@ -464,34 +796,66 @@ defines the plugin protocol) and route selected paths to it.
 - ✅ **Agent edits are never destructive.** Every agent write/rotate/delete is
   reversible through version history; only the user can permanently purge, so a
   good-faith agent mistake (overwrite, delete) is always recoverable.
-- ✅ **One store, every platform.** Deprecating the keychain removes the
+- ✅ **One store, every platform.** Demoting the keychain removes the
   CI/headless/corporate-Mac fallback ladder and leaves a single cross-platform
-  encrypted vault as the primary store.
+  encrypted vault as the default store — while keeping the keychain one
+  setting away for those who want it.
+- ✅ **The trust boundary is now stated in terms of processes, not intentions.**
+  "Agent-bypassing" stops being an aspiration in prose and becomes a
+  requirement on where the daemon runs and who renders a prompt — testable,
+  and reportable by `doctor`.
 
 ### Negative
 
-- ❌ **One more unlock method to maintain.** TOTP enrollment, QR rendering,
-  drift handling, and rate-limiting are new surface in `devboy-vault-crypto`
-  and the daemon.
+- ❌ **Two more unlock methods to maintain.** TOTP enrollment, QR rendering,
+  drift handling, replay tracking and rate-limiting, plus the keyfile envelope
+  and its permission checks, are new surface in `devboy-vault-crypto` and the
+  daemon.
 - ❌ **A longer unlock window widens the in-memory exposure of `vault_key`.**
   Stated openly; bounded by `max_unlock_ttl`; the user's explicit choice.
-- ❌ **Agent-mediated unlock is a trust-boundary exception.** Even though
-  scoped to an ephemeral credential, it is one more thing to document and one
-  more `secrets_*` tool whose contract must be auditable.
+- ❌ **Agent-mediated unlock is a trust-boundary exception.** Even though the
+  relayed credential is one the agent cannot derive, it is one more thing to
+  document and one more `secrets_*` tool whose contract must be auditable.
 - ❌ **A new on-disk file** (`audit-log.dvb`) and a new `vault_log_*` tool
   family.
-- ❌ **Loss of OS-native keychain protection.** Deprecating the keychain
-  removes hardware/biometric backing on platforms that offer it; the vault's
-  Argon2id + TOTP + AEAD compensates but is not a secure-element. Users who
-  need it must install a community keychain source plugin.
+- ❌ **Loss of macOS code-identity binding by default.** Demoting the keychain
+  gives up the ACL-by-code-signature property on the one platform that offers
+  it. §7 recommends re-enabling it there specifically as anti-tamper, but that
+  is now an opt-in the user must know to make.
+- ❌ **§7 has real operational cost.** A separate service UID means packaging
+  work, a systemd/launchd unit, and a socket authorization model that is no
+  longer a simple UID equality check. Level 2 is cheaper but weaker, and the
+  difference must be surfaced honestly rather than assumed.
+- ❌ **Two profiles instead of one default.** Users now face a choice
+  (`convenient` / `strict`) where previously there was a single number. This
+  is deliberate — the two goals genuinely conflict — but it is added surface
+  in the configuration and in the documentation.
 
 ### Risks
 
 - ⚠️ **TOTP replay within the 30 s window.** An attacker with read access to
   the transcript *and* local socket access *and* acting within 30 s could
-  replay the code. **Mitigation:** daemon rate-limiting, socket UID check, and
-  the narrow 30 s window. The composite preconditions match the threat model's
-  "local process" assumption.
+  replay the code. **Mitigation:** the replay guard rejects an already-spent
+  time-step outright (§1), plus daemon rate-limiting and the socket UID check.
+- ⚠️ **A daemon spawned by the agent silently voids §1.** If the daemon is
+  lazily started as a child of the agent, `ptrace_scope = 1` no longer
+  separates them and `totp_secret` becomes readable — while every guarantee in
+  this ADR still *appears* to hold. **Mitigation:** §7 makes independent
+  startup normative, requires such a daemon to refuse `secrets_unlock`, and
+  requires `doctor` to report the achieved trusted-path level. This is the
+  most likely way to implement the ADR correctly on paper and wrongly in
+  practice.
+- ⚠️ **Keyfile and vault leaking together.** A backup or sync that captures
+  both halves reduces the keyfile envelope to no protection at all.
+  **Mitigation:** the keyfile defaults outside the config tree (§6) and
+  requires `0600` ownership; the documentation must state plainly that a
+  keyfile guards against file-level leaks, not against a same-UID process.
+- ⚠️ **The default flip stranding existing users.** Someone whose tokens live
+  in the OS keychain today would, after upgrading, find them unresolvable.
+  **Mitigation:** the legacy keychain reader stays active until
+  `[secrets] migration_complete = true`, independently of the new
+  `[secrets.keychain] enabled` switch, and `doctor` should point at
+  `devboy secrets migrate` when it sees legacy entries.
 - ⚠️ **Long unlock window + stolen laptop.** `vault_key` in RAM on a seized,
   unlocked machine. **Mitigation:** `max_unlock_ttl` ceiling, optional
   `idle_relock`, explicit `vault.lock`, and the documented posture that
@@ -531,10 +895,13 @@ the short idle window).
 
 **Description:** Let the agent relay the master passphrase to a `secrets_unlock(passphrase)`.
 
-**Why rejected:** The passphrase is persistent. A transcript containing it is
-compromised forever. TOTP's entire acceptability rests on ephemeralness; a
-persistent credential does not have that property and must not cross the agent
-surface.
+**Why rejected:** Two independent reasons, either sufficient. The passphrase is
+*persistent* — a transcript containing it is compromised forever, whereas a
+spent TOTP step is worthless. And the passphrase is the **cold-start** key: it
+unlocks the vault from nothing, so handing it to the agent hands over the
+entire store, while a TOTP code only re-opens a session a human already
+established this boot. A persistent, cold-start-capable credential must not
+cross the agent surface under any framing.
 
 ### Alternative 3: Extend the idle timeout to a flat larger number
 
@@ -565,6 +932,50 @@ work), but the in-vault encrypted store is the one place guaranteed to share
 the secret framework's security boundary and to be available in fully offline
 headless deployments with no SIEM. Export is additive, not a replacement.
 
+### Alternative 6: TOTP as a replacement for the passphrase ("six digits in the morning")
+
+**Description:** Enroll TOTP, store `totp_secret` in the OS keystore, and let
+the user unlock the vault each morning by typing six digits instead of a long
+passphrase. This was the original §1 of this ADR.
+
+**Why rejected:** The strength of such an unlock equals the strength of
+wherever `totp_secret` is stored, never the ~20 bits of the code — a code is
+always derivable from its secret. On Linux the Secret Service hands stored
+secrets to any process in the user's session with no per-application ACL, so
+the scheme reduces to `chmod 0600` while presenting itself as a second factor.
+Worse, it made §1 depend on the very keystore §6 was demoting, so the two
+sub-decisions contradicted each other. Repositioning TOTP as an in-session
+re-unlock with a vault-resident secret gives it a property it can actually
+deliver (evidence of human presence) and removes the keystore dependency
+entirely.
+
+### Alternative 7: Remove the in-tree keychain source outright
+
+**Description:** Delete `crates/plugins/secrets/keychain/`; users who want OS
+keychain backing install a community source plugin.
+
+**Why rejected:** Two reasons. First, §7 identifies a property that *only* the
+macOS keychain provides — ACLs bound to code signature, the sole defence
+against binary substitution available in this design — so removing it discards
+the one mechanism worth keeping. Second, removal and default-off achieve the
+same practical outcome (nobody depends on the keychain by default) while
+removal additionally costs every macOS user a plugin install and costs the
+project a supported code path. A default flip plus `[secrets.keychain]
+enabled` is strictly less destructive and equally decisive.
+
+### Alternative 8: Keep the daemon under the user's UID and rely on the documented "agent-bypassing" contract
+
+**Description:** Leave the process model as ADR-023 describes it, and treat the
+unlock modal as agent-bypassing by convention.
+
+**Why rejected:** It already is not. The passphrase is collected inside the CLI
+process, which an agent with shell access can replace, and the daemon shares
+the agent's UID. A contract that the implementation does not enforce is a
+comment, not a boundary — the same reasoning that made §4's scrub server-side
+and §5's purge user-only. §7 states what has to be true of the processes and
+lets `doctor` report which level was actually achieved, rather than asserting a
+guarantee the deployment may not have.
+
 ## Implementation
 
 - **Issues:**
@@ -577,13 +988,20 @@ headless deployments with no SIEM. Export is additive, not a replacement.
   - [#247](https://github.com/meteora-pro/devboy-tools/issues/247) — secrets
     implementation, phased (this ADR is a new phase cluster on top of it).
 - **Code (planned):**
-  - `crates/devboy-vault-crypto/src/format.rs` — `Envelope::Totp` variant
-    (currently `Passphrase`/`Keychain`/`Recovery` at line 349); TOTP
-    verify + envelope wrap.
+  - `crates/devboy-vault-crypto/src/format.rs` — add `Envelope::Totp` and
+    `Envelope::Keyfile`, remove `Envelope::Keychain`; TOTP verify + envelope
+    wrap. New dependencies are required for RFC 6238: an HMAC-SHA1
+    implementation (`hmac` + `sha1`), a base32 codec for `otpauth://` URIs
+    (`data-encoding`), and a constant-time comparison (`subtle`) — none of
+    which are in the workspace today.
+  - `crates/devboy-secrets-agent/` — hold `totp_secret` in daemon memory
+    (zeroized on drop) after a passphrase unlock, read from the reserved
+    `__totp/secret` slot; enforce the replay guard on accepted time-steps.
   - `crates/devboy-secrets-agent/src/idle.rs` — generalize
     `DEFAULT_IDLE_TIMEOUT` / `IdleTracker` to a configurable window
-    (`unlock_ttl`, `max_unlock_ttl`, optional `idle_relock`); add TOTP
-    verification + rate-limit to the unlock path.
+    (`unlock_ttl`, `max_unlock_ttl`, optional `idle_relock`), driven by the
+    `convenient` / `strict` profiles; add TOTP verification + rate-limit to the
+    unlock path.
   - `crates/devboy-secrets-agent/` — new `audit_log` module: append-only
     AEAD store, reverse-scrub write path (Aho-Corasick over provisioned values
     + `SecretPattern` regex fallback), leak-audit entries.
@@ -599,20 +1017,48 @@ headless deployments with no SIEM. Export is additive, not a replacement.
     per-path version list (append + current-pointer), tombstone-on-delete,
     user-only purge, retention trimming; the MCP `secret.delete` becomes a
     tombstone write, never a ciphertext removal.
-  - `crates/plugins/secrets/keychain/` — **remove** the in-tree keychain source;
-    `local-vault` becomes the `[default]` source. `crates/devboy-vault-crypto/`
-    — remove `Envelope::Keychain`; unlock methods become
-    `Passphrase`/`Totp`/`Recovery`. `devboy secrets migrate` — extend to read
-    each legacy keychain entry once and write it as a vault version, with the
-    `[secrets] migration_complete` flag disabling the legacy reader afterward.
+  - `crates/plugins/secrets/keychain/` — **keep**, but gate behind
+    `[secrets.keychain] enabled` (default `false`). `local-vault` becomes the
+    `[default]` source; `env-store` becomes the CI default. `devboy secrets
+    migrate` — extend to read each legacy keychain entry once and write it as a
+    vault version, with `[secrets] migration_complete` disabling the legacy
+    reader afterward.
+  - `crates/devboy-storage/src/lib.rs` + `crates/devboy-cli/src/main.rs` —
+    **this is where the default actually lives.** Change
+    `ChainStore::default_chain()` off `[EnvVarStore, KeychainStore]`, replace
+    `ci_chain()`'s `MemoryStore` with the local vault, and widen the
+    `DEVBOY_SKIP_KEYCHAIN` gates in `get_credential_store` / `build_mcp_store`
+    to honour CI detection and the new setting. Editing `sources.toml` alone
+    changes nothing at runtime (see §6's implementation note).
+  - `crates/devboy-storage/src/ci.rs` — give `CiPolicy` a consumer; today
+    `detect_ci_mode` is called once and its result only prints a warning.
+  - `crates/devboy-core/src/config.rs` — extend `SecretsConfig` (currently a
+    single `migration_complete` field) with `profile`, `unlock_ttl`,
+    `max_unlock_ttl`, `idle_relock`, `[secrets.keychain] enabled`, and the
+    keyfile path; add the `[runtime] ci` section that `ci.rs` documents but
+    which does not exist.
+  - `crates/devboy-secrets-agent/` + packaging — §7 process model: a
+    daemon-rendered passphrase prompt (moving collection out of
+    `crates/devboy-cli/src/secrets_cmd.rs`), systemd user unit / launchd
+    plist for independent startup, refusal to serve `secrets_unlock` when the
+    daemon's parent is the calling agent, and — for level 1 — a service UID
+    with a client-UID allow-list replacing the `peer_uid == geteuid()` check in
+    `crates/devboy-secrets-agent/src/socket.rs`.
+  - `crates/devboy-cli/src/doctor/` — report the achieved trusted-path level
+    (separate UID / independent lifecycle / agent-parented), the active
+    profile, and any legacy keychain entries awaiting migration.
 - **Documentation (planned):**
   - `docs/guide/secrets/agent-protocol.md` — add the new tools.
   - `docs/guide/secrets/local-vault.md` — TOTP enrollment, unlock-window
-    configuration, audit-log rotation, version history and recovery.
+    profiles, keyfile setup, audit-log rotation, version history and recovery.
+  - `docs/guide/secrets/threat-model.md` — the §7 process model, the three
+    levels, and the honest limit, in one place users can be pointed at.
   - A new BDD scenario `docs/guide/secrets/scenarios/totp-unlock-and-audit.feature`.
 
 ## References
 
+- [ADR-005](./ADR-005-credential-storage.md) — keychain-as-primary with an env
+  fallback; §6 partially replaces its store decision, keeping the rest.
 - [ADR-019](./ADR-019-secret-string-discipline.md) — `SecretString` end-to-end.
 - [ADR-020](./ADR-020-secret-manifest-and-alias-resolution.md) — manifest, path
   namespace, alias resolution (`@secret:<path>`), validation (§6 liveness).
@@ -620,8 +1066,13 @@ headless deployments with no SIEM. Export is additive, not a replacement.
   `SecretSource::validate`.
 - [ADR-023](./ADR-023-secret-store-ux-layer.md) — local vault, daemon,
   `AgentSafeReply`, the 15-minute idle policy this ADR generalizes.
-- [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238) — TOTP.
+- [RFC 4226](https://datatracker.ietf.org/doc/html/rfc4226) — HOTP, the
+  construction TOTP builds on.
+- [RFC 6238](https://datatracker.ietf.org/doc/html/rfc6238) — TOTP; §5.2 is the
+  basis for the replay guard in §1.
 - [RFC 8439](https://datatracker.ietf.org/doc/html/rfc8439) — ChaCha20-Poly1305.
+- [Yama LSM](https://docs.kernel.org/admin-guide/LSM/Yama.html) —
+  `ptrace_scope`, the kernel policy §7's level 2 depends on.
 
 ---
 
@@ -630,3 +1081,4 @@ headless deployments with no SIEM. Export is additive, not a replacement.
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-08-04 | Andrei Mazniak | Initial draft — TOTP unlock envelope, configurable unlock window, agent-mediated `secrets_unlock` / `secrets_validate`, encrypted audit log-store with enforced value→alias scrub. |
+| 2026-08-11 | Andrei Mazniak | **Reframed §1, §6; added §7.** §1: TOTP is no longer a passphrase replacement — `totp_secret` moves from the OS keystore into the encrypted vault + daemon memory, with a reserved slot, replay guard, and an explicit dependency on §7; the strength argument ("as strong as its keystore, never the 6 digits") is now stated as a rule. §6: keychain **demoted to opt-in** (`[secrets.keychain] enabled`, default `false`) instead of removed, with a per-platform table showing it only exceeds `0600` on macOS; `Envelope::Keyfile` added for unattended cold start; CI mode gains a real consumer; an implementation note records that the runtime default lives in `ChainStore`, not in `sources.toml`. §2: split into `convenient` / `strict` profiles, because a long window and per-call approval genuinely conflict. §7 (new): trusted-path process model — daemon under its own UID, daemon-rendered prompts, must not be a child of the agent, platform primitives, macOS keychain re-entering as anti-tamper, and the honest credential-vs-authorization limit. Threat model, Decision, Consequences, Alternatives 6–8 and Implementation updated to match. |
