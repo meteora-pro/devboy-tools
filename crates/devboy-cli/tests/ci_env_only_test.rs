@@ -337,3 +337,52 @@ fn agent_unlock_fails_fast_when_no_daemon_is_running() {
         started.elapsed()
     );
 }
+
+// =============================================================================
+// `proxy add --token` — the copy-paste path from the cloud dashboard
+// =============================================================================
+
+/// The onboarding command must finish, not fail.
+///
+/// This is the command a user copies out of the DevBoy Cloud
+/// dashboard. Since ADR-024 §6 the default chain has no writable
+/// member, so the token has nowhere to go — which is ordinary, not
+/// an error. Before this was fixed the command wrote the proxy
+/// entry, then exited non-zero, leaving a half-configured install
+/// and no hint about what to do.
+#[test]
+fn proxy_add_with_a_token_completes_and_names_the_env_var() {
+    let h = home();
+    let out = run(
+        &h,
+        &[
+            "proxy",
+            "add",
+            "cloud",
+            "--url",
+            "https://mcp.devboy.pro",
+            "--token",
+            "dbt-example",
+        ],
+        &[],
+    );
+
+    assert!(
+        out.success,
+        "the onboarding command must not fail when there is nowhere to store the token:\n{}",
+        out.combined()
+    );
+
+    let text = out.combined();
+    assert!(
+        text.contains("DEVBOY_PROXY_CLOUD_TOKEN"),
+        "the exact variable to export must be named: {text}"
+    );
+    // The proxy itself is configured either way.
+    assert!(text.contains("Added proxy 'cloud'"), "{text}");
+    // And the token must never be echoed back.
+    assert!(
+        !text.contains("dbt-example"),
+        "the token leaked into the output: {text}"
+    );
+}

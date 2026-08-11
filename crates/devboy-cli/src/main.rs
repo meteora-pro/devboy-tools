@@ -4390,15 +4390,29 @@ fn handle_proxy_add(
         .save_to(&config_path)
         .context("Failed to save config")?;
 
-    // Store token in keychain if provided
+    // Persist the token if one was supplied.
+    //
+    // Failing here must not fail the command. The proxy entry is
+    // already saved, and this is the copy-paste path from the
+    // dashboard: leaving the user with a half-written config and a
+    // non-zero exit teaches them nothing about what to do next.
+    // Since ADR-024 §6 the default chain has no writable member, so
+    // "no store" is the ordinary case rather than an anomaly — the
+    // command reports the exact variable to export instead.
+    let mut token_stored = false;
     if let Some(token_value) = token {
         let key = final_token_key.as_ref().unwrap();
         let store = get_credential_store_for_init();
         let secret = SecretString::from(token_value);
-        store
-            .store(key, &secret)
-            .with_context(|| format!("Failed to store token in keychain as '{}'", key))?;
-        println!("Stored token in keychain as '{}'", key);
+        match store.store(key, &secret) {
+            Ok(()) => {
+                token_stored = true;
+                println!("Stored token as '{}'", key);
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "no writable credential store for the proxy token");
+            }
+        }
     }
 
     println!("Added proxy '{}' -> {}", name, url);
@@ -4409,6 +4423,24 @@ fn handle_proxy_add(
     }
     println!();
     println!("Config saved to: {}", config_path.display());
+
+    // The token had nowhere to go, so say where to put it. Naming
+    // the exact variable is the difference between a user who
+    // finishes in ten seconds and one who reads the docs.
+    if let Some(key) = &final_token_key
+        && !token_stored
+    {
+        println!();
+        println!("The token was not persisted — no writable credential store is configured.");
+        println!("Export it instead:");
+        println!();
+        println!("  export {}=<token>", env_var_name_for_key(key));
+        println!();
+        println!(
+            "Or enable a store first: `devboy config set secrets.keychain.enabled true`, or \
+             start the vault daemon with `devboy secrets agent start`."
+        );
+    }
 
     Ok(())
 }
