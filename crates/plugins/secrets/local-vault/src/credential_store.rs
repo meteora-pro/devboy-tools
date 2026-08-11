@@ -104,20 +104,50 @@ impl VaultStore {
         self.client.is_running()
     }
 
-    /// Error returned for any write attempt. See the module docs
-    /// for why writes are not implementable against this trait.
-    fn write_unsupported(&self, key: &str) -> Error {
-        Error::Storage(format!(
-            "cannot write '{key}' to the local vault through this path: the daemon requires a \
-             fresh passphrase or TOTP proof for every write, which this interface cannot supply. \
-             Store it with `devboy secrets ui`, or set the corresponding environment variable."
-        ))
+    /// Whether the daemon can collect the passphrase a write needs.
+    ///
+    /// Asked of the daemon rather than assumed: a write requires a
+    /// fresh passphrase, the daemon collects it on its own channel,
+    /// and a daemon with no channel cannot. Claiming writability
+    /// regardless would be worse than claiming none — the chain
+    /// picks the first writable store, so a store that always fails
+    /// would break writes instead of letting them fall through.
+    fn daemon_can_prompt(&self) -> bool {
+        self.client
+            .status()
+            .ok()
+            .and_then(|s| {
+                s.get("prompt_channel")
+                    .and_then(Value::as_str)
+                    .map(|c| c != "none")
+            })
+            .unwrap_or(false)
     }
 }
 
 impl CredentialStore for VaultStore {
-    fn store(&self, key: &str, _value: &SecretString) -> Result<()> {
-        Err(self.write_unsupported(key))
+    fn store(&self, key: &str, value: &SecretString) -> Result<()> {
+        use secrecy::ExposeSecret;
+
+        let path = key_to_vault_path(key);
+        match self.client.call(
+            "secret.put_interactive",
+            serde_json::json!({ "path": path, "value": value.expose_secret() }),
+        ) {
+            Ok(_) => {
+                debug!(key = key, path = %path, "stored credential in the local vault");
+                Ok(())
+            }
+            Err(ClientError::Daemon(e)) => Err(Error::Storage(format!(
+                "could not store '{key}' in the local vault: {}",
+                e.message
+            ))),
+            Err(e) => Err(Error::Storage(format!(
+                "could not reach the secret daemon to store '{key}': {e}. Start it with `devboy \
+                 secrets agent start`, store the secret with `devboy secrets ui`, or set the \
+                 corresponding environment variable."
+            ))),
+        }
     }
 
     fn get(&self, key: &str) -> Result<Option<SecretString>> {
@@ -166,11 +196,14 @@ impl CredentialStore for VaultStore {
     }
 
     fn delete(&self, key: &str) -> Result<()> {
-        // The daemon exposes no deletion method, and ADR-024 §5
-        // made deletion a tombstone write in any case — which is a
-        // write, and therefore subject to the same unlock
-        // requirement as `store`.
-        Err(self.write_unsupported(key))
+        // ADR-024 §5 makes deletion a tombstone write, and the
+        // daemon exposes no method for it. Deleting through
+        // `secrets ui` keeps the confirmation step that an
+        // irreversible-looking operation deserves.
+        Err(Error::Storage(format!(
+            "the local vault does not support deleting '{key}' through this interface. Use \
+             `devboy secrets ui`, which shows what would be removed before doing it."
+        )))
     }
 
     fn is_available(&self) -> bool {
@@ -178,7 +211,7 @@ impl CredentialStore for VaultStore {
     }
 
     fn is_writable(&self) -> bool {
-        false
+        self.daemon_can_prompt()
     }
 }
 
@@ -268,12 +301,16 @@ mod tests {
         assert!(store.delete("github.token").is_err());
     }
 
-    /// The chain consults `is_writable` to pick a write target.
-    /// Claiming to be writable here would route every write into
-    /// the error above.
+    /// The chain picks the first writable store, so claiming
+    /// writability the daemon cannot deliver would break writes
+    /// outright rather than letting them fall through to a store
+    /// that works.
     #[test]
-    fn the_store_does_not_claim_to_be_writable() {
+    fn writability_is_false_when_no_daemon_can_be_asked() {
         let store = VaultStore::with_socket("/nonexistent/devboy-test.sock");
-        assert!(!store.is_writable());
+        assert!(
+            !store.is_writable(),
+            "a store that cannot reach a daemon must not volunteer as the write target"
+        );
     }
 }

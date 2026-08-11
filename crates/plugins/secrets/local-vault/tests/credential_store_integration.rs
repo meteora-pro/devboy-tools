@@ -341,3 +341,54 @@ async fn a_chain_with_nowhere_to_write_says_what_to_do_instead() {
         "the error should offer at least one way forward: {message}"
     );
 }
+
+/// Writability tracks what the daemon can actually do.
+///
+/// A write needs a fresh passphrase, the daemon collects it on its
+/// own channel, and a daemon with no channel cannot. Since the
+/// chain routes writes to the first writable store, a store that
+/// claimed writability regardless would swallow writes that another
+/// store could have handled.
+#[tokio::test]
+async fn writability_follows_the_daemon_prompt_channel() {
+    let daemon = Daemon::start(&[], true).await;
+    let store = daemon.store();
+
+    let (writable, channel) = blocking(move || {
+        let w = store.is_writable();
+        (w, store.socket_path().to_path_buf())
+    })
+    .await;
+    let _ = channel;
+
+    // The test harness has no controlling terminal, so the daemon
+    // reports no prompt channel and the store must not claim to
+    // take writes.
+    assert!(
+        !writable,
+        "with no prompt channel the store must not volunteer as the write target"
+    );
+}
+
+/// And a write attempted anyway fails with the daemon's own
+/// explanation rather than a vaguer wrapper.
+#[tokio::test]
+async fn a_write_without_a_prompt_channel_explains_itself() {
+    let daemon = Daemon::start(&[], true).await;
+    let store = daemon.store();
+
+    let err =
+        blocking(move || store.store("github.token", &SecretString::from("ghp-new".to_owned())))
+            .await
+            .expect_err("no prompt channel under the test harness");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("github.token"),
+        "the error should name the key: {message}"
+    );
+    assert!(
+        message.contains("secrets ui") || message.contains("terminal"),
+        "the error should point somewhere: {message}"
+    );
+}

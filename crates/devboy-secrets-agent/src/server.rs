@@ -333,6 +333,7 @@ impl VaultServer {
             "secret.get" => self.handle_secret_get(req),
             "secret.list" => self.handle_secret_list(req),
             "secret.put" => self.handle_secret_put(req).await,
+            "secret.put_interactive" => self.handle_secret_put_interactive(req),
             "secret.rotate" => self.handle_secret_rotate(req).await,
             "metadata.update" => self.handle_metadata_update(req),
             other => JsonRpcResponse::err(
@@ -682,6 +683,92 @@ impl VaultServer {
         }
     }
 
+    /// Write a secret, with the daemon collecting the freshness
+    /// proof itself (ADR-024 §7).
+    ///
+    /// `secret.put` requires a `fresh_unlock` in the request, which
+    /// means the caller holds the passphrase — fine for the UI,
+    /// impossible for the credential chain, whose interface carries
+    /// no unlock material and has nowhere to ask.
+    ///
+    /// This variant closes that gap without weakening the rule: the
+    /// write still requires a fresh passphrase, the daemon just
+    /// collects it on its own channel rather than accepting it over
+    /// the socket. A caller that cannot be trusted with the
+    /// passphrase never sees it.
+    fn handle_secret_put_interactive(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
+        let id = req.id.clone();
+        let params: PutInteractiveParams = match serde_json::from_value(req.params) {
+            Ok(p) => p,
+            Err(e) => return invalid_params(id, e),
+        };
+
+        if crate::totp_session::is_reserved(&params.path) {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    INVALID_PARAMS,
+                    format!("'{}' is a reserved path and cannot be written", params.path),
+                ),
+            );
+        }
+
+        let Some(mut prompt) = crate::prompt::TtyPrompt::open() else {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    NO_PROMPT_SURFACE,
+                    "this daemon has no terminal, so it cannot collect the passphrase a write                      requires. Store the secret with `devboy secrets ui`, which prompts where you                      are."
+                        .to_string(),
+                ),
+            );
+        };
+
+        let passphrase =
+            match prompt.read_passphrase(&format!("Passphrase to store '{}': ", params.path)) {
+                Ok(p) => p,
+                Err(e) => {
+                    return JsonRpcResponse::err(
+                        id,
+                        JsonRpcError::new(
+                            NO_PROMPT_SURFACE,
+                            format!("could not read a passphrase from the daemon's terminal: {e}"),
+                        ),
+                    );
+                }
+            };
+
+        // Same freshness rule as `secret.put`: re-open the vault
+        // with the supplied passphrase, so a stale unlock cannot
+        // authorise a write.
+        match Vault::open(&self.vault_path, UnlockMethod::Passphrase(passphrase)) {
+            Ok(vault) => self.vault = Some(vault),
+            Err(_) => {
+                return JsonRpcResponse::err(
+                    id,
+                    JsonRpcError::new(BAD_UNLOCK, "that passphrase did not open the vault"),
+                );
+            }
+        }
+
+        let vault = match self.vault.as_mut() {
+            Some(v) => v,
+            None => return locked_response(id),
+        };
+        let outcome = vault.put(
+            &params.path,
+            &SecretString::from(params.value),
+            EntryMetadata::default(),
+        );
+        if outcome.is_ok() {
+            self.audit("write", &params.path, "user");
+        }
+        match outcome {
+            Ok(()) => JsonRpcResponse::ok(id, json!({"ok": true})),
+            Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
+        }
+    }
+
     async fn handle_secret_rotate(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         let id = req.id.clone();
         let params: RotateParams = match serde_json::from_value(req.params) {
@@ -874,6 +961,16 @@ struct PutParams {
     #[serde(default)]
     meta: Option<EntryMetadataParams>,
     fresh_unlock: UnlockParams,
+}
+
+/// Parameters for `secret.put_interactive`.
+///
+/// Note what is absent: no `fresh_unlock`. The daemon collects it,
+/// which is the entire difference from `secret.put`.
+#[derive(Debug, Deserialize)]
+struct PutInteractiveParams {
+    path: String,
+    value: String,
 }
 
 /// Parameters for `totp.unlock`.
