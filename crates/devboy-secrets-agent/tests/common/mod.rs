@@ -113,21 +113,35 @@ impl DaemonHarness {
         let mut cmd = match mode {
             SpawnMode::Child => Command::new(Self::daemon_bin()),
             SpawnMode::Orphaned => {
-                // `setsid` forks and exits, so the daemon is
-                // reparented to init and leaves our process tree.
+                // `--fork` is load-bearing. Plain `setsid` forks
+                // only when the caller is already a process-group
+                // leader; spawned from a test it is not, so
+                // `setsid` would just `exec` the daemon and leave
+                // this process as its parent — producing exactly
+                // the layout this mode is supposed to avoid.
                 let mut c = Command::new("setsid");
-                c.arg(Self::daemon_bin());
+                c.arg("--fork").arg(Self::daemon_bin());
                 c
             }
         };
+
+        // Output goes to files, not pipes.
+        //
+        // An orphaned daemon outlives the `setsid` process we
+        // waited on, and it inherits the write end of any pipe —
+        // so `wait_with_output()` would block until the daemon
+        // itself exits, hanging the test forever. Files are
+        // readable regardless of who is still holding the fd.
+        let stdout_file = std::fs::File::create(self.stdout_path()).expect("stdout file");
+        let stderr_file = std::fs::File::create(self.stderr_path()).expect("stderr file");
 
         cmd.env("DEVBOY_AGENT_SOCKET", &self.socket_path)
             .env("DEVBOY_VAULT_PATH", &self.vault_path)
             // Never touch the developer's real config.
             .env("XDG_CONFIG_HOME", self._dir.path())
             .env("HOME", self._dir.path())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::from(stderr_file));
 
         if allow_untrusted {
             cmd.env("DEVBOY_INSECURE_ALLOW_UNTRUSTED_DAEMON", "1");
@@ -157,15 +171,25 @@ impl DaemonHarness {
     fn wait_until_ready(&mut self) -> Result<(), ()> {
         let deadline = Instant::now() + READY_TIMEOUT;
         while Instant::now() < deadline {
-            // A daemon that already exited will never be ready.
-            if let Some(child) = self.child.as_mut()
-                && matches!(child.try_wait(), Ok(Some(_)))
-            {
-                return Err(());
-            }
             if self.socket_path.exists() && UnixStream::connect(&self.socket_path).is_ok() {
                 return Ok(());
             }
+
+            // Bail out early when the process we launched is gone
+            // *and* it left a refusal behind — that is a daemon
+            // that decided not to run, not one still starting.
+            //
+            // For `Orphaned` the handle refers to `setsid`, which
+            // exits immediately by design, so its exit alone means
+            // nothing; the stderr content is what distinguishes
+            // the two cases.
+            if let Some(child) = self.child.as_mut()
+                && matches!(child.try_wait(), Ok(Some(_)))
+                && self.read_stderr().contains("refusing to start")
+            {
+                return Err(());
+            }
+
             std::thread::sleep(POLL_INTERVAL);
         }
         Err(())
@@ -208,33 +232,51 @@ impl DaemonHarness {
     }
 
     /// Stop the daemon and collect whatever it printed.
+    ///
+    /// Never blocks on the daemon's own lifetime: output is read
+    /// from files, and an orphaned daemon is reaped by the unique
+    /// socket path it was told to bind rather than through a child
+    /// handle it no longer has.
     pub fn take_output(&mut self) -> DaemonOutput {
-        let Some(mut child) = self.child.take() else {
-            return DaemonOutput::default();
+        let exit_status = match self.child.take() {
+            Some(mut child) => {
+                let _ = child.kill();
+                // For `Orphaned` this waits on `setsid`, which has
+                // already exited; for `Child` it waits on the
+                // daemon itself. Either way it returns promptly.
+                child.wait().ok().and_then(|s| s.code())
+            }
+            None => None,
         };
 
-        // An orphaned daemon is not our child any more, so `wait`
-        // returns as soon as `setsid` exits; kill by socket path
-        // instead of relying on the handle.
-        let _ = child.kill();
-        let output = child.wait_with_output().ok();
-
         if self.mode == SpawnMode::Orphaned {
-            // Best-effort: the real daemon is detached, so reap it
-            // by the unique socket path it was told to use.
+            // The real daemon is detached from us, so match on the
+            // socket path — unique to this harness instance, so
+            // this can never hit another test's daemon or the
+            // developer's own.
             let _ = Command::new("pkill")
                 .args(["-f", &self.socket_path.display().to_string()])
                 .status();
         }
 
-        match output {
-            Some(o) => DaemonOutput {
-                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-                exit_status: o.status.code(),
-            },
-            None => DaemonOutput::default(),
+        DaemonOutput {
+            stderr: std::fs::read_to_string(self.stderr_path()).unwrap_or_default(),
+            stdout: std::fs::read_to_string(self.stdout_path()).unwrap_or_default(),
+            exit_status,
         }
+    }
+
+    /// Read the daemon's stderr without stopping it.
+    pub fn read_stderr(&self) -> String {
+        std::fs::read_to_string(self.stderr_path()).unwrap_or_default()
+    }
+
+    fn stdout_path(&self) -> PathBuf {
+        self._dir.path().join("daemon.out")
+    }
+
+    fn stderr_path(&self) -> PathBuf {
+        self._dir.path().join("daemon.err")
     }
 
     /// The socket this daemon was told to bind.
