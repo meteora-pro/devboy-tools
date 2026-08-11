@@ -185,7 +185,7 @@ pub fn unwrap_passphrase(
             argon2_params,
             wrapped_key,
         } => (argon2_salt, argon2_params, wrapped_key),
-        Envelope::Keychain { .. } => return Err(PassphraseError::WrongKind { kind: "keychain" }),
+        Envelope::Totp { .. } => return Err(PassphraseError::WrongKind { kind: "totp" }),
         Envelope::Recovery { .. } => return Err(PassphraseError::WrongKind { kind: "recovery" }),
     };
 
@@ -345,14 +345,14 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_rejects_keychain_envelope() {
-        let env = Envelope::Keychain {
-            keychain_account: "x".to_owned(),
+    fn unwrap_rejects_totp_envelope() {
+        let env = Envelope::Totp {
+            totp_salt: b64_encode(&[0; 32]),
             wrapped_key: b64_encode(&[0; 64]),
         };
         let err = unwrap_passphrase(&env, &passphrase("x")).unwrap_err();
         match err {
-            PassphraseError::WrongKind { kind } => assert_eq!(kind, "keychain"),
+            PassphraseError::WrongKind { kind } => assert_eq!(kind, "totp"),
             other => panic!("expected WrongKind, got {other:?}"),
         }
     }

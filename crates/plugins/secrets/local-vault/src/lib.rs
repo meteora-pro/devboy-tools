@@ -428,7 +428,7 @@ mod tests {
             // Tiny KDF params so vault create + unlock is instant.
             passphrase_params: Some(EnvelopeKdfParams { m: 8, t: 1, p: 1 }),
             with_recovery: false,
-            with_keychain_account: None,
+            with_totp_secret: None,
         }
     }
 

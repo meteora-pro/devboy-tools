@@ -23,11 +23,27 @@
 //! rests on the 32-byte shared secret rather than on the hash's
 //! collision resistance.
 
+use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
+use sha2::Sha256;
 use subtle::ConstantTimeEq;
+use thiserror::Error;
+use zeroize::Zeroizing;
+
+use crate::aead::{self, AeadError, KEY_LEN};
+use crate::format::{Envelope, b64_decode, b64_encode};
 
 type HmacSha1 = Hmac<Sha1>;
+
+/// AAD bound into the TOTP envelope's AEAD wrap.
+///
+/// Kind-bound like the other envelopes, so a wrapped key lifted
+/// from one envelope kind cannot be unwrapped as another.
+pub const TOTP_ENVELOPE_AAD: &str = "devboy-vault-envelope:totp:v1";
+
+/// HKDF `info` label for the TOTP wrap key.
+pub const TOTP_HKDF_INFO: &[u8] = b"devboy-vault-totp-key-v1";
 
 /// Seconds per TOTP step (RFC 6238 default).
 pub const STEP_SECONDS: u64 = 30;
@@ -51,7 +67,7 @@ pub const SKEW_STEPS: u64 = 1;
 pub const MIN_SECRET_BYTES: usize = 16;
 
 /// Failure modes of TOTP verification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum TotpError {
     /// The shared secret is shorter than RFC 4226 permits.
     #[error("TOTP secret must be at least {MIN_SECRET_BYTES} bytes")]
@@ -153,6 +169,116 @@ pub fn provisioning_uri(secret: &[u8], issuer: &str, account: &str) -> String {
         "otpauth://totp/{issuer_enc}:{account_enc}?secret={encoded}&issuer={issuer_enc}\
          &algorithm=SHA1&digits={DIGITS}&period={STEP_SECONDS}"
     )
+}
+
+// =============================================================================
+// Envelope create / unwrap
+// =============================================================================
+
+/// Failure modes of the TOTP envelope.
+#[derive(Debug, Error)]
+pub enum TotpEnvelopeError {
+    /// AEAD wrap or unwrap failed.
+    #[error(transparent)]
+    Aead(#[from] AeadError),
+    /// The envelope handed in is not a TOTP envelope.
+    #[error("expected a TOTP envelope, got a {kind} envelope")]
+    WrongKind {
+        /// The kind actually supplied.
+        kind: &'static str,
+    },
+    /// Stored salt is not the expected length.
+    #[error("TOTP envelope salt must be 32 bytes, got {got}")]
+    SaltLength {
+        /// Length actually decoded.
+        got: usize,
+    },
+    /// A base64 field failed to decode.
+    #[error("TOTP envelope field is not valid base64: {0}")]
+    Base64(#[from] base64::DecodeError),
+    /// HKDF refused to expand.
+    #[error("HKDF expansion failed")]
+    HkdfFailed,
+    /// The shared secret is too short (see [`MIN_SECRET_BYTES`]).
+    #[error(transparent)]
+    Totp(#[from] TotpError),
+}
+
+/// Derive the envelope wrap key from the shared TOTP secret.
+///
+/// The **secret** backs the wrap, never the code: six digits carry
+/// ~20 bits and would be brute-forced instantly. The code's role is
+/// only to gate access to the secret, which lives where the agent
+/// cannot read it.
+pub fn derive_totp_key(
+    totp_secret: &[u8],
+    salt: &[u8],
+) -> Result<Zeroizing<[u8; KEY_LEN]>, TotpEnvelopeError> {
+    if totp_secret.len() < MIN_SECRET_BYTES {
+        return Err(TotpError::SecretTooShort.into());
+    }
+
+    let hkdf = Hkdf::<Sha256>::new(Some(salt), totp_secret);
+    let mut out = Zeroizing::new([0u8; KEY_LEN]);
+    hkdf.expand(TOTP_HKDF_INFO, out.as_mut())
+        .map_err(|_| TotpEnvelopeError::HkdfFailed)?;
+    Ok(out)
+}
+
+/// Wrap `vault_key` in a TOTP envelope.
+pub fn create_totp_envelope(
+    vault_key: &[u8; KEY_LEN],
+    totp_secret: &[u8],
+    salt: [u8; 32],
+) -> Result<Envelope, TotpEnvelopeError> {
+    let wrap_key = derive_totp_key(totp_secret, &salt)?;
+    let packed = aead::encrypt_packed(&wrap_key, TOTP_ENVELOPE_AAD, vault_key.as_ref())?;
+    Ok(Envelope::Totp {
+        totp_salt: b64_encode(&salt),
+        wrapped_key: b64_encode(&packed),
+    })
+}
+
+/// Unwrap a TOTP envelope and return the vault key.
+///
+/// The caller is responsible for having verified a code *first*
+/// (and for rejecting a replayed step). This function only proves
+/// possession of the shared secret — which the daemon has for the
+/// whole session, so on its own it authorises nothing.
+pub fn unwrap_totp(
+    envelope: &Envelope,
+    totp_secret: &[u8],
+) -> Result<Zeroizing<[u8; KEY_LEN]>, TotpEnvelopeError> {
+    let (totp_salt, wrapped_key) = match envelope {
+        Envelope::Totp {
+            totp_salt,
+            wrapped_key,
+        } => (totp_salt, wrapped_key),
+        Envelope::Passphrase { .. } => {
+            return Err(TotpEnvelopeError::WrongKind { kind: "passphrase" });
+        }
+        Envelope::Recovery { .. } => {
+            return Err(TotpEnvelopeError::WrongKind { kind: "recovery" });
+        }
+    };
+
+    let salt_bytes = b64_decode(totp_salt)?;
+    if salt_bytes.len() != 32 {
+        return Err(TotpEnvelopeError::SaltLength {
+            got: salt_bytes.len(),
+        });
+    }
+
+    let wrap_key = derive_totp_key(totp_secret, &salt_bytes)?;
+    let packed = b64_decode(wrapped_key)?;
+    let plaintext = aead::decrypt_packed(&wrap_key, TOTP_ENVELOPE_AAD, &packed)?;
+
+    let mut out = Zeroizing::new([0u8; KEY_LEN]);
+    if plaintext.len() != KEY_LEN {
+        return Err(AeadError::AeadFailed.into());
+    }
+    out.copy_from_slice(&plaintext);
+    Ok(out)
 }
 
 /// Percent-encode the characters that would break an
@@ -323,6 +449,118 @@ mod tests {
         // The `@` in the account must be escaped, or the label
         // parses wrongly.
         assert!(uri.contains("%40"), "{uri}");
+    }
+
+    // -- Envelope ---------------------------------------------------
+
+    const VAULT_KEY: [u8; KEY_LEN] = [0x42; KEY_LEN];
+    const TOTP_SECRET: &[u8] = &[0x11; 32];
+
+    #[test]
+    fn envelope_round_trips_with_the_same_secret() {
+        let env = create_totp_envelope(&VAULT_KEY, TOTP_SECRET, [0x33; 32]).unwrap();
+        let recovered = unwrap_totp(&env, TOTP_SECRET).unwrap();
+
+        assert_eq!(recovered.as_ref(), &VAULT_KEY);
+    }
+
+    /// The wrap is backed by the 32-byte secret, so a different
+    /// secret must not open it — this is the property that makes
+    /// the secret, not the six-digit code, the thing worth
+    /// protecting.
+    #[test]
+    fn a_different_secret_cannot_unwrap() {
+        let env = create_totp_envelope(&VAULT_KEY, TOTP_SECRET, [0x33; 32]).unwrap();
+
+        assert!(unwrap_totp(&env, &[0x22u8; 32]).is_err());
+    }
+
+    /// The AAD is kind-bound, so a `wrapped_key` lifted from
+    /// another envelope kind cannot be unwrapped here.
+    #[test]
+    fn envelope_kinds_are_not_interchangeable() {
+        let totp = create_totp_envelope(&VAULT_KEY, TOTP_SECRET, [0x33; 32]).unwrap();
+        let Envelope::Totp { wrapped_key, .. } = &totp else {
+            unreachable!()
+        };
+
+        // Same ciphertext, presented as a recovery envelope.
+        let disguised = Envelope::Recovery {
+            bip39_salt: b64_encode(&[0x33; 32]),
+            wrapped_key: wrapped_key.clone(),
+        };
+
+        assert!(matches!(
+            unwrap_totp(&disguised, TOTP_SECRET),
+            Err(TotpEnvelopeError::WrongKind { kind: "recovery" })
+        ));
+    }
+
+    #[test]
+    fn envelope_rejects_a_passphrase_envelope() {
+        let env = Envelope::Passphrase {
+            argon2_salt: b64_encode(&[0; 32]),
+            argon2_params: crate::format::EnvelopeKdfParams { m: 8, t: 1, p: 1 },
+            wrapped_key: b64_encode(&[0; 64]),
+        };
+        assert!(matches!(
+            unwrap_totp(&env, TOTP_SECRET),
+            Err(TotpEnvelopeError::WrongKind { kind: "passphrase" })
+        ));
+    }
+
+    #[test]
+    fn envelope_rejects_a_salt_of_the_wrong_length() {
+        let env = Envelope::Totp {
+            totp_salt: b64_encode(&[0x33; 16]),
+            wrapped_key: b64_encode(&[0; 64]),
+        };
+        assert!(matches!(
+            unwrap_totp(&env, TOTP_SECRET),
+            Err(TotpEnvelopeError::SaltLength { got: 16 })
+        ));
+    }
+
+    #[test]
+    fn envelope_refuses_a_secret_below_the_rfc_minimum() {
+        assert!(create_totp_envelope(&VAULT_KEY, b"short", [0x33; 32]).is_err());
+    }
+
+    /// A tampered ciphertext must fail closed rather than yield a
+    /// wrong key.
+    #[test]
+    fn envelope_detects_tampering() {
+        let env = create_totp_envelope(&VAULT_KEY, TOTP_SECRET, [0x33; 32]).unwrap();
+        let Envelope::Totp {
+            totp_salt,
+            wrapped_key,
+        } = env
+        else {
+            unreachable!()
+        };
+
+        let mut bytes = b64_decode(&wrapped_key).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xff;
+
+        let tampered = Envelope::Totp {
+            totp_salt,
+            wrapped_key: b64_encode(&bytes),
+        };
+        assert!(unwrap_totp(&tampered, TOTP_SECRET).is_err());
+    }
+
+    /// Distinct salts must produce distinct wrapped keys even for
+    /// the same secret and vault key.
+    #[test]
+    fn salt_is_actually_mixed_into_the_derivation() {
+        let a = create_totp_envelope(&VAULT_KEY, TOTP_SECRET, [0x01; 32]).unwrap();
+        let b = create_totp_envelope(&VAULT_KEY, TOTP_SECRET, [0x02; 32]).unwrap();
+        assert_ne!(a, b);
+
+        let key_a = derive_totp_key(TOTP_SECRET, &[0x01; 32]).unwrap();
+        let key_b = derive_totp_key(TOTP_SECRET, &[0x02; 32]).unwrap();
+        assert_ne!(key_a.as_ref(), key_b.as_ref());
     }
 
     #[test]

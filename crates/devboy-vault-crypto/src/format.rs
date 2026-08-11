@@ -11,7 +11,7 @@
 //!   SALT       [32]   = random per vault, used by the passphrase envelope's KDF
 //!
 //! UNLOCK_ENVELOPES (length-prefixed TOML, each envelope independently
-//! wraps the vault key under one unlock method — passphrase, keychain,
+//! wraps the vault key under one unlock method — passphrase, TOTP,
 //! recovery):
 //!   [envelopes_len: u32 LE][envelopes_bytes...]
 //!
@@ -337,9 +337,9 @@ pub struct EnvelopeKdfParams {
 }
 
 /// One unlock envelope. Each envelope independently wraps the vault
-/// key under a different unlock method — adding a new envelope
-/// (Touch ID, recovery phrase) is a header-only write that never
-/// touches the per-entry ciphertext blobs.
+/// key under a different unlock method — adding an envelope
+/// (TOTP, recovery phrase, keyfile) is a header-only write that
+/// never touches the per-entry ciphertext blobs.
 ///
 /// `wrapped_key` and the salt fields are opaque base64-encoded byte
 /// arrays at this layer; the AEAD/KDF mechanics are handled by P3.2 +
@@ -357,12 +357,23 @@ pub enum Envelope {
         /// AEAD-wrapped vault key (base64 no-pad).
         wrapped_key: String,
     },
-    /// Keychain envelope — vault key wrapped under a key stored in the
-    /// macOS Keychain under `keychain_account` and protected by
-    /// Touch ID.
-    Keychain {
-        /// `kSecAttrAccount` value used to look up the wrap key.
-        keychain_account: String,
+    /// TOTP envelope — vault key wrapped under
+    /// `HKDF-SHA256(totp_secret, totp_salt)` (ADR-024 §1).
+    ///
+    /// The `totp_secret` is **not** stored here. It lives as an
+    /// ordinary encrypted entry inside the vault, under a reserved
+    /// path, and is held in daemon memory after a passphrase
+    /// unlock. That is what gives the code its meaning: an agent
+    /// cannot read daemon memory, so it cannot derive a code, so a
+    /// valid code is evidence a human approved the re-unlock.
+    ///
+    /// There is no circular dependency, because this envelope is
+    /// only ever consulted for a *re*-unlock — by which point the
+    /// secret is already resident. A daemon that has not been
+    /// unlocked this boot simply has no TOTP path.
+    Totp {
+        /// Per-envelope HKDF salt (base64 no-pad).
+        totp_salt: String,
         /// AEAD-wrapped vault key (base64 no-pad).
         wrapped_key: String,
     },
@@ -661,9 +672,9 @@ mod tests {
         }
     }
 
-    fn sample_envelope_keychain() -> Envelope {
-        Envelope::Keychain {
-            keychain_account: "dev.devboy.secrets.vault.macos-touchid".to_owned(),
+    fn sample_envelope_totp() -> Envelope {
+        Envelope::Totp {
+            totp_salt: b64_encode(&[0xCC; 32]),
             wrapped_key: b64_encode(&[0xCC; 48]),
         }
     }
@@ -800,7 +811,7 @@ mod tests {
     fn envelopes_section_round_trips_each_kind() {
         let envelopes = vec![
             sample_envelope_passphrase(),
-            sample_envelope_keychain(),
+            sample_envelope_totp(),
             sample_envelope_recovery(),
         ];
         let envelopes_file = EnvelopesFile {
@@ -842,7 +853,7 @@ mod tests {
     fn full_vault_round_trips_in_memory() {
         let mut vault = VaultFile::empty([0x55; 32]);
         vault.envelopes.push(sample_envelope_passphrase());
-        vault.envelopes.push(sample_envelope_keychain());
+        vault.envelopes.push(sample_envelope_totp());
         vault.envelopes.push(sample_envelope_recovery());
         vault.entries.push(sample_entry("team/gitlab/x", 0, 64));
         vault

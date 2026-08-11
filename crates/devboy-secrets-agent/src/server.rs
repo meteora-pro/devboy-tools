@@ -439,7 +439,22 @@ impl UnlockParams {
                     })?;
                 Ok(UnlockMethod::Recovery(phrase))
             }
-            "keychain" => Ok(UnlockMethod::Keychain),
+            // ADR-024 §1: `totp` is deliberately NOT reachable
+            // through this wire field.
+            //
+            // The TOTP path unwraps using a secret the daemon holds
+            // in memory, never one a caller supplies — accepting
+            // secret material here would let any client present its
+            // own secret and unwrap the vault, which is the exact
+            // opposite of the guarantee. Re-unlock goes through
+            // `secrets_unlock`, which takes a six-digit code and
+            // pairs it with the resident secret.
+            "totp" => Err(JsonRpcError::new(
+                INVALID_PARAMS,
+                "TOTP unlock does not accept secret material; use the dedicated re-unlock call \
+                 with a 6-digit code"
+                    .to_string(),
+            )),
             other => Err(JsonRpcError::new(
                 INVALID_PARAMS,
                 format!("unknown unlock kind '{other}'"),
@@ -587,7 +602,7 @@ mod tests {
             passphrase: passphrase(p),
             passphrase_params: Some(EnvelopeKdfParams { m: 8, t: 1, p: 1 }),
             with_recovery: false,
-            with_keychain_account: None,
+            with_totp_secret: None,
         }
     }
 

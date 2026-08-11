@@ -1076,7 +1076,7 @@ impl StorageBackend {
             InitialUnlock {
                 passphrase: passphrase.clone(),
                 with_recovery: true,
-                with_keychain_account: None,
+                with_totp_secret: None,
                 passphrase_params: None,
             },
         )
@@ -1291,7 +1291,7 @@ impl StorageBackend {
                         InitialUnlock {
                             passphrase: passphrase.clone(),
                             with_recovery: true,
-                            with_keychain_account: None,
+                            with_totp_secret: None,
                             passphrase_params: None,
                         },
                     )

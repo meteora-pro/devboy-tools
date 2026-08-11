@@ -4,7 +4,7 @@
 //!
 //! - [`crate::format`] is the on-disk byte layout.
 //! - [`crate::aead`] is the per-entry XChaCha20-Poly1305 wrapper.
-//! - [`crate::passphrase`] / [`crate::recovery`] / [`crate::keychain`]
+//! - [`crate::passphrase`] / [`crate::recovery`] / [`crate::totp`]
 //!   are the three envelope variants — independent ways to wrap the
 //!   same `vault_key` so the user can unlock with whichever method
 //!   they have on hand.
@@ -55,7 +55,6 @@ use crate::aead::{self, AeadError, KEY_LEN, NONCE_LEN};
 use crate::format::{
     EntryMeta, Envelope, EnvelopeKdfParams, FormatError, Header, VaultFile, b64_decode, b64_encode,
 };
-use crate::keychain::{KeychainError, create_keychain_envelope, unwrap_keychain};
 use crate::passphrase::{
     DEFAULT_KDF_PARAMS, PassphraseError, create_passphrase_envelope, unwrap_passphrase,
 };
@@ -63,6 +62,7 @@ use crate::recovery::{
     RecoveryError, RecoveryPhrase, create_recovery_envelope, generate_recovery_phrase,
     unwrap_recovery,
 };
+use crate::totp::{TotpEnvelopeError, create_totp_envelope, unwrap_totp};
 
 // =============================================================================
 // User-facing types
@@ -91,16 +91,26 @@ pub enum UnlockMethod {
     Passphrase(SecretString),
     /// Try the recovery envelope.
     Recovery(RecoveryPhrase),
-    /// Try the keychain envelope (macOS only).
-    Keychain,
+    /// Try the TOTP envelope (ADR-024 §1).
+    ///
+    /// The caller supplies the shared secret it already holds in
+    /// memory, and is responsible for having verified a code — and
+    /// rejected a replayed step — beforehand. Possession of the
+    /// secret alone authorises nothing: the daemon has it for the
+    /// whole session.
+    Totp {
+        /// The shared TOTP secret, resident in daemon memory.
+        totp_secret: Vec<u8>,
+    },
 }
 
 /// Initial unlock methods to attach when calling [`Vault::create`].
 ///
 /// `passphrase` is mandatory — every vault must accept *some* unlock
 /// method, and the passphrase is the only one that works without
-/// external infrastructure (no Touch ID hardware, no recovery phrase
-/// yet generated). Touch ID and BIP39 recovery are optional add-ons.
+/// external infrastructure (no authenticator enrolled, no recovery
+/// phrase yet generated). TOTP and BIP39 recovery are optional
+/// add-ons layered on top.
 pub struct InitialUnlock {
     /// Mandatory passphrase. Used to wrap the vault key in the
     /// initial passphrase envelope.
@@ -113,11 +123,13 @@ pub struct InitialUnlock {
     /// [`CreateOutcome::recovery_phrase`] so the caller can show it
     /// to the user (per ADR-023 §3.2 acknowledgement step).
     pub with_recovery: bool,
-    /// If `Some`, also add a Keychain envelope under the supplied
-    /// account name (macOS only). The non-macOS stub returns
-    /// [`KeychainError::Unsupported`] from [`Vault::create`] when
-    /// this is set.
-    pub with_keychain_account: Option<String>,
+    /// If `Some`, also add a TOTP envelope wrapping the vault key
+    /// under this shared secret (ADR-024 §1).
+    ///
+    /// Enrollment normally happens on an already-open vault via
+    /// [`Vault::add_totp_envelope`]; this field exists so a vault
+    /// can be created with TOTP in one step.
+    pub with_totp_secret: Option<Vec<u8>>,
 }
 
 impl InitialUnlock {
@@ -127,7 +139,7 @@ impl InitialUnlock {
             passphrase,
             passphrase_params: None,
             with_recovery: false,
-            with_keychain_account: None,
+            with_totp_secret: None,
         }
     }
 }
@@ -170,10 +182,10 @@ pub enum VaultError {
     #[error("recovery envelope error: {0}")]
     Recovery(#[from] RecoveryError),
 
-    /// Wraps [`crate::keychain::KeychainError`] from the macOS
-    /// keychain envelope layer.
-    #[error("keychain envelope error: {0}")]
-    Keychain(#[from] KeychainError),
+    /// Wraps [`crate::totp::TotpEnvelopeError`] from the TOTP
+    /// envelope layer (ADR-024 §1).
+    #[error("TOTP envelope error: {0}")]
+    Totp(#[from] TotpEnvelopeError),
 
     /// `Vault::open` could not find an envelope of the requested kind
     /// in the file. The caller asked for a passphrase unlock but the
@@ -275,9 +287,13 @@ impl Vault {
             None
         };
 
-        // Optional keychain envelope.
-        if let Some(account) = init.with_keychain_account.as_deref() {
-            let env = create_keychain_envelope(&vault_key_bytes, account)?;
+        // Optional TOTP envelope (ADR-024 §1). The shared secret
+        // is supplied by the caller, which is also responsible for
+        // storing it inside the vault under its reserved path.
+        if let Some(totp_secret) = init.with_totp_secret.as_deref() {
+            let mut salt = [0u8; 32];
+            getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
+            let env = create_totp_envelope(&vault_key_bytes, totp_secret, salt)?;
             file.envelopes.push(env);
         }
 
@@ -322,13 +338,13 @@ impl Vault {
                     .ok_or(VaultError::NoMatchingEnvelope { kind: "recovery" })?;
                 unwrap_recovery(env, phrase)?
             }
-            UnlockMethod::Keychain => {
+            UnlockMethod::Totp { totp_secret } => {
                 let env = file
                     .envelopes
                     .iter()
-                    .find(|e| matches!(e, Envelope::Keychain { .. }))
-                    .ok_or(VaultError::NoMatchingEnvelope { kind: "keychain" })?;
-                unwrap_keychain(env)?
+                    .find(|e| matches!(e, Envelope::Totp { .. }))
+                    .ok_or(VaultError::NoMatchingEnvelope { kind: "totp" })?;
+                unwrap_totp(env, totp_secret)?
             }
         };
         // Convert Zeroizing<[u8; KEY_LEN]> -> SecretBox<[u8; KEY_LEN]>.
@@ -359,11 +375,19 @@ impl Vault {
         Ok(phrase)
     }
 
-    /// Add a keychain envelope to an already-unlocked vault (macOS
-    /// only — non-macOS targets return [`KeychainError::Unsupported`]
-    /// wrapped in `VaultError::Keychain`).
-    pub fn add_keychain_envelope(&mut self, account: &str) -> Result<(), VaultError> {
-        let env = create_keychain_envelope(self.vault_key.expose_secret(), account)?;
+    /// Add a TOTP envelope to an already-unlocked vault
+    /// (ADR-024 §1).
+    ///
+    /// The caller supplies the shared secret and is responsible for
+    /// also storing it *inside* this vault under its reserved path.
+    /// That placement is what the whole scheme rests on: the secret
+    /// then exists in plaintext only in daemon memory, which an
+    /// agent cannot read, so a valid code is evidence a human
+    /// approved the re-unlock.
+    pub fn add_totp_envelope(&mut self, totp_secret: &[u8]) -> Result<(), VaultError> {
+        let mut salt = [0u8; 32];
+        getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
+        let env = create_totp_envelope(self.vault_key.expose_secret(), totp_secret, salt)?;
         self.file.envelopes.push(env);
         self.file.write_file_atomic(&self.path)?;
         Ok(())
@@ -671,7 +695,7 @@ mod tests {
             passphrase: pw(passphrase),
             passphrase_params: Some(fast_params()),
             with_recovery: false,
-            with_keychain_account: None,
+            with_totp_secret: None,
         }
     }
 
@@ -697,7 +721,7 @@ mod tests {
             passphrase: pw("p"),
             passphrase_params: Some(fast_params()),
             with_recovery: true,
-            with_keychain_account: None,
+            with_totp_secret: None,
         };
         let outcome = Vault::create(&path, init).unwrap();
         let phrase = outcome.recovery_phrase.expect("phrase returned");
