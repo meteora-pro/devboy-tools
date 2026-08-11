@@ -45,6 +45,13 @@
 
 use std::path::{Path, PathBuf};
 
+/// Synchronous `CredentialStore` view of the same daemon, for the
+/// ADR-005 chain that provider tokens still resolve through
+/// (ADR-024 §6).
+pub mod credential_store;
+
+pub use credential_store::{VaultStore, key_to_vault_path};
+
 use async_trait::async_trait;
 use devboy_secrets_agent::{ENTRY_NOT_FOUND, JsonRpcResponse, VAULT_LOCKED, default_socket_path};
 #[cfg(unix)]

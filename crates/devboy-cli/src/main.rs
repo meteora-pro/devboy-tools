@@ -829,30 +829,62 @@ const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
 /// When set to "1" or "true", MCP server uses only environment variables.
 const NO_CONFIG_ENV: &str = "DEVBOY_NO_CONFIG";
 
-/// Get credential store using the appropriate chain.
+/// Build the credential chain this process should use.
+///
 ///
 /// Resolution order after ADR-024 §6:
 /// 1. Environment variables (`DEVBOY_{PROVIDER}_TOKEN`, then `{PROVIDER}_TOKEN`)
-/// 2. OS Keychain — **only** when the user opted in with
+/// 2. The local vault, via the secret daemon
+/// 3. OS Keychain — **only** when the user opted in with
 ///    `[secrets.keychain] enabled = true`
 ///
 /// The keychain left the default chain because it only exceeds the protection
 /// of a `0600` file on macOS, while costing a D-Bus dependency, a daemon that
 /// is absent in CI and containers, and prompt failures on locked-down
-/// machines. CI / env-only mode drops it unconditionally.
-fn get_credential_store() -> Box<dyn CredentialStore> {
+/// machines. The vault took its place as the durable store.
+///
+/// The chain is assembled *here* rather than in `devboy-storage` because
+/// reaching the vault means talking to the daemon, and `devboy-storage` is
+/// published to crates.io while the daemon crate is not — a published crate
+/// cannot depend on an unpublished one. So the library offers a daemon-free
+/// chain and the application adds the vault, which is the right split anyway:
+/// a library consumer gets something that works with no services running.
+///
+/// CI / env-only mode drops both the vault and the keychain: a container has
+/// neither daemon, and reaching for one is a hang waiting to happen.
+pub(crate) fn credential_chain() -> ChainStore {
     let config = load_config_for_store();
-    let ci = is_env_only_mode(&config);
 
-    if ci {
+    if is_env_only_mode(&config) {
         tracing::info!("env-only credential chain (CI mode: environment variables only)");
-    } else if config.is_keychain_enabled() {
-        tracing::debug!("credential chain: env vars -> OS keychain (opted in)");
-    } else {
-        tracing::debug!("credential chain: env vars only (keychain not enabled)");
+        return ChainStore::ci_chain();
     }
 
-    Box::new(ChainStore::from_config(&config, ci))
+    let mut stores: Vec<Box<dyn CredentialStore>> =
+        vec![Box::new(devboy_storage::EnvVarStore::new())];
+
+    match devboy_secret_local_vault::VaultStore::new() {
+        Some(vault) => stores.push(Box::new(vault)),
+        // No derivable config directory means no socket path, so
+        // there is nothing to talk to. Not an error — the chain
+        // simply has one fewer member.
+        None => tracing::debug!("local vault omitted: no socket path could be derived"),
+    }
+
+    if config.is_keychain_enabled() {
+        tracing::debug!("credential chain: env vars -> local vault -> OS keychain (opted in)");
+        stores.push(Box::new(devboy_storage::KeychainStore::new()));
+    } else {
+        tracing::debug!("credential chain: env vars -> local vault");
+    }
+
+    ChainStore::new(stores)
+}
+
+/// Boxed form of [`credential_chain`], for the many call sites that
+/// just want a store.
+fn get_credential_store() -> Box<dyn CredentialStore> {
+    Box::new(credential_chain())
 }
 
 /// Load config for credential-chain construction, tolerating a
@@ -4037,9 +4069,13 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
 /// Credential store factory for the MCP command — wraps the chain in a TTL
 /// cache when the user enabled it.
 ///
-/// Applies the same ADR-024 §6 policy as [`get_credential_store`]: the OS
-/// keychain participates only when explicitly enabled, and CI / env-only mode
-/// drops it unconditionally.
+/// Applies the same ADR-024 §6 policy as [`get_credential_store`]: environment
+/// first, then the local vault, and the OS keychain only when explicitly
+/// enabled. CI / env-only mode drops both daemons unconditionally.
+///
+/// The MCP server is the reason the vault store speaks the socket
+/// synchronously: this chain is consulted from inside a running tokio runtime,
+/// where blocking on a nested runtime would panic.
 fn build_mcp_store(cache_ttl_secs: u64) -> Box<dyn CredentialStore> {
     let config = load_config_for_store();
     let ci = is_env_only_mode(&config);
@@ -4051,7 +4087,9 @@ fn build_mcp_store(cache_ttl_secs: u64) -> Box<dyn CredentialStore> {
         "building MCP credential chain"
     );
 
-    wrap_with_cache(ChainStore::from_config(&config, ci), cache_ttl_secs)
+    // Share one composer with the CLI path so the two cannot drift
+    // into resolving a token differently.
+    wrap_with_cache(credential_chain(), cache_ttl_secs)
 }
 
 /// Configure and launch the telemetry pipeline. Returns `None` when telemetry is

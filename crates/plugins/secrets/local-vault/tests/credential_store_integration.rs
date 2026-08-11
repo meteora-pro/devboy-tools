@@ -17,8 +17,9 @@
 
 use std::path::{Path, PathBuf};
 
+use devboy_secret_local_vault::VaultStore;
 use devboy_secrets_agent::VaultServer;
-use devboy_storage::{ChainStore, CredentialStore, VaultStore};
+use devboy_storage::{ChainStore, CredentialStore};
 use devboy_vault_crypto::format::EnvelopeKdfParams;
 use devboy_vault_crypto::vault::{EntryMetadata, InitialUnlock, UnlockMethod, Vault};
 use secrecy::{ExposeSecret, SecretString};

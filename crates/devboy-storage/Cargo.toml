@@ -19,9 +19,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 devboy-core = { workspace = true }
 devboy-secret-patterns = { workspace = true }
-# For the local-vault bridge: the canonical socket path and the
-# JSON-RPC error codes, rather than a second copy of both.
-devboy-secrets-agent = { workspace = true }
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -48,12 +45,9 @@ keyring = { version = "3", features = ["windows-native"] }
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "time", "net"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "time"] }
 tempfile.workspace = true
 temp-env = { version = "0.3", features = ["async_closure"] }
-# The vault-bridge integration test drives a real daemon over a
-# real socket rather than a mock, so it needs to build a vault.
-devboy-vault-crypto = { workspace = true }
 
 [lints]
 workspace = true

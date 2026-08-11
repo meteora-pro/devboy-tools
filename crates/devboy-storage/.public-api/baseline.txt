@@ -1913,32 +1913,6 @@ impl core::marker::UnsafeUnpin for devboy_storage::validation::FormatRuleSource
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::validation::FormatRuleSource
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::validation::FormatRuleSource
 pub fn devboy_storage::validation::validate_format(entry: &devboy_storage::index::IndexEntry, value: &str, catalogue: &devboy_secret_patterns::user::Catalogue) -> devboy_storage::validation::FormatCheck
-pub mod devboy_storage::vault_bridge
-pub struct devboy_storage::vault_bridge::VaultStore
-impl devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::daemon_present(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::new() -> core::option::Option<Self>
-pub fn devboy_storage::vault_bridge::VaultStore::socket_path(&self) -> &std::path::Path
-pub fn devboy_storage::vault_bridge::VaultStore::with_socket(path: impl core::convert::Into<std::path::PathBuf>) -> Self
-impl core::clone::Clone for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::clone(&self) -> devboy_storage::vault_bridge::VaultStore
-impl core::fmt::Debug for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl devboy_storage::CredentialStore for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
-pub fn devboy_storage::vault_bridge::VaultStore::exists(&self, key: &str) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
-pub fn devboy_storage::vault_bridge::VaultStore::is_available(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::is_writable(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::store(&self, key: &str, _value: &secrecy::SecretString) -> devboy_core::error::Result<()>
-impl core::marker::Freeze for devboy_storage::vault_bridge::VaultStore
-impl core::marker::Send for devboy_storage::vault_bridge::VaultStore
-impl core::marker::Sync for devboy_storage::vault_bridge::VaultStore
-impl core::marker::Unpin for devboy_storage::vault_bridge::VaultStore
-impl core::marker::UnsafeUnpin for devboy_storage::vault_bridge::VaultStore
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::vault_bridge::VaultStore
-impl core::panic::unwind_safe::UnwindSafe for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::key_to_vault_path(key: &str) -> alloc::string::String
 pub enum devboy_storage::ApproveOnUse
 pub devboy_storage::ApproveOnUse::Never
 pub devboy_storage::ApproveOnUse::PerCall
@@ -3267,30 +3241,6 @@ impl core::marker::Unpin for devboy_storage::router_cache::SystemClock
 impl core::marker::UnsafeUnpin for devboy_storage::router_cache::SystemClock
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::router_cache::SystemClock
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::router_cache::SystemClock
-pub struct devboy_storage::VaultStore
-impl devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::daemon_present(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::new() -> core::option::Option<Self>
-pub fn devboy_storage::vault_bridge::VaultStore::socket_path(&self) -> &std::path::Path
-pub fn devboy_storage::vault_bridge::VaultStore::with_socket(path: impl core::convert::Into<std::path::PathBuf>) -> Self
-impl core::clone::Clone for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::clone(&self) -> devboy_storage::vault_bridge::VaultStore
-impl core::fmt::Debug for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl devboy_storage::CredentialStore for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
-pub fn devboy_storage::vault_bridge::VaultStore::exists(&self, key: &str) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
-pub fn devboy_storage::vault_bridge::VaultStore::is_available(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::is_writable(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::store(&self, key: &str, _value: &secrecy::SecretString) -> devboy_core::error::Result<()>
-impl core::marker::Freeze for devboy_storage::vault_bridge::VaultStore
-impl core::marker::Send for devboy_storage::vault_bridge::VaultStore
-impl core::marker::Sync for devboy_storage::vault_bridge::VaultStore
-impl core::marker::Unpin for devboy_storage::vault_bridge::VaultStore
-impl core::marker::UnsafeUnpin for devboy_storage::vault_bridge::VaultStore
-impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::vault_bridge::VaultStore
-impl core::panic::unwind_safe::UnwindSafe for devboy_storage::vault_bridge::VaultStore
 pub const devboy_storage::CI_HEURISTIC_VARS: &[&str]
 pub const devboy_storage::DEFAULT_BASE_TTL: core::time::Duration
 pub const devboy_storage::DEVBOY_CI_ENV: &str
@@ -3339,13 +3289,6 @@ pub fn devboy_storage::MemoryStore::get(&self, key: &str) -> devboy_core::error:
 pub fn devboy_storage::MemoryStore::is_available(&self) -> bool
 pub fn devboy_storage::MemoryStore::is_writable(&self) -> bool
 pub fn devboy_storage::MemoryStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
-impl devboy_storage::CredentialStore for devboy_storage::vault_bridge::VaultStore
-pub fn devboy_storage::vault_bridge::VaultStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
-pub fn devboy_storage::vault_bridge::VaultStore::exists(&self, key: &str) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
-pub fn devboy_storage::vault_bridge::VaultStore::is_available(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::is_writable(&self) -> bool
-pub fn devboy_storage::vault_bridge::VaultStore::store(&self, key: &str, _value: &secrecy::SecretString) -> devboy_core::error::Result<()>
 impl<S: devboy_storage::CredentialStore> devboy_storage::CredentialStore for devboy_storage::cache::CachedStore<S>
 pub fn devboy_storage::cache::CachedStore<S>::delete(&self, key: &str) -> devboy_core::error::Result<()>
 pub fn devboy_storage::cache::CachedStore<S>::exists(&self, key: &str) -> bool
@@ -3366,7 +3309,6 @@ pub fn devboy_storage::build_default_store(cache_ttl_secs: u64) -> alloc::boxed:
 pub fn devboy_storage::check_rotation_reminders(index: &devboy_storage::index::GlobalIndex, today: chrono::naive::date::NaiveDate) -> alloc::vec::Vec<devboy_storage::expiry::ExpiryWarning>
 pub fn devboy_storage::detect_ci_mode(cli_flag: bool, context_ci: core::option::Option<bool>) -> devboy_storage::ci::CiDetection
 pub fn devboy_storage::email_key(provider: &str) -> alloc::string::String
-pub fn devboy_storage::key_to_vault_path(key: &str) -> alloc::string::String
 pub fn devboy_storage::merge_manifest(global: &devboy_storage::index::GlobalIndex, manifest: &devboy_storage::manifest::ProjectManifest) -> core::result::Result<devboy_storage::merge::MergeOutput, devboy_storage::merge::MergeError>
 pub fn devboy_storage::token_key(provider: &str) -> alloc::string::String
 pub fn devboy_storage::validate_format(entry: &devboy_storage::index::IndexEntry, value: &str, catalogue: &devboy_secret_patterns::user::Catalogue) -> devboy_storage::validation::FormatCheck

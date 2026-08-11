@@ -66,7 +66,6 @@ pub mod router_resolve;
 pub mod secret_path;
 pub mod source;
 pub mod validation;
-pub mod vault_bridge;
 
 pub use cache::CachedStore;
 pub use ci::{
@@ -98,7 +97,6 @@ pub use source::{
     Capabilities, CredentialRef, GetOutcome, RemoteRef, SecretSource, SourceError, SourceStatus,
 };
 pub use validation::{FormatCheck, FormatRuleSource, validate_format};
-pub use vault_bridge::{VaultStore, key_to_vault_path};
 
 /// Service name used in OS keychain.
 const SERVICE_NAME: &str = "devboy-tools";
@@ -588,38 +586,33 @@ impl ChainStore {
     /// absent in CI and containers, and a class of prompt
     /// failures on locked-down machines.
     ///
-    /// The vault takes its place as the durable store, via
-    /// [`VaultStore`]. It sits *after* the environment so an
-    /// explicit variable still wins — the property CI and
-    /// one-off overrides depend on — and it is skipped cheaply
-    /// when the daemon is not running.
+    /// The local vault takes its place as the durable store, but
+    /// **not from here**: reaching it means talking to a daemon,
+    /// and this crate is published to crates.io while the daemon
+    /// crate is not. The store that speaks to it therefore lives in
+    /// `devboy-secret-local-vault`, and the *application* composes
+    /// the real chain — see `get_credential_store` in the CLI.
+    /// This constructor stays daemon-free so a library consumer
+    /// gets something that works with no services running.
     ///
     /// Use [`Self::with_keychain`] when the user has opted back
     /// in via `[secrets.keychain] enabled = true`, or
     /// [`Self::from_config`] to make that decision from config.
     pub fn default_chain() -> Self {
-        let mut stores: Vec<Box<dyn CredentialStore>> = vec![Box::new(EnvVarStore::new())];
-        if let Some(vault) = VaultStore::new() {
-            stores.push(Box::new(vault));
-        }
-        Self::new(stores)
+        Self::new(vec![Box::new(EnvVarStore::new())])
     }
 
     /// The default chain plus the OS keychain — the pre-ADR-024
     /// behaviour, now reachable only by explicit opt-in.
     pub fn with_keychain() -> Self {
-        // Opting the keychain back in adds a store rather than
-        // replacing the vault: a user who enables it has secrets
-        // there, but the vault is still the ADR-024 §6 default and
-        // should answer first. The keychain is also the only
-        // writable member, so it stays the write target — which is
-        // what makes enabling it restore the pre-flip behaviour.
-        let mut stores: Vec<Box<dyn CredentialStore>> = vec![Box::new(EnvVarStore::new())];
-        if let Some(vault) = VaultStore::new() {
-            stores.push(Box::new(vault));
-        }
-        stores.push(Box::new(KeychainStore::new()));
-        Self::new(stores)
+        // The keychain is the only writable member here, so it is
+        // also the write target — which is what makes enabling it
+        // restore the pre-ADR-024 behaviour for a user who keeps
+        // tokens there.
+        Self::new(vec![
+            Box::new(EnvVarStore::new()),
+            Box::new(KeychainStore::new()),
+        ])
     }
 
     /// Create a chain for CI / env-only mode (ADR-024 §6).

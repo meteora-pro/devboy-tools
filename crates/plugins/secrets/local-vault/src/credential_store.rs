@@ -16,13 +16,24 @@
 //!
 //! # Why it speaks the socket directly
 //!
-//! [`SecretSource`](crate::SecretSource) is async and
-//! `CredentialStore` is sync, so adapting the existing source would
-//! mean driving a runtime from inside a sync call — which panics
-//! when a runtime is already running, exactly the situation in the
-//! MCP server. The daemon protocol is line-delimited JSON-RPC over
-//! a UNIX socket, so a synchronous client is short and has no
-//! runtime to conflict with.
+//! [`SecretSource`](devboy_storage::SecretSource) is async and
+//! `CredentialStore` is sync, so adapting
+//! [`LocalVaultSource`](crate::LocalVaultSource) would mean driving
+//! a runtime from inside a sync call — which panics when a runtime
+//! is already running, exactly the situation in the MCP server. The
+//! daemon protocol is line-delimited JSON-RPC over a UNIX socket,
+//! so a synchronous client is short and has no runtime to conflict
+//! with.
+//!
+//! # Why it lives here and not in `devboy-storage`
+//!
+//! `devboy-storage` is published to crates.io; the daemon crate is
+//! not. A published crate cannot depend on an unpublished one, so
+//! hosting this there breaks `cargo publish` outright. The
+//! constraint points at the right layer anyway: this crate already
+//! exists to talk to the vault daemon and already depends on both
+//! halves. `devboy-storage` keeps a daemon-free default chain, and
+//! the application composes the real one.
 //!
 //! # Read-through, not read-write
 //!
@@ -51,11 +62,10 @@ use std::time::Duration;
 
 use devboy_core::{Error, Result};
 use devboy_secrets_agent::{ENTRY_NOT_FOUND, VAULT_LOCKED};
+use devboy_storage::CredentialStore;
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use tracing::debug;
-
-use crate::CredentialStore;
 
 /// How long to wait on the daemon before giving up.
 ///

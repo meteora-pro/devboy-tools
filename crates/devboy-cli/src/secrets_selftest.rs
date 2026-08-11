@@ -118,7 +118,7 @@ fn resolution_findings(config: &Config) -> Vec<Finding> {
     // been stored. That is the "healthy but weaker than it looks"
     // case this command exists for.
     if !detection.active {
-        let vault = devboy_storage::VaultStore::new();
+        let vault = devboy_secret_local_vault::VaultStore::new();
         let running = vault.as_ref().is_some_and(|v| v.daemon_present());
         out.push(
             Finding::new(
