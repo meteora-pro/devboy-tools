@@ -65,6 +65,13 @@ pub struct VaultServer {
     vault: Option<Vault>,
     /// Idle-timeout state. See ADR-023 §3.3.
     idle: IdleTracker,
+    /// TOTP state: the resident secret plus its replay guard and
+    /// rate limit (ADR-024 §1).
+    ///
+    /// Populated from the vault's reserved slot on every successful
+    /// unlock and cleared on every lock, so the TOTP path never
+    /// outlives the unlock that established it.
+    totp: crate::totp_session::TotpSession,
 }
 
 impl VaultServer {
@@ -77,6 +84,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::new(),
+            totp: crate::totp_session::TotpSession::new(),
         }
     }
 
@@ -89,6 +97,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::with_timeout(idle_timeout),
+            totp: crate::totp_session::TotpSession::new(),
         }
     }
 
@@ -107,6 +116,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::with_window(window, std::sync::Arc::new(crate::idle::SystemClock)),
+            totp: crate::totp_session::TotpSession::new(),
         }
     }
 
@@ -130,6 +140,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::with_clock(idle_timeout, clock),
+            totp: crate::totp_session::TotpSession::new(),
         }
     }
 
@@ -156,6 +167,30 @@ impl VaultServer {
     fn lock_now(&mut self) {
         self.vault = None;
         self.idle.record_lock();
+        // The TOTP secret must not outlive the unlock it came with:
+        // a code that still re-opened a vault the user deliberately
+        // closed would make locking meaningless.
+        self.totp.clear();
+    }
+
+    /// Load the shared TOTP secret out of the vault's reserved slot.
+    ///
+    /// A vault with no secret enrolled simply has no TOTP path —
+    /// which is a fact, not a failure, and the caller finds out as
+    /// `Unavailable` when it tries.
+    fn adopt_totp_secret(&mut self) {
+        let Some(vault) = self.vault.as_ref() else {
+            return;
+        };
+        if let Ok(Some(secret)) = vault.get(crate::totp_session::TOTP_SECRET_PATH) {
+            self.totp
+                .set_secret(secret.expose_secret().as_bytes().to_vec());
+        }
+    }
+
+    /// Whether a TOTP re-unlock is possible right now.
+    pub fn totp_available(&self) -> bool {
+        self.totp.is_available()
     }
 
     /// Run the auto-lock check before dispatching a request. Drops
@@ -255,6 +290,11 @@ impl VaultServer {
             Ok(vault) => {
                 self.vault = Some(vault);
                 self.idle.record_unlock();
+                // The TOTP path is established by this unlock and
+                // by nothing else: the secret lives in the vault,
+                // so it becomes resident exactly when the vault
+                // opens.
+                self.adopt_totp_secret();
                 JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
@@ -320,6 +360,7 @@ impl VaultServer {
             Ok(vault) => {
                 self.vault = Some(vault);
                 self.idle.record_unlock();
+                self.adopt_totp_secret();
                 JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
@@ -367,6 +408,25 @@ impl VaultServer {
             Ok(p) => p,
             Err(e) => return invalid_params(id, e),
         };
+        // ADR-024 §1: the TOTP secret is unreachable from the wire.
+        //
+        // This is the load-bearing check of the whole re-unlock
+        // scheme. A code proves a human is present only because the
+        // agent cannot mint one — and an agent that could simply
+        // *ask* an unlocked daemon for the shared secret would mint
+        // codes all day. Reported as not-found rather than as a
+        // refusal: the existence of the slot is not a caller's
+        // business either.
+        if crate::totp_session::is_reserved(&params.path) {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    ENTRY_NOT_FOUND,
+                    format!("no entry for path '{}'", params.path),
+                ),
+            );
+        }
+
         let vault = match self.vault.as_ref() {
             Some(v) => v,
             None => return locked_response(id),
@@ -393,6 +453,11 @@ impl VaultServer {
         let entries: Vec<Value> = vault
             .paths()
             .zip(vault.list())
+            // Reserved slots are absent from the listing for the
+            // same reason they are unreadable: an agent has no
+            // business knowing the TOTP secret is there, let alone
+            // where.
+            .filter(|(p, _)| !crate::totp_session::is_reserved(p))
             .map(|(p, m)| {
                 json!({
                     "path": p,
@@ -412,6 +477,18 @@ impl VaultServer {
             Ok(p) => p,
             Err(e) => return invalid_params(id, e),
         };
+        // Excluding the slot from reads while allowing writes would
+        // let a caller overwrite the shared secret with one of its
+        // own — a quieter way to mint valid codes than reading it.
+        if crate::totp_session::is_reserved(&params.path) {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    INVALID_PARAMS,
+                    format!("'{}' is a reserved path and cannot be written", params.path),
+                ),
+            );
+        }
         if let Err(e) = self.verify_fresh_unlock(&params.fresh_unlock) {
             return JsonRpcResponse::err(id, e);
         }
@@ -819,6 +896,146 @@ mod tests {
         assert_eq!(result["unlock_ttl_seconds"], 900);
         assert_eq!(result["max_unlock_ttl_seconds"], 3600);
         assert_eq!(result["idle_relock_seconds"], 300);
+    }
+
+    /// The check the whole TOTP scheme rests on.
+    ///
+    /// A code proves a human is present only because the agent
+    /// cannot mint one. An agent that could ask an unlocked daemon
+    /// for the shared secret would mint codes at will, so the
+    /// reserved slot must be unreadable, unlistable and unwritable
+    /// even on a fully unlocked vault.
+    #[tokio::test]
+    async fn the_totp_secret_is_unreachable_from_the_wire() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        // Seed the reserved slot the way enrolment would, going
+        // around the wire because the wire refuses it.
+        server
+            .vault
+            .as_mut()
+            .unwrap()
+            .put(
+                crate::totp_session::TOTP_SECRET_PATH,
+                &SecretString::from("12345678901234567890".to_owned()),
+                EntryMetadata::default(),
+            )
+            .expect("seed reserved slot");
+
+        // Unreadable.
+        let get = server
+            .handle_request(req(
+                2,
+                "secret.get",
+                json!({"path": crate::totp_session::TOTP_SECRET_PATH}),
+            ))
+            .await;
+        assert_eq!(
+            get.error.expect("reserved paths must not resolve").code,
+            ENTRY_NOT_FOUND
+        );
+
+        // Unlistable.
+        let list = server
+            .handle_request(req(3, "secret.list", Value::Null))
+            .await;
+        let body = serde_json::to_string(&list.result.unwrap()).unwrap();
+        assert!(
+            !body.contains("__totp"),
+            "the reserved slot must not appear in a listing: {body}"
+        );
+
+        // Unwritable — otherwise an agent swaps in its own secret.
+        let put = server
+            .handle_request(req(
+                4,
+                "secret.put",
+                json!({
+                    "path": crate::totp_session::TOTP_SECRET_PATH,
+                    "value": "attacker-chosen",
+                    "fresh_unlock": {"kind": "passphrase", "secret": "p"}
+                }),
+            ))
+            .await;
+        assert!(
+            put.error.is_some(),
+            "writing the reserved slot must be refused"
+        );
+    }
+
+    /// After a passphrase unlock the daemon holds the secret, and a
+    /// lock takes it away again — a code must not re-open a vault
+    /// the user deliberately closed.
+    #[tokio::test]
+    async fn the_totp_path_lives_and_dies_with_the_unlock() {
+        let (_dir, mut server) = fresh_vault("p");
+        assert!(!server.totp_available(), "locked daemon has no TOTP path");
+
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        server
+            .vault
+            .as_mut()
+            .unwrap()
+            .put(
+                crate::totp_session::TOTP_SECRET_PATH,
+                &SecretString::from("12345678901234567890".to_owned()),
+                EntryMetadata::default(),
+            )
+            .expect("seed");
+
+        // Re-unlock so the daemon adopts the freshly-seeded secret.
+        server
+            .handle_request(req(2, "vault.lock", Value::Null))
+            .await;
+        server
+            .handle_request(req(
+                3,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        assert!(
+            server.totp_available(),
+            "an unlocked daemon with an enrolled secret should offer the TOTP path"
+        );
+
+        server
+            .handle_request(req(4, "vault.lock", Value::Null))
+            .await;
+        assert!(
+            !server.totp_available(),
+            "locking must take the TOTP secret with it"
+        );
+    }
+
+    /// A vault with no enrolled secret has no TOTP path, and that is
+    /// a fact rather than a failure — the acceptance criterion is
+    /// that it reports rather than staying silent.
+    #[tokio::test]
+    async fn a_vault_without_an_enrolled_secret_has_no_totp_path() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        assert!(!server.totp_available());
     }
 
     /// `vault.request_unlock` must carry no passphrase field at all.

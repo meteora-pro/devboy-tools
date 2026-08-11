@@ -23,6 +23,7 @@ pub mod rpc;
 pub mod server;
 #[cfg(unix)]
 pub mod socket;
+pub mod totp_session;
 
 #[cfg(unix)]
 pub use idle::{
@@ -44,6 +45,7 @@ pub use socket::{
     AgentError, AgentListener, SECRETS_SUBDIR, SOCKET_FILENAME, SOCKET_MODE,
     SOCKET_PARENT_DIR_MODE, SOCKET_PATH_ENV, default_socket_path,
 };
+pub use totp_session::{TOTP_SECRET_PATH, TotpDenial, TotpSession, is_reserved};
 
 // Cross-platform stubs for the items downstream crates
 // (`devboy-secret-local-vault`) need to import unconditionally.
