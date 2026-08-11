@@ -538,6 +538,11 @@ impl VaultServer {
             available_methods.push("totp");
         }
 
+        // Opening /dev/tty is how the daemon finds out whether it
+        // has one at all; there is no cheaper question to ask.
+        let (prompt_channel, terminal_id) =
+            describe_prompt_channel(crate::prompt::TtyPrompt::open());
+
         let window = self.window();
         JsonRpcResponse::ok(
             req.id,
@@ -548,6 +553,17 @@ impl VaultServer {
                 "idle_relock_seconds": window.idle_relock.map(|d| d.as_secs()),
                 "available_methods": available_methods,
                 "trust_level": trust.as_str(),
+                // §7 level 2 vs level 3 turns on who owns the input
+                // channel, so the daemon reports the channel it
+                // actually has rather than leaving a caller to
+                // assume one exists. `terminal_id` lets a client
+                // check the daemon is not about to prompt on the
+                // terminal the client is already watching — two
+                // processes sharing one makes the trusted path
+                // collapse.
+                "prompt_channel": prompt_channel,
+                "terminal_id": terminal_id,
+                "insecure_override": crate::provenance::insecure_override_active(),
             }),
         )
     }
@@ -870,6 +886,22 @@ struct TotpUnlockParams {
     /// decision.
     #[serde(default)]
     duration_seconds: Option<u64>,
+}
+
+/// Describe the prompt channel for `vault.status`.
+///
+/// Split out from the handler so both branches are reachable from a
+/// test. The daemon under a test harness has no controlling
+/// terminal, so a check written inline could only ever exercise the
+/// "none" case — and would pass whatever the "terminal" case did.
+fn describe_prompt_channel(tty: Option<crate::prompt::TtyPrompt>) -> (&'static str, Option<Value>) {
+    match tty {
+        Some(tty) => (
+            "terminal",
+            tty.identity().ok().map(|(rdev, ino)| json!([rdev, ino])),
+        ),
+        None => ("none", None),
+    }
 }
 
 /// Map a [`TotpDenial`] onto its wire error.
@@ -1506,6 +1538,84 @@ mod tests {
 
         assert!(r.error.is_none(), "an open vault should answer, not fail");
         assert_eq!(r.result.unwrap()["state"], "unlocked");
+    }
+
+    /// The "terminal" branch must yield an identity, and the test
+    /// harness has no controlling terminal — so the branch is
+    /// driven with a real pty rather than left unreachable. An
+    /// earlier version asserted it only when the ambient daemon
+    /// happened to have a terminal, which in CI is never.
+    #[test]
+    fn a_terminal_channel_is_always_identifiable() {
+        use std::fs::File;
+
+        let pair = nix::pty::openpty(None, None).expect("openpty");
+        let device = File::from(pair.slave);
+        let prompt = crate::prompt::TtyPrompt::from_file(device);
+
+        let (channel, id) = describe_prompt_channel(Some(prompt));
+        assert_eq!(channel, "terminal");
+        assert!(
+            id.is_some(),
+            "a terminal channel with no identity leaves a client unable to check whether the              daemon shares its terminal"
+        );
+    }
+
+    #[test]
+    fn no_terminal_yields_no_identity() {
+        let (channel, id) = describe_prompt_channel(None);
+        assert_eq!(channel, "none");
+        assert!(id.is_none());
+    }
+
+    /// §7 grades trust by who owns the input channel, so the
+    /// status has to name the channel rather than only the level.
+    /// A level without a channel describes an intention.
+    #[tokio::test]
+    async fn status_reports_the_prompt_channel_it_actually_has() {
+        let (_dir, mut server) = fresh_vault("p");
+        let r = server
+            .handle_request(req(1, "vault.status", Value::Null))
+            .await;
+        let result = r.result.expect("status");
+
+        let channel = result["prompt_channel"]
+            .as_str()
+            .expect("the channel must be reported");
+        assert!(
+            channel == "terminal" || channel == "none",
+            "unexpected channel {channel:?}"
+        );
+
+        // A terminal must come with something to identify it, or a
+        // client cannot check the daemon is not about to prompt on
+        // the terminal the client is already watching.
+        if channel == "terminal" {
+            assert!(
+                !result["terminal_id"].is_null(),
+                "a terminal channel must be identifiable"
+            );
+        } else {
+            assert!(
+                result["terminal_id"].is_null(),
+                "there is no terminal to identify"
+            );
+        }
+    }
+
+    /// The override has to be visible in the status, not only in a
+    /// log line nobody reads.
+    #[tokio::test]
+    async fn status_reports_whether_the_insecure_override_is_active() {
+        let (_dir, mut server) = fresh_vault("p");
+        let r = server
+            .handle_request(req(1, "vault.status", Value::Null))
+            .await;
+
+        assert!(
+            r.result.expect("status")["insecure_override"].is_boolean(),
+            "the override state must be reported either way"
+        );
     }
 
     /// The keyfile unlock must never take a path from the wire.

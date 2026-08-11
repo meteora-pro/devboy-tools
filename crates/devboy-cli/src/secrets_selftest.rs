@@ -61,6 +61,7 @@ pub fn handle(args: SelftestArgs) -> Result<()> {
 
     findings.extend(resolution_findings(&config));
     findings.extend(profile_findings(&config));
+    findings.extend(trust_level_findings());
     findings.extend(storage_findings(&config));
     findings.extend(agent_protocol_findings());
 
@@ -218,6 +219,102 @@ fn profile_findings(config: &Config) -> Vec<Finding> {
     }
 
     out
+}
+
+/// Which §7 trust level is actually in force, and whether the
+/// prompt channel the level assumes exists.
+///
+/// ADR-024 §7 distinguishes its levels by who owns the input
+/// channel, so a report that names a level without naming the
+/// channel is describing an intention rather than a state.
+///
+/// This is also where the framework's own contradiction becomes
+/// visible: §7 wants the daemon reparented to init *and* prompting
+/// on its own terminal, and a reparented process has no terminal.
+/// A user finding that out here is far better off than one finding
+/// it out at their first unlock.
+fn trust_level_findings() -> Vec<Finding> {
+    let Some(status) = daemon_status() else {
+        return vec![Finding::new("trust level", "unknown — daemon not running")];
+    };
+
+    let level = status
+        .get("trust_level")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let channel = status
+        .get("prompt_channel")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let override_active = status
+        .get("insecure_override")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut out = vec![
+        Finding::new("trust level", level.to_owned()).with_note(match level {
+            "agent-parented" => {
+                "the daemon was started by its caller, which can therefore trace it and read the                  vault key out of its memory. The TOTP path is disabled here because a code would                  prove nothing."
+            }
+            "independent" => {
+                "the daemon runs outside its caller's process tree, so the caller cannot trace it                  — but it still runs as your user, so anything that can read your files can read                  the vault file."
+            }
+            "separate-uid" => {
+                "the daemon runs under its own account, so the vault file is not readable by your                  user directly."
+            }
+            _ => "the daemon did not report a recognised trust level",
+        }),
+    ];
+
+    let mut channel_finding = Finding::new(
+        "prompt channel",
+        match channel {
+            "terminal" => "the daemon's own terminal",
+            "none" => "none",
+            other => other,
+        },
+    );
+    if channel == "none" {
+        channel_finding = channel_finding.with_note(
+            "the daemon has no terminal, so it cannot ask you for a passphrase itself. This is              the normal state for a properly-installed service — the same startup check that              makes it trustworthy is what leaves it without a terminal. Unlock it from the              terminal it was started in, or export DEVBOY_VAULT_PASSPHRASE for an unattended              start.",
+        );
+    } else if let Some(daemon_tty) = status.get("terminal_id")
+        && !daemon_tty.is_null()
+        && let Some(mine) = current_terminal_id()
+        && daemon_tty == &serde_json::json!([mine.0, mine.1])
+    {
+        // Both on one terminal means whoever else has it open can
+        // read what is typed, which is the entire thing the move
+        // was supposed to prevent.
+        channel_finding = channel_finding.with_note(
+            "the daemon shares THIS terminal, so moving the prompt into it buys nothing —              anything attached here can read what you type.",
+        );
+    }
+    out.push(channel_finding);
+
+    if override_active {
+        out.push(
+            Finding::new("insecure override", "ACTIVE").with_note(
+                "DEVBOY_INSECURE_ALLOW_UNTRUSTED_DAEMON is set, so the daemon started despite                  failing its own trust check. Intended for tests; unset it for real use.",
+            ),
+        );
+    }
+
+    out
+}
+
+/// This process's controlling terminal, for comparison with the
+/// daemon's.
+#[cfg(unix)]
+fn current_terminal_id() -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata("/dev/tty").ok()?;
+    Some((meta.rdev(), meta.ino()))
+}
+
+#[cfg(not(unix))]
+fn current_terminal_id() -> Option<(u64, u64)> {
+    None
 }
 
 /// What the running daemon is *actually* enforcing, asked of the
@@ -540,6 +637,44 @@ mod tests {
         );
         assert!(candidates.value.contains("DEVBOY_GITLAB_TOKEN"));
         assert!(candidates.value.contains("GITLAB_TOKEN"));
+    }
+
+    /// With no daemon running, the trust level is unknown rather
+    /// than guessed — claiming a level nothing is enforcing would
+    /// be exactly the misreporting this command exists to avoid.
+    #[test]
+    fn trust_level_is_unknown_when_no_daemon_answers() {
+        let findings = trust_level_findings();
+        let level = findings
+            .iter()
+            .find(|f| f.label == "trust level")
+            .expect("trust level is reported");
+
+        // No daemon runs under the test harness.
+        assert!(
+            level.value.contains("unknown"),
+            "expected an honest unknown, got {}",
+            level.value
+        );
+    }
+
+    /// The command must not crash or hang when the daemon is
+    /// absent, which is the common case on a fresh machine.
+    #[test]
+    fn the_report_assembles_without_a_daemon() {
+        let config = Config::default();
+        let mut findings = Vec::new();
+        findings.extend(resolution_findings(&config));
+        findings.extend(profile_findings(&config));
+        findings.extend(trust_level_findings());
+        findings.extend(storage_findings(&config));
+        findings.extend(agent_protocol_findings());
+
+        assert!(findings.len() > 5, "the report should still say something");
+        assert!(
+            findings.iter().all(|f| !f.value.is_empty()),
+            "every finding needs a value"
+        );
     }
 
     /// A keyfile sharing a directory with the vault provides none
