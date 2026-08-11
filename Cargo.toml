@@ -105,6 +105,11 @@ sha2 = "0.10"
 # Regular expressions (used by secret patterns and provider plugins)
 regex = "1"
 
+# Multi-pattern search for the audit-log reverse scrub (ADR-024 §4).
+# Aho-Corasick gives O(text length) regardless of how many secrets are
+# provisioned, which matters because the scrub runs on every write.
+aho-corasick = "1"
+
 # Base64 encoding (used by the vault file format for binary payloads in TOML)
 base64 = "0.22"
 

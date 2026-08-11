@@ -61,6 +61,7 @@
 #![forbid(unsafe_code)]
 
 pub mod builtin;
+pub mod scrubber;
 pub mod user;
 
 pub use builtin::{BUILTINS, Builtin, builtins, find};
