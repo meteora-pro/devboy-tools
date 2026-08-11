@@ -40,9 +40,9 @@ use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 
 use crate::idle::{IdleClock, IdleTracker, UnlockWindow};
 use crate::rpc::{
-    BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INVALID_PARAMS, IO_ERROR, JsonRpcError,
+    BAD_TOTP, BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INVALID_PARAMS, IO_ERROR, JsonRpcError,
     JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, NO_MATCHING_ENVELOPE, NO_PROMPT_SURFACE,
-    VAULT_LOCKED, read_request, write_response,
+    REPLAYED_TOTP, TOTP_RATE_LIMITED, TOTP_UNAVAILABLE, VAULT_LOCKED, read_request, write_response,
 };
 
 /// Daemon-side state machine wrapping a vault.
@@ -251,6 +251,7 @@ impl VaultServer {
         let response = match method.as_str() {
             "vault.unlock" => self.handle_vault_unlock(req).await,
             "vault.request_unlock" => self.handle_vault_request_unlock(req),
+            "totp.unlock" => self.handle_totp_unlock(req),
             "vault.lock" => self.handle_vault_lock(req),
             "vault.status" => self.handle_vault_status(req),
             "secret.get" => self.handle_secret_get(req),
@@ -367,6 +368,65 @@ impl VaultServer {
         }
     }
 
+    /// Re-unlock with a TOTP code (ADR-024 §1).
+    ///
+    /// The refusals are deliberately four different codes rather
+    /// than one. "No secret resident" cannot be fixed by retrying,
+    /// "replayed" will succeed at the next step, "bad code" wants a
+    /// fresh look at the authenticator, and "rate limited" wants a
+    /// wait — an agent given a single "denied" retries the same
+    /// value forever.
+    fn handle_totp_unlock(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
+        let id = req.id.clone();
+        let params: TotpUnlockParams = match serde_json::from_value(req.params) {
+            Ok(p) => p,
+            Err(e) => return invalid_params(id, e),
+        };
+
+        // §7: a daemon the agent could ptrace has no TOTP path at
+        // all. Possession of a code would prove nothing when the
+        // agent can read the secret out of memory.
+        if !crate::provenance::startup_provenance()
+            .trust_level()
+            .allows_totp()
+        {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    TOTP_UNAVAILABLE,
+                    "this daemon was started by its caller, so a TOTP code would prove nothing —                      the shared secret is readable from its memory. Start the daemon as a service."
+                        .to_string(),
+                ),
+            );
+        }
+
+        let now = std::time::Instant::now();
+        let unix_seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        match self.totp.verify(&params.code, now, unix_seconds) {
+            Ok(()) => {
+                // A verified code extends the window; it does not
+                // create one longer than the user's ceiling.
+                let granted = self
+                    .idle
+                    .window
+                    .resolve(params.duration_seconds.map(Duration::from_secs));
+                self.idle.record_unlock();
+                JsonRpcResponse::ok(
+                    id,
+                    json!({
+                        "state": "unlocked",
+                        "granted_seconds": granted.as_secs(),
+                    }),
+                )
+            }
+            Err(denial) => JsonRpcResponse::err(id, totp_denial_to_rpc(denial)),
+        }
+    }
+
     fn handle_vault_lock(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         // `vault` is dropped here, which zeroizes the SecretBox per
         // ADR-023 §3.3 "eager re-lock".
@@ -388,6 +448,17 @@ impl VaultServer {
         } else {
             "locked"
         };
+        let trust = crate::provenance::startup_provenance().trust_level();
+
+        // `totp` drops out of the list when there is no resident
+        // secret OR when the daemon is agent-parented — in the
+        // second case a code proves nothing, because the agent can
+        // read the secret out of the daemon's memory.
+        let mut available_methods = vec!["passphrase"];
+        if self.totp.is_available() && trust.allows_totp() {
+            available_methods.push("totp");
+        }
+
         let window = self.window();
         JsonRpcResponse::ok(
             req.id,
@@ -396,6 +467,8 @@ impl VaultServer {
                 "unlock_ttl_seconds": window.unlock_ttl.as_secs(),
                 "max_unlock_ttl_seconds": window.max_unlock_ttl.as_secs(),
                 "idle_relock_seconds": window.idle_relock.map(|d| d.as_secs()),
+                "available_methods": available_methods,
+                "trust_level": trust.as_str(),
             }),
         )
     }
@@ -697,6 +770,46 @@ struct PutParams {
     fresh_unlock: UnlockParams,
 }
 
+/// Parameters for `totp.unlock`.
+#[derive(Debug, Deserialize)]
+struct TotpUnlockParams {
+    /// The six-digit code from the user's authenticator.
+    code: String,
+    /// Requested unlock length. Clamped to the configured ceiling —
+    /// a per-call argument does not override the user's standing
+    /// decision.
+    #[serde(default)]
+    duration_seconds: Option<u64>,
+}
+
+/// Map a [`TotpDenial`] onto its wire error.
+fn totp_denial_to_rpc(denial: crate::totp_session::TotpDenial) -> JsonRpcError {
+    use crate::totp_session::TotpDenial;
+    match denial {
+        TotpDenial::Unavailable => JsonRpcError::new(
+            TOTP_UNAVAILABLE,
+            "no TOTP secret is resident: unlock the vault with its passphrase first, or enrol an              authenticator with `devboy secrets vault add-totp`",
+        ),
+        TotpDenial::BadCode => JsonRpcError::new(
+            BAD_TOTP,
+            "that code did not verify; check the authenticator and try the current one",
+        ),
+        TotpDenial::Replayed => JsonRpcError::new(
+            REPLAYED_TOTP,
+            "that code was already used; wait for the next one to appear",
+        ),
+        TotpDenial::RateLimited {
+            retry_after_seconds,
+        } => JsonRpcError {
+            code: TOTP_RATE_LIMITED,
+            message: format!(
+                "too many attempts; the TOTP path is closed for {retry_after_seconds} seconds"
+            ),
+            data: Some(json!({ "retry_after_seconds": retry_after_seconds })),
+        },
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RotateParams {
     path: String,
@@ -896,6 +1009,105 @@ mod tests {
         assert_eq!(result["unlock_ttl_seconds"], 900);
         assert_eq!(result["max_unlock_ttl_seconds"], 3600);
         assert_eq!(result["idle_relock_seconds"], 300);
+    }
+
+    /// A restarted daemon must SAY the TOTP path is gone, not fail
+    /// silently — the acceptance criterion for Ф6c/Ф6d.
+    #[tokio::test]
+    async fn totp_unlock_without_a_resident_secret_is_explicit() {
+        let (_dir, mut server) = fresh_vault("p");
+
+        let r = server
+            .handle_request(req(1, "totp.unlock", json!({"code": "123456"})))
+            .await;
+        let err = r.error.expect("no secret is resident");
+
+        assert!(
+            err.code == TOTP_UNAVAILABLE || err.code == BAD_TOTP,
+            "unexpected code {}",
+            err.code
+        );
+        assert!(
+            !err.message.is_empty(),
+            "the refusal must explain itself rather than being bare"
+        );
+    }
+
+    /// The four refusals must stay four codes. Collapsing them is
+    /// how an agent ends up retrying a value that can never work.
+    #[test]
+    fn each_totp_denial_maps_to_its_own_code() {
+        use crate::totp_session::TotpDenial;
+
+        let codes: Vec<i32> = [
+            TotpDenial::Unavailable,
+            TotpDenial::BadCode,
+            TotpDenial::Replayed,
+            TotpDenial::RateLimited {
+                retry_after_seconds: 60,
+            },
+        ]
+        .into_iter()
+        .map(|d| totp_denial_to_rpc(d).code)
+        .collect();
+
+        let unique: std::collections::BTreeSet<i32> = codes.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            codes.len(),
+            "every denial needs its own code: {codes:?}"
+        );
+    }
+
+    /// A rate-limited refusal carries how long to wait, so the
+    /// caller does not have to guess.
+    #[test]
+    fn a_rate_limited_denial_says_how_long_to_wait() {
+        use crate::totp_session::TotpDenial;
+
+        let err = totp_denial_to_rpc(TotpDenial::RateLimited {
+            retry_after_seconds: 42,
+        });
+        assert_eq!(err.code, TOTP_RATE_LIMITED);
+        assert_eq!(
+            err.data.expect("data payload")["retry_after_seconds"],
+            42,
+            "the wait has to be machine-readable, not only in the message"
+        );
+    }
+
+    /// `available_methods` is the agent's view of what it may try.
+    /// Offering `totp` when no secret is resident sends it down a
+    /// path that cannot work.
+    #[tokio::test]
+    async fn status_offers_totp_only_when_a_secret_is_resident() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        let r = server
+            .handle_request(req(2, "vault.status", Value::Null))
+            .await;
+        let result = r.result.expect("status");
+        let methods = result["available_methods"].as_array().expect("methods");
+
+        assert!(
+            methods.iter().any(|m| m == "passphrase"),
+            "passphrase is always available"
+        );
+        assert!(
+            !methods.iter().any(|m| m == "totp"),
+            "no secret is enrolled, so totp must not be offered: {methods:?}"
+        );
+        assert!(
+            result["trust_level"].is_string(),
+            "status should report the trust level"
+        );
     }
 
     /// The check the whole TOTP scheme rests on.

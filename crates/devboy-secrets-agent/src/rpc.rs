@@ -72,6 +72,32 @@ pub const DAEMON_UNTRUSTED: i32 = -32005;
 /// depend on one is chosen.
 pub const NO_PROMPT_SURFACE: i32 = -32006;
 
+/// ADR-024 §1: no TOTP secret is resident, so a code cannot be
+/// checked at all.
+///
+/// The daemon has not been unlocked with a passphrase this boot, or
+/// none is enrolled. Distinct from a wrong code because retrying
+/// cannot help — the caller needs a passphrase unlock first.
+pub const TOTP_UNAVAILABLE: i32 = -32007;
+
+/// The code did not verify.
+pub const BAD_TOTP: i32 = -32008;
+
+/// The code verified but its time step was already used
+/// (RFC 6238 §5.2).
+///
+/// Separate from [`BAD_TOTP`] because the caller's situation is
+/// different: the code was real, and waiting for the next step will
+/// work. A shared "bad code" would have an agent retrying the same
+/// value.
+pub const REPLAYED_TOTP: i32 = -32009;
+
+/// Too many attempts; the TOTP path is shut for a cooldown.
+///
+/// Carries `retry_after_seconds` in the error data so a caller can
+/// wait the right amount rather than guessing.
+pub const TOTP_RATE_LIMITED: i32 = -32010;
+
 // =============================================================================
 // Wire types
 // =============================================================================
