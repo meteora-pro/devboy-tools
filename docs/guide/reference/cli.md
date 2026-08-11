@@ -59,6 +59,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
 * [`devboy secrets agent install`↴](#devboy-secrets-agent-install)
 * [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
+* [`devboy secrets agent unlock`↴](#devboy-secrets-agent-unlock)
 * [`devboy secrets ui`↴](#devboy-secrets-ui)
 * [`devboy secrets rotate`↴](#devboy-secrets-rotate)
 * [`devboy secrets catalog`↴](#devboy-secrets-catalog)
@@ -884,6 +885,7 @@ Manage the local secret-store agent daemon (ADR-023 §3.3)
 * `start` — Spawn the agent if it isn't already running. Idempotent — no-op when the socket is already live
 * `install` — Install a per-user service unit so the daemon starts at login and respawns on failure. macOS writes a launchd plist at `~/Library/LaunchAgents/dev.devboy.secrets.plist`; Linux writes a systemd-user unit at `~/.config/systemd/user/devboy-secrets-agent.service`. After install: verify with `launchctl print gui/$(id -u)/dev.devboy.secrets` (macOS) or `systemctl --user status devboy-secrets-agent.service` (Linux)
 * `uninstall` — Stop the user service (if loaded) and remove the unit file written by `install`. Idempotent — running it twice is fine
+* `unlock` — Ask the daemon to unlock itself (ADR-024 §7)
 
 
 
@@ -936,6 +938,20 @@ Stop the user service (if loaded) and remove the unit file written by `install`.
 * `--no-unload` — Skip the platform service-manager teardown step (just remove the unit file). The next reboot will pick up the removal anyway
 
   Default value: `false`
+
+
+
+## `devboy secrets agent unlock`
+
+Ask the daemon to unlock itself (ADR-024 §7).
+
+This command never sees the passphrase. It sends a request carrying no secret material, the daemon collects the passphrase on a channel of its own, and this side polls until the vault opens. A process the agent can tamper with is a poor place to type a passphrase, so it does not.
+
+**Usage:** `devboy secrets agent unlock [OPTIONS]`
+
+###### **Options:**
+
+* `--timeout-secs <TIMEOUT_SECS>` — How long to wait for the unlock, in seconds. Defaults to 120 — long enough to find a phone, short enough not to hang a script forever
 
 
 

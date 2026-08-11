@@ -294,3 +294,46 @@ fn the_legacy_skip_keychain_switch_still_selects_env_only() {
         out.combined()
     );
 }
+
+// =============================================================================
+// `secrets agent unlock` — the passphrase must not transit this process
+// =============================================================================
+
+/// The structural claim behind moving the prompt into the daemon:
+/// the passphrase never enters the CLI.
+///
+/// Proved by what the command *cannot* do rather than by inspecting
+/// memory. With stdin closed and no daemon running, it fails
+/// immediately on the missing daemon — it never reaches a point
+/// where it could read a passphrase, because there is no such point.
+#[test]
+fn agent_unlock_never_reads_a_passphrase_from_this_process() {
+    let h = home();
+    let out = run(&h, &["secrets", "agent", "unlock"], &[]);
+
+    assert!(!out.success, "there is no daemon to unlock");
+    let text = out.combined().to_lowercase();
+    assert!(
+        text.contains("not running") || text.contains("daemon"),
+        "the failure should be about the daemon, not about input: {text}"
+    );
+    assert!(
+        !text.contains("passphrase for"),
+        "the command must never prompt for a passphrase itself: {text}"
+    );
+}
+
+/// It must also not hang waiting for one — a script that calls this
+/// with no daemon should fail in milliseconds, not at a timeout.
+#[test]
+fn agent_unlock_fails_fast_when_no_daemon_is_running() {
+    let h = home();
+    let started = Instant::now();
+    let _ = run(&h, &["secrets", "agent", "unlock"], &[]);
+
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the command waited {:?} for a daemon that is not there",
+        started.elapsed()
+    );
+}

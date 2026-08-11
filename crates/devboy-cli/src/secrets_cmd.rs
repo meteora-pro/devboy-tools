@@ -381,6 +381,24 @@ pub enum AgentCommands {
     /// Stop the user service (if loaded) and remove the unit file
     /// written by `install`. Idempotent — running it twice is fine.
     Uninstall(AgentUninstallArgs),
+    /// Ask the daemon to unlock itself (ADR-024 §7).
+    ///
+    /// This command never sees the passphrase. It sends a request
+    /// carrying no secret material, the daemon collects the
+    /// passphrase on a channel of its own, and this side polls
+    /// until the vault opens. A process the agent can tamper with
+    /// is a poor place to type a passphrase, so it does not.
+    Unlock(AgentUnlockArgs),
+}
+
+/// Flags for `devboy secrets agent unlock`.
+#[derive(Args, Debug, Default)]
+pub struct AgentUnlockArgs {
+    /// How long to wait for the unlock, in seconds. Defaults to 120
+    /// — long enough to find a phone, short enough not to hang a
+    /// script forever.
+    #[arg(long)]
+    pub timeout_secs: Option<u64>,
 }
 
 /// Flags for `devboy secrets agent start`.
@@ -507,6 +525,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             AgentCommands::Start(args) => agent_start(args).await,
             AgentCommands::Install(args) => agent_install(args),
             AgentCommands::Uninstall(args) => agent_uninstall(args),
+            AgentCommands::Unlock(args) => agent_unlock(args).await,
         },
         SecretsCommands::Ui(args) => crate::secrets_ui::handle(args).await,
         SecretsCommands::Rotate(args) => crate::secrets_rotate::handle(args).await,
@@ -1635,6 +1654,73 @@ async fn agent_status() -> Result<()> {
         Err(e) => println!("binary:       <not found> ({e})"),
     }
     Ok(())
+}
+
+/// Default wait for `agent unlock`.
+const UNLOCK_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How often to ask whether the vault has opened.
+///
+/// There is no callback by design (ADR-024 §7): the daemon owes
+/// nothing to a process it does not trust, so this side asks rather
+/// than being told.
+const UNLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Ask the daemon to unlock itself, then wait for it.
+///
+/// The passphrase never enters this process. The request carries no
+/// secret material — there is no field for one — and nothing here
+/// reads stdin, so there is no path by which a passphrase could
+/// arrive even if a caller tried to supply it.
+async fn agent_unlock(args: AgentUnlockArgs) -> Result<()> {
+    let client = devboy_secrets_agent::AgentClient::new()
+        .context("could not resolve the agent socket path")?;
+
+    anyhow::ensure!(
+        client.is_running(),
+        "the secret daemon is not running. Start it with `devboy secrets agent start`, or          install it as a service with `devboy secrets agent install`."
+    );
+
+    // Already open is success, not an error — and re-asking would
+    // make the user type a passphrase for nothing.
+    if let Ok(status) = client.status()
+        && status.get("state").and_then(|v| v.as_str()) == Some("unlocked")
+    {
+        println!("vault is already unlocked");
+        return Ok(());
+    }
+
+    println!("asking the daemon to unlock — answer the prompt where it is running");
+
+    match client.call("vault.request_unlock", serde_json::Value::Null) {
+        Ok(_) => {}
+        Err(devboy_secrets_agent::ClientError::Daemon(e)) => {
+            // The daemon's refusal already explains itself; passing
+            // it through beats wrapping it in a vaguer one.
+            anyhow::bail!("{}", e.message);
+        }
+        Err(e) => anyhow::bail!("could not reach the secret daemon: {e}"),
+    }
+
+    let timeout = args
+        .timeout_secs
+        .map(Duration::from_secs)
+        .unwrap_or(UNLOCK_TIMEOUT);
+    let deadline = std::time::Instant::now() + timeout;
+
+    while std::time::Instant::now() < deadline {
+        if let Ok(status) = client.status()
+            && status.get("state").and_then(|v| v.as_str()) == Some("unlocked")
+        {
+            println!("vault unlocked");
+            return Ok(());
+        }
+        tokio::time::sleep(UNLOCK_POLL_INTERVAL).await;
+    }
+
+    anyhow::bail!(
+        "the vault was still locked after {timeout:?}. The daemon may have had nowhere to show          the prompt — check `devboy secrets selftest` for its prompt channel."
+    )
 }
 
 async fn agent_start(args: AgentStartArgs) -> Result<()> {
