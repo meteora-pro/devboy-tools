@@ -342,6 +342,25 @@ only mitigation for the "agent waits for a legitimate unlock" attack. A user may
 still override any individual value; the profiles exist so that the *coherent*
 combinations are one setting away rather than four.
 
+**Both profiles require a human at a surface the daemon can reach.** `strict`
+depends on rendering an approval per access, so it is unavailable where the
+daemon has no way to ask — a headless server with no TTY and no display. Such
+a deployment must choose deliberately between `convenient` (accepting that an
+unlock covers everything until it expires) and the env-only mode of §6 (no
+vault at all). Selecting `strict` where no prompt surface exists must fail at
+configuration time with that explanation, not at the first secret access in the
+middle of a job.
+
+**TOTP (§1) belongs to `convenient`.** The two sub-decisions interact in a way
+worth stating plainly, because the naive reading is backwards: under
+`convenient` the vault re-locks roughly once a working day, so a TOTP re-unlock
+costs one glance at a phone and is exactly the right instrument. Under `strict`
+the vault re-locks every 15 minutes, and a TOTP challenge at that cadence is
+unusable — that profile's answer to a re-lock is a fresh passphrase entry
+through the §7 prompt, or simply doing the work in a shorter session. TOTP
+enrollment is therefore recommended with `convenient` and neither required nor
+prohibited with `strict`.
+
 The tradeoff is stated openly: a longer window means `vault_key` resides in
 memory longer, widening the surface if the host is compromised while unlocked.
 This is the user's explicit choice, bounded by `max_unlock_ttl`, and it is
@@ -357,13 +376,25 @@ Two new tools join the `secrets_*` family registered in
 ```
 secrets_unlock(totp: string, duration?: number)   // duration in seconds, ≤ max_unlock_ttl
   → { unlocked: true, expires_at: timestamp }
-  | { error: "BadTotp" | "RateLimited" | "WrongMethod" }
+  | { error: "BadTotp" | "ReplayedCode" | "RateLimited"
+            | "TotpUnavailable" | "NotAvailableInCiMode" }
   // The agent relays a TOTP the user typed in chat. The daemon verifies
-  // against the stored TOTP secret (constant-time, ±1 step) and unlocks for
-  // `duration ?? unlock_ttl`, bounded by max_unlock_ttl.
+  // against the in-memory TOTP secret (constant-time, ±1 step, spent steps
+  // rejected) and unlocks for `duration ?? unlock_ttl`, bounded by
+  // max_unlock_ttl.
+  //
+  // TotpUnavailable is the case the agent will actually hit: the daemon
+  // restarted, so totp_secret is no longer resident and only a passphrase can
+  // open the vault. It is a distinct error precisely so the agent stops asking
+  // for codes the daemon cannot check, and tells the user to unlock through
+  // the §7 prompt instead. The reply carries the reason
+  // ("no TOTP session this boot" / "TOTP not enrolled") but no further detail.
 
 secrets_status()
   → { state: "locked" | "unlocked", expires_at?, available_methods: [...] }
+  // available_methods reflects what will actually work right now — it omits
+  // "totp" when no TOTP session is resident, so a well-behaved agent can check
+  // before prompting the user for a code that cannot succeed.
 
 secrets_validate(path: string, liveness?: boolean)
   → { format: "ok" | "invalid", liveness?: "ok" | "invalid" | "unreachable", expires_at? }
@@ -780,6 +811,22 @@ denied outright.
   allow-list of client UIDs; keeping the equality check would either lock out
   the legitimate user or, if "fixed" by widening it, authenticate everyone.
 
+  **File ownership follows the daemon, not the user.** A separate UID is not
+  merely a socket change: the daemon must be able to read the vault, and the
+  user must *not* be able to read it directly, or the split buys nothing. The
+  vault file, the audit log, and any keyfile (§6) therefore move to storage
+  owned by the service account — `/var/lib/devboy-secrets/<user>/` or an
+  equivalent per-user subdirectory with mode `0700` — rather than living under
+  `$HOME` where the agent can read them. This is the largest practical cost of
+  level 1 and the reason level 2 exists: it changes install layout, requires
+  privileged setup, and needs a migration for existing vaults.
+
+  **Multi-user hosts** run one daemon instance per user account under distinct
+  service UIDs, or a single daemon that partitions vaults by requesting UID and
+  never serves one user's paths to another. The former is simpler and is
+  recommended; the latter concentrates every user's `vault_key` in one process
+  and is not.
+
 **Level 2 — same UID, independent lifecycle (fallback).** Where a service
 account cannot be created (unprivileged install, per-user setup), the daemon
 runs as the user but is started by systemd user unit / launchd / login shell —
@@ -976,8 +1023,9 @@ band.
 CI, in non-interactive agent runs (scheduled tasks), and in terminal
 configurations where a popup is unwelcome. The agent-mediated TOTP path is the
 in-band option that makes long agentic sessions practical; it is opt-in (a user
-who wants strict agent-bypassing unlock simply does not enroll TOTP and keeps
-the short idle window).
+who wants strictly agent-bypassing unlock does not enroll TOTP and selects the
+`strict` profile of §2, where the short window and per-call approval reinstate
+exactly this alternative's posture).
 
 ### Alternative 2: Passphrase relay instead of TOTP
 
