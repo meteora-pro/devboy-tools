@@ -118,6 +118,25 @@ impl UnlockWindow {
         }
     }
 
+    /// Build the window the user actually configured.
+    ///
+    /// The profile supplies the defaults and the explicit
+    /// `secrets.*` keys override them — which is what
+    /// [`Config::unlock_ttl_seconds`](devboy_core::config::Config::unlock_ttl_seconds)
+    /// and its siblings already resolve.
+    ///
+    /// Until this existed the daemon ran on
+    /// [`UnlockWindow::default`] no matter what the user had set,
+    /// so choosing the `strict` profile changed nothing about how
+    /// long an unlock lasted.
+    pub fn from_config(config: &devboy_core::config::Config) -> Self {
+        Self::from_seconds(
+            config.unlock_ttl_seconds(),
+            config.max_unlock_ttl_seconds(),
+            config.idle_relock_seconds(),
+        )
+    }
+
     /// Resolve how long a specific unlock should last.
     ///
     /// A caller may request a longer window ("I am leaving a task
@@ -758,5 +777,68 @@ mod tests {
     #[test]
     fn sigterm_grace_matches_adr_023() {
         assert_eq!(SIGTERM_GRACE, Duration::from_secs(10));
+    }
+
+    /// Choosing `strict` has to change the window the daemon runs.
+    ///
+    /// It did not, for the whole epic: `UnlockWindow::from_config`
+    /// did not exist and the server always built from
+    /// `UnlockWindow::default()`, so this assertion is the wire that
+    /// was missing rather than a restatement of the profile table.
+    #[test]
+    fn the_strict_profile_reaches_the_window_the_daemon_enforces() {
+        use devboy_core::config::Config;
+
+        let mut config = Config::default();
+        config.set("secrets.profile", "strict").unwrap();
+
+        let window = UnlockWindow::from_config(&config);
+
+        assert_eq!(
+            window.unlock_ttl,
+            UnlockWindow::strict().unlock_ttl,
+            "the strict profile's window must survive the trip through config"
+        );
+        assert_ne!(
+            window.unlock_ttl,
+            UnlockWindow::convenient().unlock_ttl,
+            "if strict and convenient produce the same window, the profile is doing nothing"
+        );
+        assert!(
+            window.idle_relock.is_some(),
+            "strict promises idle re-lock; a window without it is not strict"
+        );
+    }
+
+    #[test]
+    fn the_default_profile_yields_the_convenient_window() {
+        use devboy_core::config::Config;
+
+        let window = UnlockWindow::from_config(&Config::default());
+        assert_eq!(window.unlock_ttl, UnlockWindow::convenient().unlock_ttl);
+        assert_eq!(
+            window.max_unlock_ttl,
+            UnlockWindow::convenient().max_unlock_ttl
+        );
+    }
+
+    /// An explicit key beats the profile's default, and the ceiling
+    /// still wins over both — a user cannot widen their own limit by
+    /// setting a larger TTL.
+    #[test]
+    fn explicit_settings_override_the_profile_but_not_the_ceiling() {
+        use devboy_core::config::Config;
+
+        let mut config = Config::default();
+        config.set("secrets.max_unlock_ttl_seconds", "600").unwrap();
+        config.set("secrets.unlock_ttl_seconds", "99999").unwrap();
+
+        let window = UnlockWindow::from_config(&config);
+        assert_eq!(window.max_unlock_ttl, Duration::from_secs(600));
+        assert_eq!(
+            window.unlock_ttl,
+            Duration::from_secs(600),
+            "a TTL above the ceiling must clamp, not raise the ceiling"
+        );
     }
 }

@@ -176,7 +176,8 @@ fn profile_findings(config: &Config) -> Vec<Finding> {
                 config.unlock_ttl_seconds(),
                 config.max_unlock_ttl_seconds()
             ),
-        ),
+        )
+        .with_note("as configured — see `window in force` for what the daemon is enforcing"),
         Finding::new(
             "idle re-lock",
             config
@@ -185,6 +186,13 @@ fn profile_findings(config: &Config) -> Vec<Finding> {
                 .unwrap_or_else(|| "off".to_string()),
         ),
     ];
+
+    // The configured window and the enforced one are different
+    // facts, and they diverge for an ordinary reason: the daemon
+    // reads config once, at startup. Printing the configured number
+    // alone is how this command would mislead someone into thinking
+    // a tightened policy had taken effect.
+    out.push(enforced_window_finding(config));
 
     // `strict` promises per-call approval, which needs someone to
     // ask. Saying so here is the point of the command.
@@ -210,6 +218,84 @@ fn profile_findings(config: &Config) -> Vec<Finding> {
     }
 
     out
+}
+
+/// What the running daemon is *actually* enforcing, asked of the
+/// daemon rather than inferred from config.
+///
+/// The daemon reads config once at startup, so a config edit does
+/// not reach a daemon that is already running. Reporting the
+/// configured number as if it were live is exactly how this command
+/// would mislead the person it exists to inform.
+fn enforced_window_finding(config: &Config) -> Finding {
+    let Some(status) = daemon_status() else {
+        return Finding::new("window in force", "unknown — daemon not running").with_note(
+            "nothing is enforcing a window right now; it takes effect when the daemon starts",
+        );
+    };
+
+    let live_ttl = status.get("unlock_ttl_seconds").and_then(|v| v.as_u64());
+    let live_ceiling = status
+        .get("max_unlock_ttl_seconds")
+        .and_then(|v| v.as_u64());
+
+    let (Some(live_ttl), Some(live_ceiling)) = (live_ttl, live_ceiling) else {
+        return Finding::new("window in force", "unknown — daemon did not report one")
+            .with_note("the daemon predates this reporting; restart it to see the live window");
+    };
+
+    let configured_ttl = config.unlock_ttl_seconds();
+    let configured_ceiling = config.max_unlock_ttl_seconds();
+    let matches = live_ttl == configured_ttl && live_ceiling == configured_ceiling;
+
+    let finding = Finding::new(
+        "window in force",
+        format!("{live_ttl}s (ceiling {live_ceiling}s)"),
+    );
+
+    if matches {
+        finding
+    } else {
+        finding.with_note(format!(
+            "DIFFERS from the configured {configured_ttl}s / {configured_ceiling}s — the daemon \
+             read its policy at startup and has not seen the change. Restart it with `devboy \
+             secrets agent start` for the new window to take effect."
+        ))
+    }
+}
+
+/// Ask the daemon for its status, or `None` if it is not answering.
+fn daemon_status() -> Option<serde_json::Value> {
+    #[cfg(unix)]
+    {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixStream;
+
+        let socket = devboy_secrets_agent::default_socket_path().ok()?;
+        let stream = UnixStream::connect(socket).ok()?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .ok();
+
+        let mut writer = stream.try_clone().ok()?;
+        writeln!(
+            writer,
+            r#"{{"jsonrpc":"2.0","id":1,"method":"vault.status","params":null}}"#
+        )
+        .ok()?;
+        writer.flush().ok()?;
+        drop(writer);
+
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).ok()?;
+        let response: serde_json::Value = serde_json::from_str(&line).ok()?;
+        response.get("result").cloned()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = config;
+        None
+    }
 }
 
 /// Where things live on disk, and whether the split that makes a

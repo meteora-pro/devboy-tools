@@ -43,8 +43,8 @@ use std::sync::Arc;
 use devboy_secrets_agent::rpc::{DAEMON_UNTRUSTED, FramingError, JsonRpcError, PARSE_ERROR};
 #[cfg(unix)]
 use devboy_secrets_agent::{
-    AgentListener, JsonRpcResponse, VaultServer, default_socket_path, install_sigterm_handler,
-    read_request, write_response,
+    AgentListener, JsonRpcResponse, VaultServer, default_socket_path, idle::UnlockWindow,
+    install_sigterm_handler, read_request, write_response,
 };
 #[cfg(unix)]
 use serde_json::Value;
@@ -121,12 +121,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         socket_path.display()
     );
 
+    // Read the user's unlock policy. Until this existed the daemon
+    // ran on the default window regardless of what was configured,
+    // so `secrets.profile = strict` silently changed nothing.
+    //
+    // A missing or unreadable config is not fatal — the defaults are
+    // the `convenient` profile, which is what a user with no config
+    // expects anyway.
+    let config = devboy_core::config::Config::load().unwrap_or_default();
+    let window = UnlockWindow::from_config(&config);
+    eprintln!(
+        "devboy-secrets-agent: unlock window {}s (ceiling {}s, idle re-lock {})",
+        window.unlock_ttl.as_secs(),
+        window.max_unlock_ttl.as_secs(),
+        window
+            .idle_relock
+            .map(|d| format!("{}s", d.as_secs()))
+            .unwrap_or_else(|| "off".to_owned()),
+    );
+
     let listener = AgentListener::bind(&socket_path).await?;
-    let server = Arc::new(Mutex::new(VaultServer::new(vault_path)));
+    let server = Arc::new(Mutex::new(VaultServer::with_window(vault_path, window)));
 
     let shutdown = Arc::new(Notify::new());
     let shutdown_signal = shutdown.clone();
     let server_for_shutdown = server.clone();
+    let window_for_shutdown = window;
     tokio::spawn(async move {
         install_sigterm_handler(move || async move {
             // Drop the cached vault (zeroizes the wrap key inside
@@ -134,7 +154,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // fresh, locked instance pointing at the same path.
             let mut s = server_for_shutdown.lock().await;
             let path = s.vault_path().to_path_buf();
-            *s = VaultServer::new(path);
+            // Rebuild with the same window: a re-lock must not
+            // quietly widen the user's policy back to the default.
+            *s = VaultServer::with_window(path, window_for_shutdown);
             shutdown_signal.notify_waiters();
         })
         .await;

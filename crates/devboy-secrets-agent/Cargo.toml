@@ -26,6 +26,7 @@ name = "devboy_secrets_agent"
 path = "src/lib.rs"
 
 [dependencies]
+devboy-core.workspace = true
 devboy-vault-crypto.workspace = true
 thiserror.workspace = true
 serde.workspace = true

@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 
-use crate::idle::{IdleClock, IdleTracker};
+use crate::idle::{IdleClock, IdleTracker, UnlockWindow};
 use crate::rpc::{
     BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INVALID_PARAMS, IO_ERROR, JsonRpcError,
     JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, NO_MATCHING_ENVELOPE, VAULT_LOCKED,
@@ -80,14 +80,43 @@ impl VaultServer {
         }
     }
 
-    /// Build a server with a custom idle-timeout duration. Honours
-    /// `~/.devboy/config.toml`-driven configuration when wired up.
+    /// Build a server with a custom idle-timeout duration.
+    ///
+    /// Leaves the overall unlock window at its default — use
+    /// [`Self::with_window`] to honour the user's configuration.
     pub fn with_idle_timeout(vault_path: PathBuf, idle_timeout: Duration) -> Self {
         Self {
             vault_path,
             vault: None,
             idle: IdleTracker::with_timeout(idle_timeout),
         }
+    }
+
+    /// Build a server around the unlock window the user configured
+    /// (ADR-024 §2).
+    ///
+    /// This is the constructor the daemon uses. Without it the
+    /// `secrets.profile` setting and every `*_ttl_seconds` key were
+    /// inert: the server always built its tracker from
+    /// [`UnlockWindow::default`], so a user who chose `strict` and
+    /// expected a fifteen-minute window kept the eight-hour one —
+    /// and `secrets selftest` reported the configured number as
+    /// though it were in force.
+    pub fn with_window(vault_path: PathBuf, window: UnlockWindow) -> Self {
+        Self {
+            vault_path,
+            vault: None,
+            idle: IdleTracker::with_window(window, std::sync::Arc::new(crate::idle::SystemClock)),
+        }
+    }
+
+    /// The unlock window this server is enforcing.
+    ///
+    /// Exposed so the daemon can report what is *actually* in
+    /// force, rather than leaving callers to re-read the config and
+    /// assume it arrived.
+    pub fn window(&self) -> &UnlockWindow {
+        &self.idle.window
     }
 
     /// Build a server with a caller-supplied clock. Used by tests
@@ -238,13 +267,30 @@ impl VaultServer {
         JsonRpcResponse::ok(req.id, json!({"locked": true}))
     }
 
+    /// Report lock state **and the window actually being enforced**.
+    ///
+    /// The window is on the wire so a caller can tell what the
+    /// daemon is doing rather than re-reading the config and
+    /// assuming it arrived. Those two disagreed silently until the
+    /// daemon started reading config at all, and a tool that
+    /// reports the intended value as the real one is worse than a
+    /// tool that reports nothing.
     fn handle_vault_status(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         let state = if self.is_unlocked() {
             "unlocked"
         } else {
             "locked"
         };
-        JsonRpcResponse::ok(req.id, json!({"state": state}))
+        let window = self.window();
+        JsonRpcResponse::ok(
+            req.id,
+            json!({
+                "state": state,
+                "unlock_ttl_seconds": window.unlock_ttl.as_secs(),
+                "max_unlock_ttl_seconds": window.max_unlock_ttl.as_secs(),
+                "idle_relock_seconds": window.idle_relock.map(|d| d.as_secs()),
+            }),
+        )
     }
 
     // -- secret.* handlers -------------------------------------------------
@@ -648,6 +694,51 @@ mod tests {
             .handle_request(req(3, "vault.status", Value::Null))
             .await;
         assert_eq!(r.result.unwrap()["state"], "unlocked");
+    }
+
+    /// `vault.status` must report the window the daemon is really
+    /// enforcing, so a caller can tell it apart from the one in the
+    /// config file. Those two disagree whenever the config changed
+    /// after the daemon started, and `secrets selftest` was
+    /// presenting the configured number as the live one.
+    #[tokio::test]
+    async fn vault_status_reports_the_window_actually_in_force() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let vault_path = dir.path().join("vault.dvb");
+        Vault::create(&vault_path, fast_init("p")).expect("create");
+
+        let window = UnlockWindow {
+            unlock_ttl: Duration::from_secs(900),
+            max_unlock_ttl: Duration::from_secs(3600),
+            idle_relock: Some(Duration::from_secs(300)),
+        };
+        let mut server = VaultServer::with_window(vault_path, window);
+
+        let r = server
+            .handle_request(req(1, "vault.status", Value::Null))
+            .await;
+        let result = r.result.expect("status has a result");
+
+        assert_eq!(result["unlock_ttl_seconds"], 900);
+        assert_eq!(result["max_unlock_ttl_seconds"], 3600);
+        assert_eq!(result["idle_relock_seconds"], 300);
+    }
+
+    /// The default constructors must not silently claim the strict
+    /// window — otherwise the report would be as misleading as the
+    /// config-only one it replaces.
+    #[tokio::test]
+    async fn a_default_server_reports_the_default_window() {
+        let (_dir, mut server) = fresh_vault("p");
+        let r = server
+            .handle_request(req(1, "vault.status", Value::Null))
+            .await;
+        let result = r.result.expect("status has a result");
+
+        assert_eq!(
+            result["unlock_ttl_seconds"].as_u64().unwrap(),
+            UnlockWindow::default().unlock_ttl.as_secs()
+        );
     }
 
     #[tokio::test]
