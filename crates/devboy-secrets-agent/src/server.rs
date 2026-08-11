@@ -250,6 +250,15 @@ impl VaultServer {
     /// as above: a failed write should not turn a working secret
     /// lookup into a failed one.
     fn audit(&mut self, action: &str, path: &str, actor: &str) {
+        self.audit_with_detail(action, path, actor, None);
+    }
+
+    /// Append a record carrying free-text detail.
+    ///
+    /// `detail` goes through the scrubber on the way in — that is
+    /// the only way to obtain the type `record` accepts, so the
+    /// redaction cannot be skipped by a caller in a hurry.
+    fn audit_with_detail(&mut self, action: &str, path: &str, actor: &str, detail: Option<&str>) {
         let Some(vault) = self.vault.as_ref() else {
             return;
         };
@@ -259,7 +268,8 @@ impl VaultServer {
         let Some(writer) = self.audit.as_mut() else {
             return;
         };
-        if let Err(e) = writer.record(&key, action, path, actor, None) {
+        let scrubbed = detail.map(|d| writer.scrub(d));
+        if let Err(e) = writer.record(&key, action, path, actor, scrubbed) {
             tracing::warn!(error = %e, action, path, "could not append an audit record");
         }
     }
@@ -360,10 +370,12 @@ impl VaultServer {
             Ok(p) => p,
             Err(e) => return invalid_params(id, e),
         };
+        let kind_label = params.kind.clone();
         let unlock = match params.into_unlock_method() {
             Ok(u) => u,
             Err(e) => return JsonRpcResponse::err(id, e),
         };
+        let trust = crate::provenance::startup_provenance().trust_level();
         match Vault::open(&self.vault_path, unlock) {
             Ok(vault) => {
                 self.vault = Some(vault);
@@ -374,7 +386,13 @@ impl VaultServer {
                 // opens.
                 self.adopt_totp_secret();
                 self.open_audit();
-                self.audit("unlock", "vault", "user");
+                // Which method opened the vault, and how much this
+                // daemon's own position is worth, are the two things
+                // someone reading the trail afterwards most wants to
+                // know — an unlock at agent-parented trust means
+                // something quite different from one at independent.
+                let detail = format!("method={kind_label} trust={}", trust.as_str());
+                self.audit_with_detail("unlock", "vault", "user", Some(&detail));
                 JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
@@ -441,6 +459,13 @@ impl VaultServer {
                 self.vault = Some(vault);
                 self.idle.record_unlock();
                 self.adopt_totp_secret();
+                // An unlock the daemon collected itself is still an
+                // unlock, and leaving it out of the trail would make
+                // the safest path the least visible one.
+                self.open_audit();
+                let trust = crate::provenance::startup_provenance().trust_level();
+                let detail = format!("method=daemon-prompt trust={}", trust.as_str());
+                self.audit_with_detail("unlock", "vault", "user", Some(&detail));
                 JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
@@ -1271,6 +1296,46 @@ mod tests {
             .expect("the read should be recorded");
         assert_eq!(read.path, "team/a/one");
         assert_eq!(read.actor, "agent");
+    }
+
+    /// The scrub path must actually run in production, not only in
+    /// the writer's own tests. Until an unlock carried detail, the
+    /// daemon passed `None` every time and the scrubber — the whole
+    /// point of Ф9a — never executed against a real record.
+    #[tokio::test]
+    async fn the_unlock_record_carries_scrubbed_detail() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        let key = server.vault.as_ref().unwrap().audit_key().unwrap();
+        let records = server.audit.as_ref().unwrap().read_all(&key).unwrap();
+        let unlock = records
+            .iter()
+            .find(|r| r.action == "unlock")
+            .expect("the unlock is recorded");
+
+        let detail = unlock
+            .detail
+            .as_deref()
+            .expect("the unlock record should carry detail, or the scrubber never runs");
+        assert!(
+            detail.contains("method=passphrase"),
+            "an auditor needs to know which method opened the vault: {detail}"
+        );
+        assert!(
+            detail.contains("trust="),
+            "and how much the daemon's own position was worth: {detail}"
+        );
+        assert!(
+            !detail.contains('p') || !detail.contains("secret"),
+            "the passphrase must not appear in the detail: {detail}"
+        );
     }
 
     /// A lookup that found nothing must not be recorded as a read:
