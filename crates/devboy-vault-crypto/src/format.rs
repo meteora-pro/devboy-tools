@@ -455,6 +455,64 @@ pub struct EntryMeta {
     /// Catalogue pattern id (resolved through `devboy-secret-patterns`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pattern_id: Option<String>,
+
+    // -- Versioning (ADR-024 §5) ---------------------------------
+    /// Monotonic version number within `path`.
+    ///
+    /// Several entries may share a `path`, differing only by
+    /// version; the newest non-tombstoned one is what resolves.
+    ///
+    /// Defaults to 1 so a vault written before ADR-024 loads
+    /// unchanged — every existing entry simply becomes version 1
+    /// of its path, and no migration step is needed.
+    #[serde(default = "default_version")]
+    pub version: u64,
+
+    /// Tombstone marker: the path stops resolving, but this and
+    /// every earlier version stay on disk and recoverable.
+    ///
+    /// This is what makes an agent-mediated delete non-destructive
+    /// (ADR-024 §5). Only a user-initiated purge removes
+    /// ciphertext.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tombstone: bool,
+
+    /// Who created this version — `"agent"` or `"user"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+
+    /// ISO 8601 timestamp of when this version was written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+/// Serde default for [`EntryMeta::version`].
+fn default_version() -> u64 {
+    1
+}
+
+/// Serde `skip_serializing_if` helper for boolean flags that are
+/// almost always false.
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// AAD for an entry's AEAD, binding the ciphertext to both its
+/// path and its version.
+///
+/// Version 1 keeps the bare path so vaults written before ADR-024
+/// remain readable — their entries were sealed under the path
+/// alone, and rewriting the AAD would make every existing secret
+/// undecryptable. From version 2 the version number joins the AAD,
+/// which extends the existing swap-attack protection from "cannot
+/// move a ciphertext between paths" to "cannot move it between
+/// versions of the same path" either.
+pub fn entry_aad(path: &str, version: u64) -> String {
+    if version <= 1 {
+        path.to_owned()
+    } else {
+        format!("{path}@v{version}")
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -719,6 +777,10 @@ mod tests {
             expires_at: Some("2026-08-01".to_owned()),
             last_rotated_at: Some("2026-05-02".to_owned()),
             pattern_id: Some("github-pat".to_owned()),
+            version: 1,
+            tombstone: false,
+            actor: None,
+            created_at: None,
         }
     }
 
