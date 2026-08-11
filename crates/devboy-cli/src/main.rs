@@ -879,7 +879,25 @@ fn load_config_for_store() -> devboy_core::config::Config {
 /// **not** appear here: they raise a doctor notice instead,
 /// because a security posture must not change because an
 /// unrelated tool exported `CI=1`.
-fn is_env_only_mode(config: &devboy_core::config::Config) -> bool {
+/// The `DEVBOY_`-prefixed environment variable that satisfies a
+/// legacy credential key.
+///
+/// `EnvVarStore` uppercases the key and replaces `.` with `_`, so
+/// `proxy.my-server.token` is served by
+/// `DEVBOY_PROXY_MY_SERVER_TOKEN`. Used to tell the user what to
+/// set when nothing in the chain accepts writes.
+fn env_var_name_for_key(key: &str) -> String {
+    let body: String = key
+        .chars()
+        .map(|c| match c {
+            '.' | '-' => '_',
+            other => other.to_ascii_uppercase(),
+        })
+        .collect();
+    format!("DEVBOY_{body}")
+}
+
+pub(crate) fn is_env_only_mode(config: &devboy_core::config::Config) -> bool {
     devboy_storage::detect_ci_mode(false, Some(config.is_ci_forced())).active
         || is_skip_keychain_enabled()
 }
@@ -1448,15 +1466,37 @@ async fn handle_init_command(
     std::fs::write(&config_path, &toml_content).context("Failed to write configuration file")?;
     println!("Created: {}", config_path.display());
 
-    // Store tokens in keychain
+    // Persist tokens, or explain why we cannot.
+    //
+    // After ADR-024 §6 the default chain is environment-only and
+    // therefore read-only, so `init --proxy-token` has nowhere to
+    // write unless the user opted the keychain back in. Failing
+    // the whole `init` over that would be wrong — the config file
+    // is still worth writing — so we finish the job and tell the
+    // user exactly which environment variable to set instead.
     if !options.tokens.is_empty() {
         let store = get_credential_store_for_init();
-        for (key, value) in &options.tokens {
-            let secret = SecretString::from(value.clone());
-            store
-                .store(key, &secret)
-                .with_context(|| format!("Failed to store {} in keychain", key))?;
-            println!("Stored {} in keychain", key);
+        if store.is_writable() {
+            for (key, value) in &options.tokens {
+                let secret = SecretString::from(value.clone());
+                store
+                    .store(key, &secret)
+                    .with_context(|| format!("Failed to store {} in keychain", key))?;
+                println!("Stored {} in keychain", key);
+            }
+        } else {
+            println!(
+                "\nNote: no writable credential store is configured, so the token was not \
+                 persisted."
+            );
+            println!(
+                "The OS keychain is off by default (ADR-024 §6). Either enable it with \
+                 `devboy config set secrets.keychain.enabled true` and re-run, or supply the \
+                 token through the environment:"
+            );
+            for (key, _) in &options.tokens {
+                println!("  {}", env_var_name_for_key(key));
+            }
         }
     }
 

@@ -21,6 +21,7 @@ use self::checks::providers::{
 };
 use self::checks::proxy::ProxyServersCheck;
 use self::checks::rotation::RotationRemindersCheck;
+use self::checks::secrets_mode::SecretsModeCheck;
 use self::checks::sources::SourcesCheck;
 use self::output::console::{print_check_list, print_report, summarize};
 use self::output::json::print_json_report;
@@ -173,6 +174,7 @@ impl CheckRegistry {
         registry.register(Box::new(McpToolsCheck));
         registry.register(Box::new(ProxyServersCheck));
         registry.register(Box::new(SourcesCheck));
+        registry.register(Box::new(SecretsModeCheck));
         registry.register(Box::new(ContextSecretsCheck));
         registry.register(Box::new(RotationRemindersCheck));
         registry.register(Box::new(LegacyKeysCheck));

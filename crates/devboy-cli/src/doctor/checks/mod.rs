@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod providers;
 pub mod proxy;
 pub mod rotation;
+pub mod secrets_mode;
 pub mod sources;
 
 use crate::doctor::DiagnosticContext;

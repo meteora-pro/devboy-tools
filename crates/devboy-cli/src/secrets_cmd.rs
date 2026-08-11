@@ -545,6 +545,7 @@ fn kdbx_peek(args: KdbxPeekArgs) -> Result<()> {
     // shows up in shell history or process listings. Refuse to
     // read from a pipe (`!is_terminal`) since the prompt would
     // hang forever waiting for a terminal.
+    refuse_interactive_in_env_only("Reading a KDBX passphrase")?;
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "KDBX passphrase prompt requires an interactive terminal; \
@@ -650,6 +651,7 @@ fn kdbx_describe_metadata(args: KdbxDescribeMetadataArgs) -> Result<()> {
             args.file.display()
         );
     }
+    refuse_interactive_in_env_only("Reading a KDBX passphrase")?;
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "KDBX passphrase prompt requires an interactive terminal; \
@@ -780,6 +782,7 @@ fn kdbx_edit_metadata(args: KdbxEditMetadataArgs) -> Result<()> {
         );
     }
 
+    refuse_interactive_in_env_only("Reading a KDBX passphrase")?;
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "KDBX passphrase prompt requires an interactive terminal; \
@@ -1896,11 +1899,65 @@ fn describe(args: DescribeArgs) -> Result<()> {
     }
 
     anyhow::bail!(
-        "secret path '{}' not found in any source — register it via the global index or add a \
-         `[secret.\"{path}\"]` block",
-        path,
+        "secret path '{path}' not found in any source — register it via the global index or add a \
+         `[secret.\"{path}\"]` block.\n\n{}",
+        env_candidates_hint(path.as_str()),
         path = path
     );
+}
+
+/// Refuse an interactive secret operation when the process is in
+/// CI / env-only mode (ADR-024 §6).
+///
+/// The `is_terminal()` guards next to each prompt already stop a
+/// prompt from hanging on a pipe, but they answer a different
+/// question: "is there a TTY". A CI runner can have one — a
+/// pseudo-TTY is common — and would then sit waiting for a human
+/// who is never going to type. This guard keys on the *mode*
+/// instead, so the failure is immediate and explains itself.
+///
+/// Env-only mode has no vault to unlock and no daemon to ask, so
+/// there is nothing an interactive prompt could usefully do.
+pub fn refuse_interactive_in_env_only(operation: &str) -> anyhow::Result<()> {
+    let config = devboy_core::config::Config::load().unwrap_or_default();
+    if !crate::is_env_only_mode(&config) {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "{operation} needs an interactive prompt, but this process is in CI / env-only mode \
+         (ADR-024 §6): the environment is the sole secret source, and no vault, daemon or \
+         passphrase prompt is available.\n\n\
+         Either provide the secret through the environment, or drop `--ci` / `DEVBOY_CI` / \
+         `[runtime] ci` if this was not meant to be a CI run."
+    );
+}
+
+/// Render the environment variables that would satisfy `path`, in
+/// resolution order (ADR-024 §6).
+///
+/// A "not found" that does not say *what to set* forces the user
+/// to go read the docs; this lists every name that was tried so
+/// the fix pastes straight into a shell or a CI config. It matters
+/// most in env-only mode, where the environment is the only source
+/// there is.
+fn env_candidates_hint(path: &str) -> String {
+    let candidates = devboy_secret_env_store::candidate_env_names(path, None);
+    if candidates.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from("Set any one of these environment variables:\n");
+    for name in &candidates {
+        out.push_str("  ");
+        out.push_str(name);
+        out.push('\n');
+    }
+    out.push_str(
+        "\n(the first is the ADR-021 convention name; the rest are the ADR-005 names kept for \
+         compatibility with existing pipelines)",
+    );
+    out
 }
 
 #[derive(Serialize)]

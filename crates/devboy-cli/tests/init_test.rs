@@ -462,10 +462,21 @@ fn test_init_with_proxy_token() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(output.status.success(), "Command should succeed");
+    // With the keychain out of the default chain (ADR-024 §6) and
+    // `DEVBOY_SKIP_KEYCHAIN=1` forcing env-only, there is nowhere
+    // to persist the token. `init` must still write the config and
+    // must say what to set instead — silently dropping the token,
+    // or failing the whole init over it, would both be wrong.
     assert!(
-        stdout.contains("Stored") || stdout.contains("keychain"),
-        "Should mention token storage"
+        stdout.contains("Stored") || stdout.contains("not persisted"),
+        "init should either store the token or explain why it could not; got:\n{stdout}"
     );
+    if stdout.contains("not persisted") {
+        assert!(
+            stdout.contains("DEVBOY_PROXY_MY_SERVER_TOKEN"),
+            "the fallback message must name the exact environment variable; got:\n{stdout}"
+        );
+    }
 
     let content = fs::read_to_string(&config_path).unwrap();
     // Token key should be auto-generated as proxy.my-server.token
