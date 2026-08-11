@@ -41,8 +41,8 @@ use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 use crate::idle::{IdleClock, IdleTracker, UnlockWindow};
 use crate::rpc::{
     BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INVALID_PARAMS, IO_ERROR, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, NO_MATCHING_ENVELOPE, VAULT_LOCKED,
-    read_request, write_response,
+    JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, NO_MATCHING_ENVELOPE, NO_PROMPT_SURFACE,
+    VAULT_LOCKED, read_request, write_response,
 };
 
 /// Daemon-side state machine wrapping a vault.
@@ -215,6 +215,7 @@ impl VaultServer {
         let method = req.method.clone();
         let response = match method.as_str() {
             "vault.unlock" => self.handle_vault_unlock(req).await,
+            "vault.request_unlock" => self.handle_vault_request_unlock(req),
             "vault.lock" => self.handle_vault_lock(req),
             "vault.status" => self.handle_vault_status(req),
             "secret.get" => self.handle_secret_get(req),
@@ -251,6 +252,71 @@ impl VaultServer {
             Err(e) => return JsonRpcResponse::err(id, e),
         };
         match Vault::open(&self.vault_path, unlock) {
+            Ok(vault) => {
+                self.vault = Some(vault);
+                self.idle.record_unlock();
+                JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
+            }
+            Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
+        }
+    }
+
+    /// Collect the passphrase **here**, in the daemon, and unlock
+    /// (ADR-024 §7).
+    ///
+    /// The request carries no passphrase — that is the entire
+    /// point. An agent that can run shell commands as the user can
+    /// replace the client binary and read anything typed into it,
+    /// so a passphrase that transits the client is a passphrase the
+    /// agent can have. This method only says "a human is asking to
+    /// unlock"; the secret never crosses the socket.
+    ///
+    /// # Why this usually cannot work yet
+    ///
+    /// The only channel implemented is the daemon's own controlling
+    /// terminal, and a daemon that satisfies the §7 startup check
+    /// does not have one: the check demands reparenting to init, and
+    /// a reparented process has no controlling terminal (our own
+    /// systemd unit sets `StandardInput=null`). So in the supported
+    /// configuration this returns [`NO_PROMPT_SURFACE`], and the
+    /// error says what would fix it.
+    ///
+    /// That is a real conflict inside §7 rather than an oversight
+    /// here, and resolving it means choosing a channel that does not
+    /// need a terminal — `systemd-ask-password`, a launchd GUI
+    /// helper, or a helper process of our own.
+    fn handle_vault_request_unlock(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
+        let id = req.id.clone();
+
+        if self.is_unlocked() {
+            return JsonRpcResponse::ok(id, json!({"state": "unlocked"}));
+        }
+
+        let Some(mut prompt) = crate::prompt::TtyPrompt::open() else {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    NO_PROMPT_SURFACE,
+                    "this daemon has no terminal to ask on, so it cannot collect the passphrase                      itself. Unlock it from the terminal it was started in, or export                      DEVBOY_VAULT_PASSPHRASE for an unattended start."
+                        .to_string(),
+                ),
+            );
+        };
+
+        let passphrase = match prompt.read_passphrase("Unlock the devboy vault: ") {
+            Ok(p) => p,
+            Err(e) => {
+                return JsonRpcResponse::err(
+                    id,
+                    JsonRpcError::new(
+                        NO_PROMPT_SURFACE,
+                        format!("could not read a passphrase from the daemon's terminal: {e}"),
+                    ),
+                );
+            }
+        };
+
+        match Vault::open(&self.vault_path, UnlockMethod::Passphrase(passphrase)) {
             Ok(vault) => {
                 self.vault = Some(vault);
                 self.idle.record_unlock();
@@ -753,6 +819,81 @@ mod tests {
         assert_eq!(result["unlock_ttl_seconds"], 900);
         assert_eq!(result["max_unlock_ttl_seconds"], 3600);
         assert_eq!(result["idle_relock_seconds"], 300);
+    }
+
+    /// `vault.request_unlock` must carry no passphrase field at all.
+    ///
+    /// The whole point is that the secret never crosses the socket,
+    /// so a caller supplying one must not be able to influence the
+    /// unlock — the parameters are ignored entirely.
+    #[tokio::test]
+    async fn request_unlock_ignores_anything_the_caller_sends() {
+        let (_dir, mut server) = fresh_vault("p");
+
+        let r = server
+            .handle_request(req(
+                1,
+                "vault.request_unlock",
+                json!({"secret": "p", "passphrase": "p"}),
+            ))
+            .await;
+
+        // The test process has no controlling terminal under the
+        // harness, so the honest answer is "nowhere to ask" — not
+        // "unlocked", which is what would happen if the supplied
+        // passphrase had been honoured.
+        let err = r
+            .error
+            .expect("a caller-supplied passphrase must not unlock the vault");
+        assert_eq!(err.code, NO_PROMPT_SURFACE);
+        assert!(
+            !server.is_unlocked(),
+            "the vault must stay locked when the daemon could not ask a human"
+        );
+    }
+
+    /// The "nowhere to ask" error has to be distinguishable from a
+    /// wrong passphrase: nothing about the passphrase is wrong, and
+    /// the fix is completely different.
+    #[tokio::test]
+    async fn no_prompt_surface_is_its_own_error_not_a_bad_unlock() {
+        let (_dir, mut server) = fresh_vault("p");
+
+        let r = server
+            .handle_request(req(1, "vault.request_unlock", Value::Null))
+            .await;
+        let err = r.error.expect("no terminal under test");
+
+        assert_eq!(err.code, NO_PROMPT_SURFACE);
+        assert_ne!(err.code, BAD_UNLOCK);
+        assert!(
+            err.message.contains("DEVBOY_VAULT_PASSPHRASE")
+                || err.message.contains("terminal it was started in"),
+            "the error should name a way forward: {}",
+            err.message
+        );
+    }
+
+    /// Asking to unlock an already-unlocked vault is a no-op rather
+    /// than a second prompt — otherwise a stray call would make the
+    /// user re-type their passphrase for nothing.
+    #[tokio::test]
+    async fn request_unlock_on_an_open_vault_does_not_prompt_again() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        let r = server
+            .handle_request(req(2, "vault.request_unlock", Value::Null))
+            .await;
+
+        assert!(r.error.is_none(), "an open vault should answer, not fail");
+        assert_eq!(r.result.unwrap()["state"], "unlocked");
     }
 
     /// The keyfile unlock must never take a path from the wire.

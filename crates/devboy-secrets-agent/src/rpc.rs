@@ -61,6 +61,17 @@ pub const IO_ERROR: i32 = -32004;
 /// instruction rather than a dropped connection.
 pub const DAEMON_UNTRUSTED: i32 = -32005;
 
+/// ADR-024 §7: the daemon was asked to collect a passphrase itself
+/// but has nowhere to ask.
+///
+/// Distinct from a failed unlock because the fix is completely
+/// different — nothing about the passphrase is wrong, the daemon
+/// simply has no channel to the human. A properly daemonised
+/// process has no controlling terminal by construction, so this is
+/// the *expected* answer until a prompt channel that does not
+/// depend on one is chosen.
+pub const NO_PROMPT_SURFACE: i32 = -32006;
+
 // =============================================================================
 // Wire types
 // =============================================================================
