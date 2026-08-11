@@ -1,6 +1,6 @@
 ---
 id: ADR-024
-title: Agent-mediated vault access — TOTP re-unlock, configurable unlock window, liveness verdicts, encrypted audit log, versioning, keychain demotion, and the trusted-path process model
+title: Agent-mediated vault access — TOTP re-unlock, configurable unlock window, liveness verdicts, encrypted audit log, versioning, keychain demotion, the trusted-path process model, and actionable agent errors
 status: proposed
 date: 2026-08-04
 deciders: ["Andrei Mazniak"]
@@ -9,14 +9,14 @@ supersedes: null
 superseded_by: null
 ---
 
-# ADR-024: Agent-mediated vault access — TOTP re-unlock, audit log, versioning, keychain demotion, and the trusted-path process model
+# ADR-024: Agent-mediated vault access — TOTP re-unlock, audit log, versioning, keychain demotion, trusted path, and actionable errors
 
 ## Status
 
 **proposed**
 
 This is an **umbrella** ADR that extends [ADR-023](./ADR-023-secret-store-ux-layer.md),
-in the same spirit as ADR-023's own umbrella over eight sub-decisions. The seven
+in the same spirit as ADR-023's own umbrella over eight sub-decisions. The eight
 sub-decisions here are designed against each other: the vault-resident TOTP
 secret is what lets an agent-mediated re-unlock prove human presence without
 any OS keystore; the configurable window is what makes daily agentic work
@@ -24,15 +24,18 @@ practical; the liveness verdict is the agent's only legitimate way to confirm a
 secret works; the audit log is the tamper-evident record of agent activity and
 leak events; per-path version history makes every agent edit reversible;
 demoting the OS keychain to an opt-in makes the vault a single cross-platform
-store; and the trusted-path process model is what makes all six of the above
-meaningful in the presence of a same-UID agent. Splitting them would multiply
-cross-references without adding clarity.
+store; the trusted-path process model is what makes all six of the above
+meaningful in the presence of a same-UID agent; and actionable errors are what
+let an agent act on all seven correctly instead of guessing. Splitting them
+would multiply cross-references without adding clarity.
 
-The last one is load-bearing and easy to miss: an unlock method is only as
-strong as the process that collects it. §1–§6 describe *what* is stored and
-*how* it is unlocked; §7 describes *who* may observe the unlock. Without §7,
-§1–§6 protect the vault from everything except the one adversary this ADR is
-actually about.
+The last two are load-bearing and easy to miss. An unlock method is only as
+strong as the process that collects it: §1–§6 describe *what* is stored and
+*how* it is unlocked, while §7 describes *who* may observe the unlock — without
+it, §1–§6 protect the vault from everything except the one adversary this ADR
+is actually about. And a guarantee an agent cannot navigate is a guarantee it
+routes around: §8 makes every failure carry its own remedy, including the
+explicit signal that only a human can proceed from here.
 
 ## Context
 
@@ -44,7 +47,7 @@ strict and intentional: the agent surface never carries a secret value, the
 unlock modal is agent-bypassing, and the daemon zeroizes the vault key after a
 fixed 15-minute idle window.
 
-Five gaps remain that ADR-023 does not close on its own.
+Six gaps remain that ADR-023 does not close on its own.
 
 1. **No agent-mediated unlock for the re-lock-during-session case.** ADR-023's
    daemon unlocks through a UI modal that the agent does not mediate, which is
@@ -88,8 +91,19 @@ Five gaps remain that ADR-023 does not close on its own.
    untrusted. This is a gap in the **process model**, not in the cryptography,
    and it silently weakens all four gaps above.
 
-This ADR adds seven sub-decisions — five addressing the gaps above (§1–§4 and
-§7), plus per-path version history (§5) and the OS keychain/keyring demotion
+6. **Errors say what failed, never what to do about it.** Every failure the
+   framework can return — `Locked`, `NotProvisioned`, an expired token, a
+   pending approval — reaches the agent as a bare code. The framework knows the
+   correct next step in each case, and in several of them the correct step is
+   *stop and fetch the user*; none of that is expressed. An agent left to infer
+   it will guess, and the plausible guesses are actively harmful: asking the
+   user for the master passphrase, starting the daemon itself (which voids gap
+   5's fix), hunting for the value in the environment, or retrying until the
+   rate limiter locks the user out. A guarantee an agent cannot navigate is a
+   guarantee it routes around.
+
+This ADR adds eight sub-decisions — six addressing the gaps above (§1–§4, §7,
+§8), plus per-path version history (§5) and the OS keychain/keyring demotion
 (§6). Each is a narrow extension of an ADR-023 component; none re-opens
 ADR-023's trust-boundary contract except where this ADR states the relaxation
 explicitly and justifies it (sub-decision 3).
@@ -150,7 +164,12 @@ inside the window. §7 states this limit rather than papering over it.
 > working. (7) Adopt a **trusted-path
 > process model**: the daemon runs under its own UID, collects the passphrase
 > and per-call approvals itself, and must not be a child of the agent — because
-> no unlock method is stronger than the process that collects it.
+> no unlock method is stronger than the process that collects it. (8) Make
+> every error **actionable**: each failure reply carries a `remediation` object
+> naming who can resolve it (`agent` or `user`), a machine-readable next step,
+> and daemon-authored text to show the human — so the agent asks the user for
+> help when only a human can proceed, and never guesses its way around the
+> guarantees above.
 
 ### 0. Universality and vendor neutrality
 
@@ -891,7 +910,111 @@ notional. This ADR cannot impose that — it is a property of how the agent is
 launched — but the process model here is designed so that such a deployment
 strengthens it automatically rather than requiring a redesign.
 
-## Consequences
+### 8. Actionable errors — the agent always knows what to do next, including when to fetch a human
+
+#### The problem
+
+Every error in §1–§7 tells the agent *what failed* and nothing about *what to
+do about it*. An agent that receives `{ error: "Locked" }` has to guess, and
+each plausible guess is bad:
+
+- ask the user for the **passphrase** — forbidden by §3, and it trains users to
+  type their master credential into a chat window;
+- **start the daemon itself** — which makes the daemon its own child and
+  silently voids §1 and §7 level 2, converting a security guarantee into its
+  appearance;
+- **look for the secret elsewhere** — environment, dotfiles, git history — and
+  drag a value into its context in direct violation of ADR-023's invariant;
+- **retry in a loop** — burning the §1 rate limiter and locking the user out;
+- **give up** with "secrets are not working", leaving the user to diagnose a
+  framework they cannot see into.
+
+The framework knows exactly which of these is correct in every case. It should
+say so, in a machine-readable form, rather than leaving a language model to
+infer it from an error name.
+
+#### Shape
+
+Every `secrets_*` / `vault_*` error reply carries a `remediation` object:
+
+```
+{
+  error: "Locked",
+  remediation: {
+    actor:        "agent" | "user",   // who can actually resolve this
+    action:       "request_totp",     // machine-readable next step
+    user_message: "The secret vault is locked. Enter the 6-digit code from
+                   your authenticator app to unlock it.",
+    retryable:    true,
+    retry_after_seconds: null         // set for rate limits / backoff
+  }
+}
+```
+
+`actor` is the load-bearing field: it tells the agent whether this is its
+problem or whether it must stop and fetch a human. `action` exists so the agent
+branches on a constant rather than parsing prose. `user_message` is **composed
+by the daemon**, not by the agent, and is meant to be surfaced to the user
+verbatim.
+
+#### Error → remediation contract
+
+| Error | `actor` | `action` | Meaning for the agent |
+|---|---|---|---|
+| `Locked`, TOTP session resident | agent | `request_totp` | Ask the user for a code, relay via `secrets_unlock`, retry |
+| `Locked` / `TotpUnavailable`, no session | **user** | `ask_user_to_unlock` | Stop. Only a passphrase at the §7 prompt opens this |
+| `BadTotp` | agent | `request_totp` | Code was wrong — ask once more, then escalate |
+| `ReplayedCode` | agent | `request_fresh_totp` | Code already spent; wait for the next 30 s step |
+| `RateLimited` | agent | `retry_after` | Back off exactly `retry_after_seconds`; do not loop |
+| `NotProvisioned` | **user** | `ask_user_to_provision` | Secret does not exist. Surface `retrieval_url` + `required_scopes` |
+| `ApprovalRequired` | **user** | `ask_user_to_approve` | A prompt is waiting on the daemon's surface; wait, do not retry |
+| `ApprovalDenied` | **user** | `none` | The user said no. Do not re-ask in this session |
+| `LivenessFailed` / expired | **user** | `ask_user_to_rotate` | Token is dead. Surface `retrieval_url` + `rotation_method` |
+| `DaemonNotRunning` | **user** | `ask_user_to_start_daemon` | **Never start it yourself** — see below |
+| `NotAvailableInCiMode` | **user** | `set_env_var` | Name every variable that would satisfy this path (§6) |
+
+#### The manifest already holds the useful part
+
+`IndexEntry` (`crates/devboy-storage/src/index.rs`) carries `description`,
+`retrieval_url`, `required_scopes`, `rotation_method` and `expires_at`. These
+exist to be shown to a human at exactly this moment, and today nothing shows
+them. A `NotProvisioned` remediation should read
+
+> "GitLab deploy token (`team/gitlab/token-deploy`) is not set up. Create one
+> with scopes `api`, `read_repository` at https://gitlab.example/-/user_settings
+> then run `devboy secrets set team/gitlab/token-deploy`."
+
+rather than "secret not found". None of those fields is a secret value, so the
+whole `remediation` object satisfies `AgentSafeReply`'s audit checklist
+unchanged — it is metadata plus fixed text, and it must be added to the
+compile-time reply fence like any other reply type.
+
+#### Negative contract — what the agent must never do
+
+Stated here because these are the failure modes that silently dismantle the
+other sub-decisions, and an agent cannot infer them:
+
+1. **Never request the passphrase.** No tool accepts one. An agent asking for
+   it in chat is out of protocol regardless of how the request is phrased.
+2. **Never start the daemon.** `DaemonNotRunning` is a `user` action
+   specifically because a daemon spawned by the agent is a daemon the agent can
+   `ptrace` (§7). The remediation names the platform command for the user to
+   run; the agent relays it and waits.
+3. **Never work around a missing secret.** Reading it from the environment,
+   a dotfile, a config sample, or shell history defeats ADR-023's boundary just
+   as thoroughly as leaking it would.
+4. **Never retry past `retryable: false`,** and never faster than
+   `retry_after_seconds`.
+
+#### Prompt-injection posture
+
+`user_message` is generated by the daemon from the error kind plus manifest
+metadata. The agent does not compose it and cannot influence its content, which
+closes the injection concern already noted in the Risks section: hostile text
+in a repository cannot cause a *misleading* unlock request, because the wording
+never originates agent-side. The user still sees a fixed, framework-authored
+sentence, and what they type back is a 6-digit number with no room to carry an
+instruction.
 
 ### Positive
 
@@ -927,6 +1050,14 @@ strengthens it automatically rather than requiring a redesign.
   "Agent-bypassing" stops being an aspiration in prose and becomes a
   requirement on where the daemon runs and who renders a prompt — testable,
   and reportable by `doctor`.
+- ✅ **The agent never has to guess, and knows when to fetch a human.** Every
+  failure names who can fix it and what the next step is, so "vault locked"
+  becomes a concrete request for a code or a concrete request for the user —
+  instead of a language model improvising around a security boundary.
+- ✅ **The manifest metadata finally reaches the person who needs it.**
+  `retrieval_url`, `required_scopes` and `rotation_method` have existed since
+  ADR-020 with nothing surfacing them; a `NotProvisioned` error now tells the
+  user which token to create, with which scopes, and where.
 
 ### Negative
 
@@ -949,6 +1080,10 @@ strengthens it automatically rather than requiring a redesign.
   work, a systemd/launchd unit, and a socket authorization model that is no
   longer a simple UID equality check. Level 2 is cheaper but weaker, and the
   difference must be surfaced honestly rather than assumed.
+- ❌ **Every error reply grows a `remediation` object.** More surface to keep
+  correct and to audit against `AgentSafeReply`, and a wrong `actor` is worse
+  than no hint — it sends the agent looping on something only a human can fix,
+  or the reverse. The mapping in §8 has to be maintained as errors are added.
 - ❌ **Two profiles instead of one default.** Users now face a choice
   (`convenient` / `strict`) where previously there was a single number. This
   is deliberate — the two goals genuinely conflict — but it is added surface
@@ -1193,11 +1328,23 @@ guarantee the deployment may not have.
     daemon's parent is the calling agent, and — for level 1 — a service UID
     with a client-UID allow-list replacing the `peer_uid == geteuid()` check in
     `crates/devboy-secrets-agent/src/socket.rs`.
+  - `crates/devboy-mcp/src/` — a `Remediation { actor, action, user_message,
+    retryable, retry_after_seconds }` type attached to every `secrets_*` /
+    `vault_*` error reply, composed daemon-side from the error kind plus
+    `IndexEntry` metadata (`retrieval_url`, `required_scopes`,
+    `rotation_method`, `description`). It must implement `AgentSafeReply` and
+    be added to the compile-time reply fence in
+    `crates/devboy-mcp/src/agent_safety.rs`. A test should assert that every
+    error variant maps to a remediation, so a newly added error cannot ship
+    without one.
   - `crates/devboy-cli/src/doctor/` — report the achieved trusted-path level
     (separate UID / independent lifecycle / agent-parented), the active
     profile, and any legacy keychain entries awaiting migration.
 - **Documentation (planned):**
-  - `docs/guide/secrets/agent-protocol.md` — add the new tools.
+  - `docs/guide/secrets/agent-protocol.md` — add the new tools, the full
+    error → remediation table of §8, and the negative contract (never request
+    the passphrase, never start the daemon, never work around a missing
+    secret, never retry past the stated backoff).
   - `docs/guide/secrets/local-vault.md` — TOTP enrollment, unlock-window
     profiles, keyfile setup, audit-log rotation, version history and recovery.
   - `docs/guide/secrets/threat-model.md` — the §7 process model, the three
@@ -1239,3 +1386,4 @@ guarantee the deployment may not have.
 | 2026-08-04 | Andrei Mazniak | Initial draft — TOTP unlock envelope, configurable unlock window, agent-mediated `secrets_unlock` / `secrets_validate`, encrypted audit log-store with enforced value→alias scrub. |
 | 2026-08-11 | Andrei Mazniak | **Reframed §1, §6; added §7.** §1: TOTP is no longer a passphrase replacement — `totp_secret` moves from the OS keystore into the encrypted vault + daemon memory, with a reserved slot, replay guard, and an explicit dependency on §7; the strength argument ("as strong as its keystore, never the 6 digits") is now stated as a rule. §6: keychain **demoted to opt-in** (`[secrets.keychain] enabled`, default `false`) instead of removed, with a per-platform table showing it only exceeds `0600` on macOS; `Envelope::Keyfile` added for unattended cold start; CI mode gains a real consumer; an implementation note records that the runtime default lives in `ChainStore`, not in `sources.toml`. §2: split into `convenient` / `strict` profiles, because a long window and per-call approval genuinely conflict. §7 (new): trusted-path process model — daemon under its own UID, daemon-rendered prompts, must not be a child of the agent, platform primitives, macOS keychain re-entering as anti-tamper, and the honest credential-vs-authorization limit. Threat model, Decision, Consequences, Alternatives 6–8 and Implementation updated to match. |
 | 2026-08-11 | Andrei Mazniak | **§6: CI / env-only mode promoted to a first-class contract.** Spelled out as a table what is and is not active when the environment is the sole source (no vault, daemon, keychain, prompt, approval, audit log or version history), so a pipeline can never hang on an invisible prompt or a D-Bus call. Pinned a five-step variable-resolution order that keeps **both** naming conventions working — ADR-005's `DEVBOY_GITHUB_TOKEN` / unprefixed `GITHUB_TOKEN` alongside ADR-021's `DEVBOY_SECRET__<PATH>` — since routing CI through only the latter would break existing pipelines silently. Required fail-fast behaviour (errors list every variable tried; writes return an explicit read-only error instead of disappearing into `MemoryStore`; vault-dependent MCP tools return `NotAvailableInCiMode`). Confirmed that heuristic CI variables raise a `doctor` notice but never flip the mode. Decision (6), Risks, Implementation and the docs plan updated to match. |
+| 2026-08-11 | Andrei Mazniak | **New §8: actionable errors.** Every failure reply now carries a `remediation { actor, action, user_message, retryable, retry_after_seconds }`, where `actor` tells the agent whether it can resolve the problem or must stop and fetch a human. Adds the full error → remediation table, and a **negative contract** covering the guesses that silently dismantle the other sub-decisions: never request the passphrase, never start the daemon (a self-spawned daemon is `ptrace`-able and voids §1/§7), never work around a missing secret via env/dotfiles/history, never retry past the stated backoff. Surfaces the ADR-020 manifest metadata (`retrieval_url`, `required_scopes`, `rotation_method`) that has never had a consumer, so `NotProvisioned` tells the user which token to create, with which scopes, and where. `user_message` is daemon-authored, which also closes the prompt-injection concern already listed in Risks. Sub-decision count 7 → 8; gap 6 added to Context; Decision (8), Consequences and Implementation updated. |

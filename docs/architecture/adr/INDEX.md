@@ -25,7 +25,7 @@ This directory holds Architecture Decision Records (ADRs) for `devboy-tools`. Ea
 | [021](./ADR-021-external-secret-sources.md) | External secret sources and backend routing | proposed (rewrite 2026-05-09) | Security, Secrets, Plugins, Storage |
 | [022](./ADR-022-crates-io-publishing.md) | Publish workspace library crates on crates.io alongside the npm CLI binary | proposed | Distribution, Rust |
 | [023](./ADR-023-secret-store-ux-layer.md) | Secret store UX layer — local vault, daemon, native UI, agent protocol, rotation, pattern catalogue, onboarding skill | proposed | Security, Secrets, UI, Agent, Rotation, Patterns, Skills |
-| [024](./ADR-024-agent-mediated-vault-access-totp-and-audit-log.md) | Agent-mediated vault access — TOTP re-unlock, configurable unlock window, liveness verdicts, encrypted audit log, version history, keychain demotion, and the trusted-path process model | proposed | Security, Secrets, Agent, Audit, Rotation, Trusted-path, Core |
+| [024](./ADR-024-agent-mediated-vault-access-totp-and-audit-log.md) | Agent-mediated vault access — TOTP re-unlock, configurable unlock window, liveness verdicts, encrypted audit log, version history, keychain demotion, the trusted-path process model, and actionable agent errors | proposed | Security, Secrets, Agent, Audit, Rotation, Trusted-path, Core |
 
 **Number gaps** (006, 008, 009, 011) are intentional. Those numbers are reserved for decisions that are not in scope for this project.
 
