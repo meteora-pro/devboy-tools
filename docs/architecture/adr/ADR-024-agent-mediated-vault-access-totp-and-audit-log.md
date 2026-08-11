@@ -142,8 +142,12 @@ inside the window. §7 states this limit rather than papering over it.
 > and soft-delete; permanent purge is a user-only action. (6) **Demote** the OS
 > keychain/keyring (ADR-005/021/023) from primary store to an **opt-in**
 > source, disabled by default on every platform: the encrypted local vault is
-> the default store, `env-store` is the CI default, and the in-tree keychain
-> source stays available behind an explicit setting. (7) Adopt a **trusted-path
+> the default store, and the in-tree keychain source stays available behind an
+> explicit setting. Guarantee a **first-class env-only mode** for CI,
+> containers and headless hosts, in which the environment is the sole source
+> and no vault, daemon, keychain or prompt is involved — under both the
+> ADR-005 and ADR-021 variable-naming conventions, so existing pipelines keep
+> working. (7) Adopt a **trusted-path
 > process model**: the daemon runs under its own UID, collects the passphrase
 > and per-call approvals itself, and must not be a child of the agent — because
 > no unlock method is stronger than the process that collects it.
@@ -623,6 +627,78 @@ mechanism here can replace. That asymmetry is what the new default encodes.
   `supersedes: null`, because a partial replacement of one decision is not a
   supersession of the ADR.
 
+#### The CI / env-only mode is a first-class mode, not a degraded fallback
+
+Everything else in this ADR — vault, daemon, unlock windows, TOTP, approvals,
+audit log, versioning, §7's process model — assumes a human at a machine. A CI
+runner has none of that, and the framework must work there **without any of
+it**. This is stated as a hard contract because the failure it prevents is the
+worst kind: a pipeline that hangs on an invisible prompt, or that stalls for 25
+seconds on a D-Bus call to a Secret Service daemon that does not exist.
+
+**In env-only mode, the *only* secret source is the process environment.**
+
+| Subsystem | Behaviour in env-only mode |
+|---|---|
+| Secret resolution | environment variables only |
+| Local vault | never opened, never created, not required |
+| Daemon | never started, never contacted |
+| OS keychain | never contacted — no D-Bus, no `Security` framework, no Cred Manager |
+| Passphrase / TOTP / keyfile | not applicable; no prompt is ever rendered |
+| `approve_on_use` | not applicable — there is no human to approve; a path requiring approval fails closed |
+| Audit log (§4), versioning (§5) | not available; the vault they live in is not open |
+| §7 trusted path | not applicable; `doctor` reports "env-only", not a trusted-path level |
+
+**Activation.** Three explicit switches, in precedence order — `--ci`, then
+`DEVBOY_CI=1`, then `[runtime] ci = true`. Separately, the heuristic variables
+(`CI`, `GITLAB_CI`, `GITHUB_ACTIONS`, `BUILDKITE`) **do not silently flip the
+mode**; they raise a `doctor` notice telling the user to make it explicit. A
+security posture must not change because an unrelated tool exported `CI=1`.
+
+The mode is nevertheless reachable without configuration, because the default
+chain after this ADR is env-store first and the keychain is off: a runner that
+sets the right variables works out of the box. The explicit switch buys
+*strictness* — the guarantees in the table above — not basic functionality.
+
+**Variable naming — both conventions, permanently.** Two incompatible schemes
+exist in the tree today, and the default flip must not break pipelines built
+against either:
+
+| Origin | Key/path | Variable |
+|---|---|---|
+| ADR-005 `EnvVarStore` | `github.token` | `DEVBOY_GITHUB_TOKEN`, then unprefixed `GITHUB_TOKEN` |
+| ADR-021 `env-store` | `team/gitlab/token-deploy` | `DEVBOY_SECRET__TEAM__GITLAB__TOKEN_DEPLOY` |
+
+Resolution order in env-only mode: (1) the manifest's explicit `env_var` alias
+for the path, (2) the ADR-021 convention name, (3) the ADR-005 prefixed name,
+(4) the ADR-005 unprefixed name, (5) `DEVBOY_SECRETS_FILE` if set. The
+unprefixed fallback is what lets a runner reuse the variables its platform
+already exports, and it is retained deliberately rather than deprecated.
+
+**Failure behaviour — fail fast, never prompt, never hang.**
+
+- A missing secret is an immediate error naming **every** variable that was
+  looked for, so the fix is copy-pasteable into the CI config.
+- No code path may render an interactive prompt. The existing
+  `std::io::stdin().is_terminal()` guards become a mode-level invariant rather
+  than a per-command precaution.
+- No source that can block on IPC (keychain/D-Bus, daemon socket) is consulted
+  at all, so there is nothing to time out on.
+- A write (`secrets set`, `rotate`, MCP provisioning) returns an explicit
+  read-only error. It must **not** silently succeed into a scratch store —
+  today `ChainStore::ci_chain()` uses `MemoryStore`, where writes appear to
+  work and vanish at process exit. That is acceptable as a test shim and wrong
+  as CI behaviour.
+- MCP tools that require the vault (`secrets_unlock`, `vault_log_append`,
+  version history) return a clear `NotAvailableInCiMode` error rather than
+  attempting to start a daemon.
+
+**Container/headless parity.** The same mode covers bare containers and
+headless Linux without a Secret Service daemon — the environments that ADR-005
+and ADR-021 treated as exceptions requiring a fallback ladder. After this ADR
+they run the ordinary path, and it is the *interactive* setup that adds
+optional machinery on top.
+
 #### Implementation note: where "the default" actually lives today
 
 This matters for anyone implementing the above, because the ADR-021/023 routing
@@ -850,6 +926,18 @@ strengthens it automatically rather than requiring a redesign.
   **Mitigation:** the keyfile defaults outside the config tree (§6) and
   requires `0600` ownership; the documentation must state plainly that a
   keyfile guards against file-level leaks, not against a same-UID process.
+- ⚠️ **The two env-variable conventions diverging.** ADR-005's `EnvVarStore`
+  reads `DEVBOY_GITHUB_TOKEN` / `GITHUB_TOKEN`; ADR-021's `env-store` reads
+  `DEVBOY_SECRET__TEAM__GITLAB__TOKEN_DEPLOY`. Routing CI through only the
+  latter would break every pipeline written against the former — silently, as
+  a missing secret rather than an obvious error. **Mitigation:** §6 pins the
+  five-step resolution order across both conventions as a contract, keeps the
+  unprefixed fallback, and requires the not-found error to list every variable
+  that was tried.
+- ⚠️ **CI writes vanishing instead of failing.** `ChainStore::ci_chain()`
+  currently pairs the env store with `MemoryStore`, so a write in CI appears to
+  succeed and is lost at process exit. **Mitigation:** env-only mode returns an
+  explicit read-only error on writes; `MemoryStore` stays a test shim.
 - ⚠️ **The default flip stranding existing users.** Someone whose tokens live
   in the OS keychain today would, after upgrading, find them unresolvable.
   **Mitigation:** the legacy keychain reader stays active until
@@ -1032,6 +1120,19 @@ guarantee the deployment may not have.
     changes nothing at runtime (see §6's implementation note).
   - `crates/devboy-storage/src/ci.rs` — give `CiPolicy` a consumer; today
     `detect_ci_mode` is called once and its result only prints a warning.
+    Env-only mode must additionally: refuse writes with an explicit read-only
+    error instead of routing them to `MemoryStore`, never consult a
+    blocking-IPC source, and produce a not-found error listing every variable
+    tried across both naming conventions.
+  - `crates/plugins/secrets/env-store/src/lib.rs` +
+    `crates/devboy-storage/src/lib.rs` — implement the five-step resolution
+    order of §6 so the ADR-005 names (`DEVBOY_GITHUB_TOKEN`, unprefixed
+    `GITHUB_TOKEN`) keep resolving alongside the ADR-021 convention name.
+    Regression tests must cover both, or the default flip breaks pipelines
+    silently.
+  - `crates/devboy-mcp/src/secrets_tool.rs` — vault-dependent tools
+    (`secrets_unlock`, `vault_log_append`, version history) return
+    `NotAvailableInCiMode` rather than trying to start a daemon.
   - `crates/devboy-core/src/config.rs` — extend `SecretsConfig` (currently a
     single `migration_complete` field) with `profile`, `unlock_ttl`,
     `max_unlock_ttl`, `idle_relock`, `[secrets.keychain] enabled`, and the
@@ -1053,7 +1154,14 @@ guarantee the deployment may not have.
     profiles, keyfile setup, audit-log rotation, version history and recovery.
   - `docs/guide/secrets/threat-model.md` — the §7 process model, the three
     levels, and the honest limit, in one place users can be pointed at.
-  - A new BDD scenario `docs/guide/secrets/scenarios/totp-unlock-and-audit.feature`.
+  - `docs/guide/secrets/ci.md` — the env-only contract: which variables to
+    set under both conventions, what is unavailable and why, and how to make
+    the mode explicit rather than relying on heuristics.
+  - New BDD scenarios
+    `docs/guide/secrets/scenarios/totp-unlock-and-audit.feature` and
+    `docs/guide/secrets/scenarios/ci-env-only.feature` — the latter asserting
+    that no prompt is rendered, no keychain or daemon is contacted, writes
+    fail explicitly, and both naming conventions resolve.
 
 ## References
 
@@ -1082,3 +1190,4 @@ guarantee the deployment may not have.
 |------|--------|--------|
 | 2026-08-04 | Andrei Mazniak | Initial draft — TOTP unlock envelope, configurable unlock window, agent-mediated `secrets_unlock` / `secrets_validate`, encrypted audit log-store with enforced value→alias scrub. |
 | 2026-08-11 | Andrei Mazniak | **Reframed §1, §6; added §7.** §1: TOTP is no longer a passphrase replacement — `totp_secret` moves from the OS keystore into the encrypted vault + daemon memory, with a reserved slot, replay guard, and an explicit dependency on §7; the strength argument ("as strong as its keystore, never the 6 digits") is now stated as a rule. §6: keychain **demoted to opt-in** (`[secrets.keychain] enabled`, default `false`) instead of removed, with a per-platform table showing it only exceeds `0600` on macOS; `Envelope::Keyfile` added for unattended cold start; CI mode gains a real consumer; an implementation note records that the runtime default lives in `ChainStore`, not in `sources.toml`. §2: split into `convenient` / `strict` profiles, because a long window and per-call approval genuinely conflict. §7 (new): trusted-path process model — daemon under its own UID, daemon-rendered prompts, must not be a child of the agent, platform primitives, macOS keychain re-entering as anti-tamper, and the honest credential-vs-authorization limit. Threat model, Decision, Consequences, Alternatives 6–8 and Implementation updated to match. |
+| 2026-08-11 | Andrei Mazniak | **§6: CI / env-only mode promoted to a first-class contract.** Spelled out as a table what is and is not active when the environment is the sole source (no vault, daemon, keychain, prompt, approval, audit log or version history), so a pipeline can never hang on an invisible prompt or a D-Bus call. Pinned a five-step variable-resolution order that keeps **both** naming conventions working — ADR-005's `DEVBOY_GITHUB_TOKEN` / unprefixed `GITHUB_TOKEN` alongside ADR-021's `DEVBOY_SECRET__<PATH>` — since routing CI through only the latter would break existing pipelines silently. Required fail-fast behaviour (errors list every variable tried; writes return an explicit read-only error instead of disappearing into `MemoryStore`; vault-dependent MCP tools return `NotAvailableInCiMode`). Confirmed that heuristic CI variables raise a `doctor` notice but never flip the mode. Decision (6), Risks, Implementation and the docs plan updated to match. |
