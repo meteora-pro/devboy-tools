@@ -42,6 +42,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 async-trait.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
+devboy-secrets-agent.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true

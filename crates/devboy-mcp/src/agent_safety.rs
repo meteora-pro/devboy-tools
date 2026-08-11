@@ -69,4 +69,6 @@ fn _audit_compile_fence() {
     // never a value.
     assert_safe::<crate::remediation::Remediation>();
     assert_safe::<crate::secrets_validate::SecretsValidateReply>();
+    assert_safe::<crate::secrets_unlock::SecretsUnlockReply>();
+    assert_safe::<crate::secrets_unlock::SecretsStatusReply>();
 }
