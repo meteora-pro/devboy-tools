@@ -562,6 +562,37 @@ impl core::marker::Unpin for devboy_core::config::RoutingStrategy
 impl core::marker::UnsafeUnpin for devboy_core::config::RoutingStrategy
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::RoutingStrategy
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::RoutingStrategy
+pub enum devboy_core::config::SecretsProfile
+pub devboy_core::config::SecretsProfile::Convenient
+pub devboy_core::config::SecretsProfile::Strict
+impl devboy_core::config::SecretsProfile
+pub fn devboy_core::config::SecretsProfile::default_idle_relock_seconds(self) -> core::option::Option<u64>
+pub fn devboy_core::config::SecretsProfile::default_max_unlock_ttl_seconds(self) -> u64
+pub fn devboy_core::config::SecretsProfile::default_unlock_ttl_seconds(self) -> u64
+pub fn devboy_core::config::SecretsProfile::forces_per_call_approval(self) -> bool
+pub fn devboy_core::config::SecretsProfile::requires_prompt_surface(self) -> bool
+impl core::clone::Clone for devboy_core::config::SecretsProfile
+pub fn devboy_core::config::SecretsProfile::clone(&self) -> devboy_core::config::SecretsProfile
+impl core::cmp::Eq for devboy_core::config::SecretsProfile
+impl core::cmp::PartialEq for devboy_core::config::SecretsProfile
+pub fn devboy_core::config::SecretsProfile::eq(&self, other: &devboy_core::config::SecretsProfile) -> bool
+impl core::default::Default for devboy_core::config::SecretsProfile
+pub fn devboy_core::config::SecretsProfile::default() -> devboy_core::config::SecretsProfile
+impl core::fmt::Debug for devboy_core::config::SecretsProfile
+pub fn devboy_core::config::SecretsProfile::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::config::SecretsProfile
+impl core::marker::StructuralPartialEq for devboy_core::config::SecretsProfile
+impl serde_core::ser::Serialize for devboy_core::config::SecretsProfile
+pub fn devboy_core::config::SecretsProfile::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::SecretsProfile
+pub fn devboy_core::config::SecretsProfile::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::SecretsProfile
+impl core::marker::Send for devboy_core::config::SecretsProfile
+impl core::marker::Sync for devboy_core::config::SecretsProfile
+impl core::marker::Unpin for devboy_core::config::SecretsProfile
+impl core::marker::UnsafeUnpin for devboy_core::config::SecretsProfile
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::SecretsProfile
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::SecretsProfile
 pub struct devboy_core::config::BuiltinToolsConfig
 pub devboy_core::config::BuiltinToolsConfig::disabled: alloc::vec::Vec<alloc::string::String>
 pub devboy_core::config::BuiltinToolsConfig::enabled: alloc::vec::Vec<alloc::string::String>
@@ -620,6 +651,7 @@ pub devboy_core::config::Config::linear: core::option::Option<devboy_core::confi
 pub devboy_core::config::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::config::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::config::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
+pub devboy_core::config::Config::runtime: core::option::Option<devboy_core::config::RuntimeConfig>
 pub devboy_core::config::Config::secrets: core::option::Option<devboy_core::config::SecretsConfig>
 pub devboy_core::config::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::config::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
@@ -645,7 +677,15 @@ pub fn devboy_core::config::Config::set(&mut self, key: &str, value: &str) -> de
 pub fn devboy_core::config::Config::set_active_context(&mut self, name: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::validate(&self) -> devboy_core::error::Result<()>
 impl devboy_core::config::Config
+pub fn devboy_core::config::Config::idle_relock_seconds(&self) -> core::option::Option<u64>
+pub fn devboy_core::config::Config::is_ci_forced(&self) -> bool
+pub fn devboy_core::config::Config::is_keychain_enabled(&self) -> bool
 pub fn devboy_core::config::Config::is_secrets_migration_complete(&self) -> bool
+pub fn devboy_core::config::Config::max_unlock_ttl_seconds(&self) -> u64
+pub fn devboy_core::config::Config::secrets_config_warnings(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_core::config::Config::secrets_keyfile_path(&self) -> core::option::Option<&std::path::Path>
+pub fn devboy_core::config::Config::secrets_profile(&self) -> devboy_core::config::SecretsProfile
+pub fn devboy_core::config::Config::unlock_ttl_seconds(&self) -> u64
 impl core::clone::Clone for devboy_core::config::Config
 pub fn devboy_core::config::Config::clone(&self) -> devboy_core::config::Config
 impl core::default::Default for devboy_core::config::Config
@@ -814,6 +854,32 @@ impl core::marker::Unpin for devboy_core::config::JiraConfig
 impl core::marker::UnsafeUnpin for devboy_core::config::JiraConfig
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::JiraConfig
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::JiraConfig
+pub struct devboy_core::config::KeychainConfig
+pub devboy_core::config::KeychainConfig::enabled: bool
+impl devboy_core::config::KeychainConfig
+pub fn devboy_core::config::KeychainConfig::is_default(&self) -> bool
+impl core::clone::Clone for devboy_core::config::KeychainConfig
+pub fn devboy_core::config::KeychainConfig::clone(&self) -> devboy_core::config::KeychainConfig
+impl core::cmp::Eq for devboy_core::config::KeychainConfig
+impl core::cmp::PartialEq for devboy_core::config::KeychainConfig
+pub fn devboy_core::config::KeychainConfig::eq(&self, other: &devboy_core::config::KeychainConfig) -> bool
+impl core::default::Default for devboy_core::config::KeychainConfig
+pub fn devboy_core::config::KeychainConfig::default() -> devboy_core::config::KeychainConfig
+impl core::fmt::Debug for devboy_core::config::KeychainConfig
+pub fn devboy_core::config::KeychainConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::config::KeychainConfig
+impl core::marker::StructuralPartialEq for devboy_core::config::KeychainConfig
+impl serde_core::ser::Serialize for devboy_core::config::KeychainConfig
+pub fn devboy_core::config::KeychainConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::KeychainConfig
+pub fn devboy_core::config::KeychainConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::KeychainConfig
+impl core::marker::Send for devboy_core::config::KeychainConfig
+impl core::marker::Sync for devboy_core::config::KeychainConfig
+impl core::marker::Unpin for devboy_core::config::KeychainConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::KeychainConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::KeychainConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::KeychainConfig
 pub struct devboy_core::config::LinearConfig
 pub devboy_core::config::LinearConfig::team_id: alloc::string::String
 pub devboy_core::config::LinearConfig::team_key: core::option::Option<alloc::string::String>
@@ -1052,8 +1118,38 @@ impl core::marker::Unpin for devboy_core::config::RemoteConfigSettings
 impl core::marker::UnsafeUnpin for devboy_core::config::RemoteConfigSettings
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::RemoteConfigSettings
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::RemoteConfigSettings
+pub struct devboy_core::config::RuntimeConfig
+pub devboy_core::config::RuntimeConfig::ci: bool
+impl core::clone::Clone for devboy_core::config::RuntimeConfig
+pub fn devboy_core::config::RuntimeConfig::clone(&self) -> devboy_core::config::RuntimeConfig
+impl core::cmp::Eq for devboy_core::config::RuntimeConfig
+impl core::cmp::PartialEq for devboy_core::config::RuntimeConfig
+pub fn devboy_core::config::RuntimeConfig::eq(&self, other: &devboy_core::config::RuntimeConfig) -> bool
+impl core::default::Default for devboy_core::config::RuntimeConfig
+pub fn devboy_core::config::RuntimeConfig::default() -> devboy_core::config::RuntimeConfig
+impl core::fmt::Debug for devboy_core::config::RuntimeConfig
+pub fn devboy_core::config::RuntimeConfig::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_core::config::RuntimeConfig
+impl core::marker::StructuralPartialEq for devboy_core::config::RuntimeConfig
+impl serde_core::ser::Serialize for devboy_core::config::RuntimeConfig
+pub fn devboy_core::config::RuntimeConfig::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::config::RuntimeConfig
+pub fn devboy_core::config::RuntimeConfig::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::config::RuntimeConfig
+impl core::marker::Send for devboy_core::config::RuntimeConfig
+impl core::marker::Sync for devboy_core::config::RuntimeConfig
+impl core::marker::Unpin for devboy_core::config::RuntimeConfig
+impl core::marker::UnsafeUnpin for devboy_core::config::RuntimeConfig
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::RuntimeConfig
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::RuntimeConfig
 pub struct devboy_core::config::SecretsConfig
+pub devboy_core::config::SecretsConfig::idle_relock_seconds: core::option::Option<u64>
+pub devboy_core::config::SecretsConfig::keychain: devboy_core::config::KeychainConfig
+pub devboy_core::config::SecretsConfig::keyfile_path: core::option::Option<std::path::PathBuf>
+pub devboy_core::config::SecretsConfig::max_unlock_ttl_seconds: core::option::Option<u64>
 pub devboy_core::config::SecretsConfig::migration_complete: bool
+pub devboy_core::config::SecretsConfig::profile: devboy_core::config::SecretsProfile
+pub devboy_core::config::SecretsConfig::unlock_ttl_seconds: core::option::Option<u64>
 impl core::clone::Clone for devboy_core::config::SecretsConfig
 pub fn devboy_core::config::SecretsConfig::clone(&self) -> devboy_core::config::SecretsConfig
 impl core::cmp::Eq for devboy_core::config::SecretsConfig
@@ -4626,6 +4722,7 @@ pub devboy_core::Config::linear: core::option::Option<devboy_core::config::Linea
 pub devboy_core::Config::proxy: devboy_core::config::ProxyConfig
 pub devboy_core::Config::proxy_mcp_servers: alloc::vec::Vec<devboy_core::config::ProxyMcpServerConfig>
 pub devboy_core::Config::remote_config: core::option::Option<devboy_core::config::RemoteConfigSettings>
+pub devboy_core::Config::runtime: core::option::Option<devboy_core::config::RuntimeConfig>
 pub devboy_core::Config::secrets: core::option::Option<devboy_core::config::SecretsConfig>
 pub devboy_core::Config::sentry: core::option::Option<devboy_core::config::SentryConfig>
 pub devboy_core::Config::slack: core::option::Option<devboy_core::config::SlackConfig>
@@ -4651,7 +4748,15 @@ pub fn devboy_core::config::Config::set(&mut self, key: &str, value: &str) -> de
 pub fn devboy_core::config::Config::set_active_context(&mut self, name: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::validate(&self) -> devboy_core::error::Result<()>
 impl devboy_core::config::Config
+pub fn devboy_core::config::Config::idle_relock_seconds(&self) -> core::option::Option<u64>
+pub fn devboy_core::config::Config::is_ci_forced(&self) -> bool
+pub fn devboy_core::config::Config::is_keychain_enabled(&self) -> bool
 pub fn devboy_core::config::Config::is_secrets_migration_complete(&self) -> bool
+pub fn devboy_core::config::Config::max_unlock_ttl_seconds(&self) -> u64
+pub fn devboy_core::config::Config::secrets_config_warnings(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_core::config::Config::secrets_keyfile_path(&self) -> core::option::Option<&std::path::Path>
+pub fn devboy_core::config::Config::secrets_profile(&self) -> devboy_core::config::SecretsProfile
+pub fn devboy_core::config::Config::unlock_ttl_seconds(&self) -> u64
 impl core::clone::Clone for devboy_core::config::Config
 pub fn devboy_core::config::Config::clone(&self) -> devboy_core::config::Config
 impl core::default::Default for devboy_core::config::Config
