@@ -18,6 +18,7 @@ pub mod format;
 pub mod keychain;
 pub mod passphrase;
 pub mod recovery;
+pub mod totp;
 pub mod vault;
 
 pub use aead::{

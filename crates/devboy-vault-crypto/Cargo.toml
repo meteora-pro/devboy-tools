@@ -30,6 +30,10 @@ argon2.workspace = true
 bip39.workspace = true
 hkdf.workspace = true
 sha2.workspace = true
+hmac.workspace = true
+sha1.workspace = true
+data-encoding.workspace = true
+subtle.workspace = true
 
 # Keychain access (macOS only — the keychain envelope from ADR-023 §3.2
 # is a no-op on every other platform).

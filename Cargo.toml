@@ -120,6 +120,18 @@ argon2 = "0.5"
 bip39 = "2"
 hkdf = "0.12"
 
+# TOTP re-unlock (ADR-024 §1 / RFC 6238).
+#
+# SHA-1 is not a security choice here: RFC 6238 fixes HMAC-SHA1 as the
+# algorithm every authenticator app implements, and the security of the
+# scheme rests on the 32-byte shared secret, not on the hash's collision
+# resistance. `subtle` provides the constant-time comparison a code check
+# needs; `data-encoding` provides the base32 alphabet `otpauth://` URIs use.
+hmac = "0.12"
+sha1 = "0.10"
+data-encoding = "2"
+subtle = "2"
+
 # Observability (optional)
 sentry = { version = "0.35", default-features = false, features = ["rustls", "reqwest", "tracing", "panic", "backtrace", "contexts"] }
 sentry-tracing = "0.35"
