@@ -1,4 +1,4 @@
-//! Bridge from the local-vault daemon to [`CredentialStore`]
+//! Bridge from the local-vault daemon to [`CredentialStore`](devboy_storage::CredentialStore)
 //! (ADR-024 §6, gap found while landing the default flip).
 //!
 //! # The gap
@@ -38,7 +38,8 @@
 //! # Read-through, not read-write
 //!
 //! This bridge deliberately implements **reads only**, and
-//! [`is_writable`](CredentialStore::is_writable) reports `false`.
+//! [`is_writable`](devboy_storage::CredentialStore::is_writable)
+//! reports `false`.
 //!
 //! The daemon requires a `fresh_unlock` proof — a passphrase or
 //! TOTP code — on every `secret.put` and `secret.rotate`

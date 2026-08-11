@@ -428,9 +428,9 @@ fn default_daemon_start_command() -> String {
 
 /// Every variant, for exhaustiveness testing.
 ///
-/// Kept in sync with the enum by [`variant_index`], whose match is
-/// exhaustive — a new variant fails to compile until it is added
-/// here too.
+/// Kept in sync with the enum by the private `variant_index`,
+/// whose match is exhaustive — a new variant fails to compile
+/// until it is added here too.
 pub const ALL_ERROR_KINDS: &[SecretsErrorKind] = &[
     SecretsErrorKind::LockedTotpAvailable,
     SecretsErrorKind::TotpUnavailable,
