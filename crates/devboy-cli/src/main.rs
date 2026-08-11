@@ -11,6 +11,7 @@ mod secrets_migrate;
 mod secrets_rotate;
 mod secrets_selftest;
 mod secrets_setup;
+mod secrets_totp;
 mod secrets_ui;
 mod secrets_validate;
 mod skills_cmd;

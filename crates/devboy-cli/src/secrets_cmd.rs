@@ -80,6 +80,14 @@ pub enum SecretsCommands {
     /// "is anything broken"; this asks "what am I actually
     /// getting".
     Selftest(crate::secrets_selftest::SelftestArgs),
+    /// Enrol an authenticator app so the vault can be re-unlocked
+    /// with a six-digit code instead of the passphrase (ADR-024 §1).
+    ///
+    /// The shared secret is displayed once and never again — it is
+    /// stored in a reserved vault slot that nothing can read back,
+    /// which is precisely what makes a code from it evidence that a
+    /// human was present.
+    AddTotp(crate::secrets_totp::AddTotpArgs),
     /// Work with KDBX 4 (KeePass) files as a SecretSource. The
     /// passphrase is prompted from stdin with no echo; the
     /// decrypted body lives only inside this process and is
@@ -513,6 +521,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
         SecretsCommands::Selftest(args) => crate::secrets_selftest::handle(args),
+        SecretsCommands::AddTotp(args) => crate::secrets_totp::handle(args),
         SecretsCommands::Kdbx { command } => match command {
             KdbxCommands::Peek(args) => kdbx_peek(args),
             KdbxCommands::DescribeMetadata(args) => kdbx_describe_metadata(args),

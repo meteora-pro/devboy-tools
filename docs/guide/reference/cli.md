@@ -71,6 +71,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
 * [`devboy secrets setup`↴](#devboy-secrets-setup)
 * [`devboy secrets selftest`↴](#devboy-secrets-selftest)
+* [`devboy secrets add-totp`↴](#devboy-secrets-add-totp)
 * [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
 * [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
 * [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
@@ -798,6 +799,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `catalog` — Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
 * `setup` — Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
 * `selftest` — Report which security posture is actually in force, and where it is weaker than it looks (ADR-024). `doctor` asks "is anything broken"; this asks "what am I actually getting"
+* `add-totp` — Enrol an authenticator app so the vault can be re-unlocked with a six-digit code instead of the passphrase (ADR-024 §1)
 * `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
 
 
@@ -1113,6 +1115,24 @@ Report which security posture is actually in force, and where it is weaker than 
 
 * `--json` — Emit JSON instead of the human-readable table
 * `--path <PATH>` — Check the environment variables that would satisfy this path, under both naming conventions
+
+
+
+## `devboy secrets add-totp`
+
+Enrol an authenticator app so the vault can be re-unlocked with a six-digit code instead of the passphrase (ADR-024 §1).
+
+The shared secret is displayed once and never again — it is stored in a reserved vault slot that nothing can read back, which is precisely what makes a code from it evidence that a human was present.
+
+**Usage:** `devboy secrets add-totp [OPTIONS]`
+
+###### **Options:**
+
+* `--issuer <ISSUER>` — Label shown in the authenticator app
+
+  Default value: `devboy`
+* `--account <ACCOUNT>` — Account name shown in the authenticator app. Defaults to the current user
+* `--no-qr` — Print the `otpauth://` URI and secret without drawing a QR code. Useful over SSH, in a pipe, or when the terminal mangles block characters
 
 
 
