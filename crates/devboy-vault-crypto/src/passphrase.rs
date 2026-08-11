@@ -186,6 +186,9 @@ pub fn unwrap_passphrase(
             wrapped_key,
         } => (argon2_salt, argon2_params, wrapped_key),
         Envelope::Totp { .. } => return Err(PassphraseError::WrongKind { kind: "totp" }),
+        Envelope::Keyfile { .. } => {
+            return Err(PassphraseError::WrongKind { kind: "keyfile" });
+        }
         Envelope::Recovery { .. } => return Err(PassphraseError::WrongKind { kind: "recovery" }),
     };
 

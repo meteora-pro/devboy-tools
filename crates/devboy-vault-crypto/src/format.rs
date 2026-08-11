@@ -377,6 +377,28 @@ pub enum Envelope {
         /// AEAD-wrapped vault key (base64 no-pad).
         wrapped_key: String,
     },
+    /// Keyfile envelope — vault key wrapped under
+    /// `HKDF-SHA256(keyfile_bytes, keyfile_salt)` (ADR-024 §6).
+    ///
+    /// Enables an unattended cold start: a daemon can open the
+    /// vault with no human present, which is what the OS keychain
+    /// used to provide before it left the default chain.
+    ///
+    /// The keyfile path is **not** stored here. Recording it would
+    /// undo the one property that makes this safe — that the two
+    /// halves live in different places, so a backup, a cloud sync,
+    /// or an accidental `git add` of the config tree cannot carry
+    /// both. The path comes from configuration instead.
+    ///
+    /// This defends against a *file-level* leak, not against a
+    /// process running as the same user — and neither did the
+    /// keychain on Linux or Windows.
+    Keyfile {
+        /// Per-envelope HKDF salt (base64 no-pad).
+        keyfile_salt: String,
+        /// AEAD-wrapped vault key (base64 no-pad).
+        wrapped_key: String,
+    },
     /// Recovery envelope — vault key wrapped under
     /// `HKDF(BIP39_seed, bip39_salt)`.
     Recovery {

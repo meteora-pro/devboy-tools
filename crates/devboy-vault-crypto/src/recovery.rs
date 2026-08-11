@@ -274,6 +274,7 @@ pub fn unwrap_recovery(
             return Err(RecoveryError::WrongKind { kind: "passphrase" });
         }
         Envelope::Totp { .. } => return Err(RecoveryError::WrongKind { kind: "totp" }),
+        Envelope::Keyfile { .. } => return Err(RecoveryError::WrongKind { kind: "keyfile" }),
     };
 
     let salt_bytes = b64_decode(bip39_salt)?;

@@ -34,11 +34,7 @@ hmac.workspace = true
 sha1.workspace = true
 data-encoding.workspace = true
 subtle.workspace = true
-
-# Keychain access (macOS only — the keychain envelope from ADR-023 §3.2
-# is a no-op on every other platform).
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3", features = ["apple-native"] }
+dirs.workspace = true
 
 [dev-dependencies]
 # tempfile is in [dependencies] above (used by atomic write); no

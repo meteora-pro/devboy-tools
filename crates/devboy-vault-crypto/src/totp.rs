@@ -260,6 +260,9 @@ pub fn unwrap_totp(
         Envelope::Recovery { .. } => {
             return Err(TotpEnvelopeError::WrongKind { kind: "recovery" });
         }
+        Envelope::Keyfile { .. } => {
+            return Err(TotpEnvelopeError::WrongKind { kind: "keyfile" });
+        }
     };
 
     let salt_bytes = b64_decode(totp_salt)?;

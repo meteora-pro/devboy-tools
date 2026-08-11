@@ -15,6 +15,7 @@
 
 pub mod aead;
 pub mod format;
+pub mod keyfile;
 pub mod passphrase;
 pub mod recovery;
 pub mod totp;
