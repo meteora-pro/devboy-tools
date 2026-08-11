@@ -410,10 +410,17 @@ secrets_unlock(totp: string, duration?: number)   // duration in seconds, ≤ ma
   // ("no TOTP session this boot" / "TOTP not enrolled") but no further detail.
 
 secrets_status()
-  → { state: "locked" | "unlocked", expires_at?, available_methods: [...] }
+  → { state: "locked" | "unlocked", expires_at?, available_methods: [...],
+      trust_level: "separate_uid" | "independent" | "agent_parented" | "env_only" }
   // available_methods reflects what will actually work right now — it omits
-  // "totp" when no TOTP session is resident, so a well-behaved agent can check
-  // before prompting the user for a code that cannot succeed.
+  // "totp" when no TOTP session is resident OR when the daemon's self-check
+  // (§7) found the caller in its own ancestry, so a well-behaved agent can
+  // check before prompting the user for a code that cannot succeed.
+  //
+  // trust_level is computed by the daemon from its actual process layout, not
+  // asserted by configuration. An agent that reports vault state to the user
+  // should surface it: "unlocked, but the daemon cannot protect its memory
+  // from this session" is materially different from "unlocked".
 
 secrets_validate(path: string, liveness?: boolean)
   → { format: "ok" | "invalid", liveness?: "ok" | "invalid" | "unreachable", expires_at? }
@@ -863,6 +870,77 @@ including `totp_secret` and `vault_key` — out of the agent's reach.
 against a hostile agent; acceptable only for a trusted single-user workstation.
 `doctor` must say so rather than imply the guarantees of levels 1–2.
 
+#### Self-check: the daemon verifies its own provenance
+
+"The agent must not start the daemon" is an operational rule, and operational
+rules that nobody enforces decay into comments — the same reasoning that made
+§4's scrub server-side and §5's purge user-only. The daemon can check this
+about **itself**, so it must.
+
+Three checks, none of which requires knowing anything about which agent is
+running:
+
+- **A. Ancestry, on every connection.** The daemon reads the client's PID from
+  the socket (`SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS,
+  `GetNamedPipeClientProcessId` on Windows) and walks its **own** parent chain.
+  If the connecting client appears in it, the client is an ancestor of the
+  daemon — and can therefore `ptrace` it under `ptrace_scope = 1`. Every
+  guarantee that depends on daemon memory being private is void for that
+  client.
+- **B. Startup provenance, once at launch.** A daemon started the intended way
+  is reparented to the init system: PID 1, or `systemd --user`, or `launchd`,
+  or the Windows service manager. A daemon whose parent is an ordinary session
+  process was spawned from inside someone's process tree, which is the
+  condition this rule exists to prevent.
+- **C. No controlling terminal.** A correctly launched daemon has none. Holding
+  one indicates it was started from a shell, and — combined with §7's PTY
+  requirement — that its prompts may render into a terminal someone else owns.
+
+**This is deliberately structural, not nominal.** The daemon never asks "is my
+ancestor a coding agent" — it could not answer that without embedding a list of
+vendor process names, which CI guard #243 forbids and which would fail on the
+first agent not on the list. It asks "can my caller `ptrace` me", which is the
+property that actually matters and is the same question regardless of what the
+caller is.
+
+**What happens on failure: degrade, announce, do not crash.** Refusing to start
+would strand users whose setup is merely imperfect. Instead the daemon lowers
+its own trust level and says so:
+
+- Check A fails → refuse `secrets_unlock` for *that client* with
+  `DaemonUntrusted`; the passphrase path still works, because it does not
+  depend on daemon memory being private from this caller.
+- Check B or C fails → report level 3 in `secrets_status()` and to `doctor`,
+  omit `"totp"` from `available_methods`, and never claim a level the process
+  layout does not support.
+
+The trust level therefore becomes a value the daemon computes and publishes,
+not a property the documentation asserts.
+
+**Agent-facing consequence (§8).** `DaemonUntrusted` carries
+`actor: "user"`, `action: "ask_user_to_restart_daemon"`, and a
+`user_message` naming the platform command — for example *"The secret daemon
+was started by this session and cannot protect its own memory from it. Stop it
+and start it via `systemctl --user start devboy-secrets`, then retry."* The
+agent relays that and waits; it must not restart the daemon itself, since doing
+so reproduces exactly the condition being reported.
+
+**Limits, stated so the check is not oversold.**
+
+Check A is defeated by double-forking: an agent that starts the daemon and lets
+it reparent to init breaks the ancestry chain and passes. But that manoeuvre is
+self-defeating for the attack it would enable — `ptrace_scope = 1` evaluates
+descent *at the time of the `ptrace` call*, so an orphaned daemon is no longer
+the agent's descendant and is no longer `ptrace`-able by it. The escape from
+the check is also an escape from the capability.
+
+What none of these checks catch is an agent that controlled the daemon's
+**environment** at launch — `LD_PRELOAD`, a modified `PATH`, a substituted
+binary — regardless of the resulting process tree. That is a code-integrity
+problem, not a topology problem, and its answer is level 1 (a daemon binary the
+user cannot write) or the macOS code-signature binding described below. The
+self-check raises the floor; it does not replace §7's levels.
+
 #### Two credential flows, and the rule that separates them
 
 The design has exactly two paths by which a credential reaches the daemon, and
@@ -1036,6 +1114,7 @@ verbatim.
 | `ApprovalDenied` | **user** | `none` | The user said no. Do not re-ask in this session |
 | `LivenessFailed` / expired | **user** | `ask_user_to_rotate` | Token is dead. Surface `retrieval_url` + `rotation_method` |
 | `DaemonNotRunning` | **user** | `ask_user_to_start_daemon` | **Never start it yourself** — see below |
+| `DaemonUntrusted` | **user** | `ask_user_to_restart_daemon` | The daemon found you in its own ancestry (§7 check A). Relay the restart command; restarting it yourself reproduces the fault |
 | `NotAvailableInCiMode` | **user** | `set_env_var` | Name every variable that would satisfy this path (§6) |
 
 #### The manifest already holds the useful part
@@ -1061,10 +1140,14 @@ other sub-decisions, and an agent cannot infer them:
 
 1. **Never request the passphrase.** No tool accepts one. An agent asking for
    it in chat is out of protocol regardless of how the request is phrased.
-2. **Never start the daemon.** `DaemonNotRunning` is a `user` action
-   specifically because a daemon spawned by the agent is a daemon the agent can
-   `ptrace` (§7). The remediation names the platform command for the user to
-   run; the agent relays it and waits.
+2. **Never start or restart the daemon.** `DaemonNotRunning` and
+   `DaemonUntrusted` are `user` actions specifically because a daemon spawned
+   by the agent is a daemon the agent can `ptrace` (§7). The remediation names
+   the platform command for the user to run; the agent relays it and waits.
+   This is not an honour-system rule — §7's check A detects the resulting
+   layout and refuses the TOTP path for that client — but an agent that
+   "helpfully" restarts the daemon converts a clear error into a silently
+   degraded session, so the prohibition is stated as well as enforced.
 3. **Never work around a missing secret.** Reading it from the environment,
    a dotfile, a config sample, or shell history defeats ADR-023's boundary just
    as thoroughly as leaking it would.
@@ -1410,7 +1493,7 @@ guarantee the deployment may not have.
     plist for independent startup, a prompt channel the agent does not own (its
     own window / a separate terminal / a platform primitive — **not** a PTY
     whose master a descendant of the agent holds), refusal to serve
-    `secrets_unlock` when the daemon's parent is the calling agent, and — for
+    `secrets_unlock` for a client found in the daemon's own ancestry, and — for
     level 1 — a service UID
     with a client-UID allow-list replacing the `peer_uid == geteuid()` check in
     `crates/devboy-secrets-agent/src/socket.rs`.
@@ -1423,6 +1506,14 @@ guarantee the deployment may not have.
     `crates/devboy-mcp/src/agent_safety.rs`. A test should assert that every
     error variant maps to a remediation, so a newly added error cannot ship
     without one.
+  - `crates/devboy-secrets-agent/src/socket.rs` — §7's self-checks: read the
+    client PID (`SO_PEERCRED` / `LOCAL_PEERPID` /
+    `GetNamedPipeClientProcessId`) and walk the daemon's own parent chain to
+    detect an ancestor-client (check A); at startup, verify reparenting to the
+    init system (check B) and the absence of a controlling terminal (check C).
+    The result is a computed `trust_level` published through `secrets_status()`
+    — never a configured claim. Checks must be structural: no list of vendor
+    process names, per CI guard #243.
   - `crates/devboy-cli/src/doctor/` — report the achieved trusted-path level
     (separate UID / independent lifecycle / agent-parented), the active
     profile, and any legacy keychain entries awaiting migration.
@@ -1474,3 +1565,4 @@ guarantee the deployment may not have.
 | 2026-08-11 | Andrei Mazniak | **§6: CI / env-only mode promoted to a first-class contract.** Spelled out as a table what is and is not active when the environment is the sole source (no vault, daemon, keychain, prompt, approval, audit log or version history), so a pipeline can never hang on an invisible prompt or a D-Bus call. Pinned a five-step variable-resolution order that keeps **both** naming conventions working — ADR-005's `DEVBOY_GITHUB_TOKEN` / unprefixed `GITHUB_TOKEN` alongside ADR-021's `DEVBOY_SECRET__<PATH>` — since routing CI through only the latter would break existing pipelines silently. Required fail-fast behaviour (errors list every variable tried; writes return an explicit read-only error instead of disappearing into `MemoryStore`; vault-dependent MCP tools return `NotAvailableInCiMode`). Confirmed that heuristic CI variables raise a `doctor` notice but never flip the mode. Decision (6), Risks, Implementation and the docs plan updated to match. |
 | 2026-08-11 | Andrei Mazniak | **New §8: actionable errors.** Every failure reply now carries a `remediation { actor, action, user_message, retryable, retry_after_seconds }`, where `actor` tells the agent whether it can resolve the problem or must stop and fetch a human. Adds the full error → remediation table, and a **negative contract** covering the guesses that silently dismantle the other sub-decisions: never request the passphrase, never start the daemon (a self-spawned daemon is `ptrace`-able and voids §1/§7), never work around a missing secret via env/dotfiles/history, never retry past the stated backoff. Surfaces the ADR-020 manifest metadata (`retrieval_url`, `required_scopes`, `rotation_method`) that has never had a consumer, so `NotProvisioned` tells the user which token to create, with which scopes, and where. `user_message` is daemon-authored, which also closes the prompt-injection concern already listed in Risks. Sub-decision count 7 → 8; gap 6 added to Context; Decision (8), Consequences and Implementation updated. |
 | 2026-08-11 | Andrei Mazniak | **§7: the two credential flows made explicit.** The passphrase travels user → daemon with the agent outside the path entirely; a TOTP code travels user → agent → daemon with the agent as transport. States the rule the asymmetry follows from — *a credential may cross the agent surface only if it is ephemeral **and** cannot perform a cold start* — with the property table showing both conditions are load-bearing. Adds a requirement that was missing: the passphrase prompt must not render into a PTY the agent controls, since an agent that spawned the shell holds the master and reads non-echoed input regardless of which process printed the prompt (`doctor` must grade such a setup as level 3). Documents that the agent learns of an unlock by polling `secrets_status()` — there is deliberately no callback into a flow it does not participate in. Adds the user-facing rule *devboy never asks for your vault passphrase in an agent conversation*, and records the residual risk that the agent can solicit a TOTP code prematurely. Three matching entries added to Risks. |
+| 2026-08-11 | Andrei Mazniak | **§7: the daemon now enforces its own provenance instead of relying on an operational rule.** Three structural self-checks: (A) on every connection, read the client PID and walk the daemon's own parent chain — a client found there can `ptrace` the daemon, so `secrets_unlock` is refused for it with `DaemonUntrusted`; (B) at startup, verify reparenting to the init system; (C) verify no controlling terminal. Checks are deliberately structural rather than nominal — the daemon asks "can my caller `ptrace` me", never "is my ancestor a coding agent", which would need a vendor process-name list that CI guard #243 forbids and that would fail on the first agent not listed. On failure the daemon degrades and announces rather than crashing: `trust_level` becomes a value it computes and publishes through `secrets_status()`, not a claim the documentation makes. Notes that double-forking defeats check A but is self-defeating — `ptrace_scope` evaluates descent at call time, so an orphaned daemon is no longer `ptrace`-able by its starter — and that launch-time environment control (`LD_PRELOAD`, substituted binary) is a code-integrity problem the check does not address. §8 gains the `DaemonUntrusted` row and a strengthened negative contract. |
