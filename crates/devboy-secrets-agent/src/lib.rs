@@ -14,6 +14,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(unix)]
+pub mod client;
 pub mod idle;
 #[cfg(unix)]
 pub mod prompt;
@@ -25,6 +27,8 @@ pub mod server;
 pub mod socket;
 pub mod totp_session;
 
+#[cfg(unix)]
+pub use client::{AgentClient, ClientError};
 #[cfg(unix)]
 pub use idle::{
     DEFAULT_IDLE_TIMEOUT, IdleClock, IdleTracker, ManualClock, SIGTERM_GRACE, SystemClock,

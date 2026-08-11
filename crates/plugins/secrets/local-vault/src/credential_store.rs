@@ -57,28 +57,20 @@
 //! the daemon is real work that depends on the prompt channel
 //! landing first; it is tracked separately.
 
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::Path;
 
 use devboy_core::{Error, Result};
-use devboy_secrets_agent::{ENTRY_NOT_FOUND, VAULT_LOCKED};
+use devboy_secrets_agent::{AgentClient, ClientError, ENTRY_NOT_FOUND, VAULT_LOCKED};
 use devboy_storage::CredentialStore;
 use secrecy::SecretString;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::debug;
-
-/// How long to wait on the daemon before giving up.
-///
-/// Short on purpose: a wedged daemon must not stall a command that
-/// could have fallen through to another store.
-const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Synchronous, read-through [`CredentialStore`] over the
 /// local-vault daemon.
 #[derive(Debug, Clone)]
 pub struct VaultStore {
-    socket_path: PathBuf,
+    client: AgentClient,
 }
 
 impl VaultStore {
@@ -88,21 +80,19 @@ impl VaultStore {
     /// all (no config directory), since a store that can never
     /// connect is not worth putting in a chain.
     pub fn new() -> Option<Self> {
-        devboy_secrets_agent::default_socket_path()
-            .ok()
-            .map(|socket_path| Self { socket_path })
+        AgentClient::new().map(|client| Self { client })
     }
 
     /// Build a store against an explicit socket path.
-    pub fn with_socket(path: impl Into<PathBuf>) -> Self {
+    pub fn with_socket(path: impl Into<std::path::PathBuf>) -> Self {
         Self {
-            socket_path: path.into(),
+            client: AgentClient::with_socket(path),
         }
     }
 
     /// The socket this store talks to.
     pub fn socket_path(&self) -> &Path {
-        &self.socket_path
+        self.client.socket_path()
     }
 
     /// Whether the daemon socket exists.
@@ -111,7 +101,7 @@ impl VaultStore {
     /// daemon pays a `stat` rather than a connect timeout on every
     /// lookup.
     pub fn daemon_present(&self) -> bool {
-        self.socket_path.exists()
+        self.client.is_running()
     }
 
     /// Error returned for any write attempt. See the module docs
@@ -122,87 +112,6 @@ impl VaultStore {
              fresh passphrase or TOTP proof for every write, which this interface cannot supply. \
              Store it with `devboy secrets ui`, or set the corresponding environment variable."
         ))
-    }
-
-    #[cfg(unix)]
-    fn rpc(&self, method: &str, params: Value) -> std::result::Result<Value, RpcFailure> {
-        use std::os::unix::net::UnixStream;
-
-        let stream = UnixStream::connect(&self.socket_path).map_err(RpcFailure::Unreachable)?;
-        stream.set_read_timeout(Some(RPC_TIMEOUT)).ok();
-        stream.set_write_timeout(Some(RPC_TIMEOUT)).ok();
-
-        let request = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        });
-
-        let mut writer = stream.try_clone().map_err(RpcFailure::Unreachable)?;
-        writeln!(writer, "{request}").map_err(RpcFailure::Unreachable)?;
-        writer.flush().map_err(RpcFailure::Unreachable)?;
-        // Half-close so the daemon's read loop sees EOF and answers
-        // instead of blocking for more bytes.
-        drop(writer);
-
-        let mut line = String::new();
-        BufReader::new(stream)
-            .read_line(&mut line)
-            .map_err(RpcFailure::Unreachable)?;
-
-        let response: Value = serde_json::from_str(&line).map_err(|e| {
-            RpcFailure::Protocol(format!("malformed reply from secret daemon: {e}"))
-        })?;
-
-        if let Some(error) = response.get("error")
-            && !error.is_null()
-        {
-            let code = error.get("code").and_then(Value::as_i64).unwrap_or(0) as i32;
-            let message = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown daemon error")
-                .to_owned();
-            return Err(RpcFailure::Daemon { code, message });
-        }
-
-        Ok(response.get("result").cloned().unwrap_or(Value::Null))
-    }
-
-    #[cfg(not(unix))]
-    fn rpc(&self, _method: &str, _params: Value) -> std::result::Result<Value, RpcFailure> {
-        // The daemon protocol is UNIX-domain-socket only by design
-        // (ADR-023 §3.3). On Windows the store simply never
-        // participates, which `daemon_present` already reports.
-        Err(RpcFailure::Protocol(
-            "the secret daemon is only reachable over UNIX domain sockets".to_owned(),
-        ))
-    }
-}
-
-/// Why an RPC did not produce a result.
-///
-/// Kept separate from [`Error`] because the chain treats these
-/// differently: an unreachable daemon means "ask the next store",
-/// a locked vault means "stop and tell the user".
-#[derive(Debug)]
-enum RpcFailure {
-    /// Could not reach the daemon at all.
-    Unreachable(std::io::Error),
-    /// Reached it, but the exchange did not make sense.
-    Protocol(String),
-    /// The daemon answered with a JSON-RPC error.
-    Daemon { code: i32, message: String },
-}
-
-impl std::fmt::Display for RpcFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Unreachable(e) => write!(f, "daemon unreachable: {e}"),
-            Self::Protocol(m) => write!(f, "protocol error: {m}"),
-            Self::Daemon { code, message } => write!(f, "daemon error {code}: {message}"),
-        }
     }
 }
 
@@ -217,7 +126,7 @@ impl CredentialStore for VaultStore {
         }
 
         let path = key_to_vault_path(key);
-        match self.rpc("secret.get", json!({ "path": path })) {
+        match self.client.secret_get(&path) {
             Ok(result) => {
                 let value = result
                     .get("value")
@@ -233,15 +142,14 @@ impl CredentialStore for VaultStore {
             // environment variable" path when the real fix is to
             // unlock — the single most confusing failure this
             // bridge could produce.
-            Err(RpcFailure::Daemon { code, message }) if code == VAULT_LOCKED => {
-                Err(Error::Storage(format!(
-                    "the local vault is locked, so '{key}' cannot be read: {message}. Unlock it \
-                     with `devboy secrets agent unlock`."
-                )))
-            }
+            Err(ClientError::Daemon(e)) if e.code == VAULT_LOCKED => Err(Error::Storage(format!(
+                "the local vault is locked, so '{key}' cannot be read: {}. Unlock it with \
+                 `devboy secrets agent unlock`.",
+                e.message
+            ))),
             // Genuinely absent: the next store gets a turn, and
             // there is nothing to report.
-            Err(RpcFailure::Daemon { code, .. }) if code == ENTRY_NOT_FOUND => Ok(None),
+            Err(ClientError::Daemon(e)) if e.code == ENTRY_NOT_FOUND => Ok(None),
             // Anything else also falls through, but quietly falling
             // through would make a misbehaving daemon look exactly
             // like an empty vault. Leave a trace.

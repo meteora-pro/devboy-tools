@@ -9,7 +9,7 @@
 //! is worth. `secrets_unlock` forwards a six-digit code and reports
 //! whether it worked. Neither carries a secret, and neither can:
 //! the values live behind the daemon, and the reply types are
-//! fenced by [`AgentSafeReply`](crate::agent_safety::AgentSafeReply).
+//! fenced by [`crate::agent_safety::AgentSafeReply`].
 //!
 //! # Why the refusals are not one refusal
 //!
@@ -120,6 +120,86 @@ pub fn unlock_success(granted_seconds: u64) -> SecretsUnlockReply {
     }
 }
 
+/// Run `secrets_unlock` against the daemon.
+///
+/// A daemon that is not running is reported as such rather than as
+/// a bad code: the agent's next move is to ask the user to start
+/// it, not to fetch another code.
+#[cfg(unix)]
+pub fn unlock(args: &SecretsUnlockArgs, ctx: &RemediationContext) -> SecretsUnlockReply {
+    use devboy_secrets_agent::{AgentClient, ClientError};
+
+    let Some(client) = AgentClient::new() else {
+        return SecretsUnlockReply {
+            unlocked: false,
+            granted_seconds: None,
+            remediation: Some(SecretsErrorKind::DaemonNotRunning.remediation(ctx)),
+        };
+    };
+
+    match client.totp_unlock(&args.totp, args.duration_seconds) {
+        Ok(result) => unlock_success(
+            result
+                .get("granted_seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+        ),
+        Err(ClientError::Daemon(e)) => unlock_failure(e.code, ctx),
+        Err(_) => SecretsUnlockReply {
+            unlocked: false,
+            granted_seconds: None,
+            remediation: Some(SecretsErrorKind::DaemonNotRunning.remediation(ctx)),
+        },
+    }
+}
+
+/// Read `secrets_status` from the daemon.
+///
+/// A stopped daemon is reported as locked with no methods
+/// available, which is the truthful answer: nothing can be unlocked
+/// until it runs.
+#[cfg(unix)]
+pub fn status() -> SecretsStatusReply {
+    use devboy_secrets_agent::AgentClient;
+
+    let unreachable = || SecretsStatusReply {
+        state: "locked".to_owned(),
+        expires_in_seconds: None,
+        available_methods: Vec::new(),
+        trust_level: "unknown".to_owned(),
+    };
+
+    let Some(client) = AgentClient::new() else {
+        return unreachable();
+    };
+    let Ok(result) = client.status() else {
+        return unreachable();
+    };
+
+    SecretsStatusReply {
+        state: result
+            .get("state")
+            .and_then(|v| v.as_str())
+            .unwrap_or("locked")
+            .to_owned(),
+        expires_in_seconds: result.get("unlock_ttl_seconds").and_then(|v| v.as_u64()),
+        available_methods: result
+            .get("available_methods")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|m| m.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        trust_level: result
+            .get("trust_level")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +287,21 @@ mod tests {
         })
         .unwrap();
         assert!(!status.contains("\"value\""), "{status}");
+    }
+
+    /// With no daemon running, both tools must answer truthfully
+    /// rather than pretending: an agent told "bad code" would go
+    /// ask the user for another one.
+    #[cfg(unix)]
+    #[test]
+    fn a_stopped_daemon_is_reported_as_such() {
+        // No daemon is running under the test harness.
+        let reply = status();
+        assert_eq!(reply.state, "locked");
+        assert!(
+            reply.available_methods.is_empty(),
+            "nothing can be unlocked while the daemon is down"
+        );
     }
 
     /// A rate-limited refusal should tell the agent to wait rather
