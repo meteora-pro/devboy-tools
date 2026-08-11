@@ -35,6 +35,7 @@ sha1.workspace = true
 data-encoding.workspace = true
 subtle.workspace = true
 dirs.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 # tempfile is in [dependencies] above (used by atomic write); no

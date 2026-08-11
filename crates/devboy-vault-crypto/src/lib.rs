@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod aead;
+pub mod audit;
 pub mod format;
 pub mod keyfile;
 pub mod passphrase;
