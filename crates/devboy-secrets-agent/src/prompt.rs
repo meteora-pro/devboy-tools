@@ -229,29 +229,56 @@ mod tests {
     /// Drive one `read_passphrase` the way a user would: wait until
     /// the prompt has actually disabled echo, then type.
     ///
-    /// The wait is not politeness — `TCSAFLUSH` discards whatever is
-    /// already in the input queue, so anything typed before that
-    /// point is deliberately thrown away. Spinning on the observable
-    /// echo state gives a sync point with no sleeps and no race.
+    /// Two details are load-bearing and neither is politeness.
+    ///
+    /// The wait: `TCSAFLUSH` discards whatever is already in the
+    /// input queue, so anything typed before that point is
+    /// deliberately thrown away. Spinning on the observable echo
+    /// state gives a sync point with no sleeps and no race.
+    ///
+    /// The drain thread: `TCSAFLUSH` also waits for pending *output*
+    /// to drain, and the prompt has just been written. With nobody
+    /// reading the controller side, that wait never completes on
+    /// macOS and the prompt hangs before it can disable echo — which
+    /// is what made every test here fail there while passing on
+    /// Linux, where the buffer happened to be large enough. A real
+    /// terminal is always being drained by its emulator, so draining
+    /// is also the more faithful simulation.
     fn read_with_input(
         pty: &Pty,
         typed: impl AsRef<[u8]>,
         prompt_text: &str,
-    ) -> std::io::Result<SecretString> {
+    ) -> (std::io::Result<SecretString>, Vec<u8>) {
+        use std::sync::{Arc, Mutex};
+
         let device = pty.device();
         let observer = pty.device();
         let mut controller = pty.controller.try_clone().expect("clone controller");
         let typed = typed.as_ref().to_vec();
         let prompt_text = prompt_text.to_owned();
 
+        // Collected so a test can still assert on what the terminal
+        // displayed, even though the bytes are consumed as they
+        // arrive.
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen_writer = Arc::clone(&seen);
+        let mut drain_source = pty.controller.try_clone().expect("clone for drain");
+        let drain = std::thread::spawn(move || {
+            let mut buf = [0u8; 256];
+            while let Ok(n) = drain_source.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                seen_writer
+                    .lock()
+                    .expect("lock")
+                    .extend_from_slice(&buf[..n]);
+            }
+        });
+
         let reader =
             std::thread::spawn(move || TtyPrompt::from_file(device).read_passphrase(&prompt_text));
 
-        // Wait on a deadline rather than a spin count: the whole
-        // crate's tests run in parallel, and a fixed number of
-        // yields can elapse before the reader thread is scheduled
-        // at all. The condition is still observable state, so the
-        // outcome is deterministic — only the patience is generous.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while echo_enabled(&observer).expect("read echo state") {
             assert!(
@@ -264,14 +291,25 @@ mod tests {
         controller.write_all(&typed).expect("write to controller");
         controller.flush().expect("flush");
 
-        reader.join().expect("reader thread")
+        let result = reader.join().expect("reader thread");
+
+        // Give the drain a moment to pick up the trailing newline,
+        // then take what it collected. The thread is left to end
+        // when the Pty's own controller handle drops with the
+        // fixture; joining it here would block until then.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let displayed = seen.lock().expect("lock").clone();
+        drop(controller);
+        let _ = drain;
+
+        (result, displayed)
     }
 
     #[test]
     fn a_passphrase_is_read_from_the_terminal() {
         let pty = pty();
-        let secret = read_with_input(&pty, "correct horse battery staple\n", "Passphrase: ")
-            .expect("read succeeds");
+        let (result, _) = read_with_input(&pty, "correct horse battery staple\n", "Passphrase: ");
+        let secret = result.expect("read succeeds");
 
         assert_eq!(secret.expose_secret(), "correct horse battery staple");
     }
@@ -289,7 +327,8 @@ mod tests {
         writeln!(controller, "shoulder-surfed").expect("write");
         controller.flush().expect("flush");
 
-        let secret = read_with_input(&pty, "typed-at-the-prompt\n", "> ").expect("read");
+        let (result, _) = read_with_input(&pty, "typed-at-the-prompt\n", "> ");
+        let secret = result.expect("read");
         assert_eq!(
             secret.expose_secret(),
             "typed-at-the-prompt",
@@ -304,13 +343,9 @@ mod tests {
     #[test]
     fn the_prompt_text_reaches_the_terminal() {
         let pty = pty();
-        let mut controller = pty.controller.try_clone().expect("clone");
-
-        read_with_input(&pty, "pw\n", "Unlock vault: ").expect("read");
-
-        let mut seen = [0u8; 64];
-        let n = controller.read(&mut seen).expect("read back");
-        let text = String::from_utf8_lossy(&seen[..n]);
+        let (result, displayed) = read_with_input(&pty, "pw\n", "Unlock vault: ");
+        result.expect("read");
+        let text = String::from_utf8_lossy(&displayed);
         assert!(
             text.contains("Unlock vault:"),
             "the prompt should be visible on the terminal, saw {text:?}"
@@ -329,7 +364,7 @@ mod tests {
             "a fresh pty should echo"
         );
 
-        read_with_input(&pty, "pw\n", "> ").expect("read");
+        read_with_input(&pty, "pw\n", "> ").0.expect("read");
 
         assert!(
             echo_enabled(&observer).expect("state after"),
@@ -350,7 +385,7 @@ mod tests {
         let observer = pty.device();
 
         // A lone 0xff byte can never appear in valid UTF-8.
-        let result = read_with_input(&pty, [b'p', b'w', 0xff, b'\n'], "> ");
+        let (result, _) = read_with_input(&pty, [b'p', b'w', 0xff, b'\n'], "> ");
         assert!(
             result.is_err(),
             "a non-UTF-8 passphrase should fail rather than be silently mangled"
@@ -403,7 +438,8 @@ mod tests {
     #[test]
     fn a_trailing_carriage_return_is_stripped() {
         let pty = pty();
-        let secret = read_with_input(&pty, "windows-style\r\n", "> ").expect("read");
+        let (result, _) = read_with_input(&pty, "windows-style\r\n", "> ");
+        let secret = result.expect("read");
 
         assert_eq!(secret.expose_secret(), "windows-style");
     }
@@ -415,7 +451,8 @@ mod tests {
     #[test]
     fn an_empty_line_reads_as_an_empty_passphrase() {
         let pty = pty();
-        let secret = read_with_input(&pty, "\n", "> ").expect("read");
+        let (result, _) = read_with_input(&pty, "\n", "> ");
+        let secret = result.expect("read");
 
         assert_eq!(secret.expose_secret(), "");
     }
