@@ -459,11 +459,12 @@ impl VaultServer {
 
 #[derive(Debug, Clone, Deserialize)]
 struct UnlockParams {
-    /// One of `"passphrase"`, `"recovery"`, `"keychain"`.
+    /// One of `"passphrase"`, `"recovery"`, `"keyfile"`.
     kind: String,
-    /// Passphrase or 24-word recovery phrase. Empty for keychain
-    /// (which has no in-band secret — the unlock factor is the OS
-    /// keychain entry). The local field name carries `_material`
+    /// Passphrase or 24-word recovery phrase. Empty for `keyfile`,
+    /// whose unlock factor is a file the daemon reads from its own
+    /// configuration — deliberately not nameable from the wire.
+    /// The local field name carries `_material`
     /// to keep the CI secrets-discipline grep from flagging this
     /// (the value is wrapped in `SecretString` immediately in
     /// `into_unlock_method`); the wire name stays `secret` via
@@ -501,6 +502,36 @@ impl UnlockParams {
                  with a 6-digit code"
                     .to_string(),
             )),
+            // ADR-024 §6: the keyfile path comes from
+            // configuration, never from the request.
+            //
+            // A caller that could name the file would just point the
+            // unlock at a keyfile it wrote itself, and the envelope
+            // would dutifully open the vault. The file's location is
+            // the user's standing decision; the request only says
+            // "use it".
+            "keyfile" => {
+                let config = devboy_core::config::Config::load().unwrap_or_default();
+                let path = config
+                    .secrets_keyfile_path()
+                    .ok_or_else(|| {
+                        JsonRpcError::new(
+                            INVALID_PARAMS,
+                            "no keyfile is configured; set `secrets.keyfile_path` and enrol the                              keyfile with `devboy secrets keyfile add` before unlocking with one"
+                                .to_string(),
+                        )
+                    })?;
+                let bytes = devboy_vault_crypto::keyfile::load_keyfile(path).map_err(|e| {
+                    JsonRpcError::new(
+                        INVALID_PARAMS,
+                        format!(
+                            "could not read the configured keyfile {}: {e}",
+                            path.display()
+                        ),
+                    )
+                })?;
+                Ok(UnlockMethod::Keyfile { keyfile: bytes })
+            }
             other => Err(JsonRpcError::new(
                 INVALID_PARAMS,
                 format!("unknown unlock kind '{other}'"),
@@ -722,6 +753,44 @@ mod tests {
         assert_eq!(result["unlock_ttl_seconds"], 900);
         assert_eq!(result["max_unlock_ttl_seconds"], 3600);
         assert_eq!(result["idle_relock_seconds"], 300);
+    }
+
+    /// The keyfile unlock must never take a path from the wire.
+    ///
+    /// A caller that could name the file would simply point the
+    /// unlock at a keyfile it wrote itself, and the envelope would
+    /// dutifully open the vault — so the request carries no path,
+    /// and a `secret` field on a keyfile unlock is ignored rather
+    /// than honoured.
+    #[test]
+    fn a_keyfile_unlock_takes_no_path_from_the_request() {
+        let params: UnlockParams = serde_json::from_value(json!({
+            "kind": "keyfile",
+            "secret": "/tmp/attacker-controlled.key",
+        }))
+        .expect("params parse");
+
+        // The struct has nowhere to put a path: the only fields are
+        // the kind and the (unused for keyfile) secret material.
+        assert_eq!(params.kind, "keyfile");
+
+        // With no keyfile configured the unlock is refused, and the
+        // refusal names configuration rather than the string the
+        // caller supplied.
+        let err = params
+            .into_unlock_method()
+            .err()
+            .expect("no keyfile is configured in this test environment");
+        assert!(
+            !err.message.contains("attacker-controlled"),
+            "the caller's string must not steer the unlock: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("secrets.keyfile_path"),
+            "the error should point at configuration: {}",
+            err.message
+        );
     }
 
     /// The default constructors must not silently claim the strict

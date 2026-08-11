@@ -50,12 +50,14 @@ use std::path::{Path, PathBuf};
 
 use secrecy::{ExposeSecret, SecretBox, SecretString};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::aead::{self, AeadError, KEY_LEN, NONCE_LEN};
 use crate::format::{
     EntryMeta, Envelope, EnvelopeKdfParams, FormatError, Header, VaultFile, b64_decode, b64_encode,
     entry_aad,
 };
+use crate::keyfile::{KeyfileError, create_keyfile_envelope, unwrap_keyfile};
 use crate::passphrase::{
     DEFAULT_KDF_PARAMS, PassphraseError, create_passphrase_envelope, unwrap_passphrase,
 };
@@ -116,6 +118,21 @@ pub enum UnlockMethod {
     Totp {
         /// The shared TOTP secret, resident in daemon memory.
         totp_secret: Vec<u8>,
+    },
+    /// Try the keyfile envelope (ADR-024 §6).
+    ///
+    /// This is the unattended cold start: a daemon can open the
+    /// vault with nobody present, which is what the OS keychain
+    /// provided before it left the default chain.
+    ///
+    /// The caller passes the bytes rather than a path on purpose.
+    /// Where the keyfile lives is a *configuration* decision, and
+    /// letting a request name the file would let a caller point the
+    /// unlock at a keyfile it controls — which is the whole attack
+    /// this envelope is supposed to be indifferent to.
+    Keyfile {
+        /// Contents of the keyfile, read by the caller.
+        keyfile: Zeroizing<Vec<u8>>,
     },
 }
 
@@ -201,6 +218,11 @@ pub enum VaultError {
     /// envelope layer (ADR-024 §1).
     #[error("TOTP envelope error: {0}")]
     Totp(#[from] TotpEnvelopeError),
+
+    /// Wraps [`crate::keyfile::KeyfileError`] from the keyfile
+    /// envelope layer (ADR-024 §6).
+    #[error("keyfile envelope error: {0}")]
+    Keyfile(#[from] KeyfileError),
 
     /// `Vault::open` could not find an envelope of the requested kind
     /// in the file. The caller asked for a passphrase unlock but the
@@ -361,6 +383,14 @@ impl Vault {
                     .ok_or(VaultError::NoMatchingEnvelope { kind: "totp" })?;
                 unwrap_totp(env, totp_secret)?
             }
+            UnlockMethod::Keyfile { keyfile } => {
+                let env = file
+                    .envelopes
+                    .iter()
+                    .find(|e| matches!(e, Envelope::Keyfile { .. }))
+                    .ok_or(VaultError::NoMatchingEnvelope { kind: "keyfile" })?;
+                unwrap_keyfile(env, keyfile)?
+            }
         };
         // Convert Zeroizing<[u8; KEY_LEN]> -> SecretBox<[u8; KEY_LEN]>.
         let mut key_array = [0u8; KEY_LEN];
@@ -403,6 +433,30 @@ impl Vault {
         let mut salt = [0u8; 32];
         getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
         let env = create_totp_envelope(self.vault_key.expose_secret(), totp_secret, salt)?;
+        self.file.envelopes.push(env);
+        self.file.write_file_atomic(&self.path)?;
+        Ok(())
+    }
+
+    /// Enrol a keyfile so the vault can be opened unattended
+    /// (ADR-024 §6).
+    ///
+    /// Enrolment happens on an already-open vault, so the caller
+    /// has necessarily proved they can unlock it some other way —
+    /// adding a keyfile is not a way in, it is a second door opened
+    /// from inside.
+    ///
+    /// Replaces any existing keyfile envelope rather than stacking
+    /// a second one: two live keyfiles would mean the old file
+    /// still opens the vault after a rotation, which is the
+    /// opposite of what rotating one is for.
+    pub fn add_keyfile_envelope(&mut self, keyfile: &[u8]) -> Result<(), VaultError> {
+        let mut salt = [0u8; 32];
+        getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
+        let env = create_keyfile_envelope(self.vault_key.expose_secret(), keyfile, salt)?;
+        self.file
+            .envelopes
+            .retain(|e| !matches!(e, Envelope::Keyfile { .. }));
         self.file.envelopes.push(env);
         self.file.write_file_atomic(&self.path)?;
         Ok(())

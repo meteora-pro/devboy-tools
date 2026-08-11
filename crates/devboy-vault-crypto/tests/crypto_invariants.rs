@@ -378,3 +378,136 @@ fn a_wrong_passphrase_never_opens_the_vault() {
         );
     }
 }
+
+// =============================================================================
+// Keyfile: the unattended cold start (ADR-024 §6)
+// =============================================================================
+
+/// The property the whole keyfile envelope exists for: a process
+/// with the file and nothing else can open the vault.
+///
+/// Until `UnlockMethod::Keyfile` landed, the envelope could be
+/// written and never used — `Vault::open` had no keyfile branch at
+/// all, so "unattended cold start" was unreachable. This test is
+/// that door, and it fails closed if the branch is removed.
+#[test]
+fn a_keyfile_alone_opens_the_vault() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault_path = dir.path().join("vault.dvb");
+    let keyfile_path = dir.path().join("vault.key");
+
+    let bytes =
+        devboy_vault_crypto::keyfile::create_keyfile(&keyfile_path).expect("create keyfile");
+
+    {
+        let outcome = Vault::create(&vault_path, fast_init("correct horse battery staple"))
+            .expect("create vault");
+        let mut vault = outcome.vault;
+        vault
+            .put(
+                "team/github/token",
+                &SecretString::from("ghp-unattended".to_owned()),
+                EntryMetadata::default(),
+            )
+            .expect("seed");
+        vault.add_keyfile_envelope(&bytes).expect("enrol keyfile");
+    }
+
+    // Re-open with the keyfile only — no passphrase anywhere.
+    let loaded = devboy_vault_crypto::keyfile::load_keyfile(&keyfile_path).expect("load keyfile");
+    let vault = Vault::open(&vault_path, UnlockMethod::Keyfile { keyfile: loaded })
+        .expect("a keyfile must open the vault it was enrolled into");
+
+    assert_eq!(
+        vault
+            .get("team/github/token")
+            .unwrap()
+            .expect("entry")
+            .expose_secret(),
+        "ghp-unattended"
+    );
+}
+
+/// A different keyfile must not open the vault, or the envelope
+/// would be decoration.
+#[test]
+fn a_foreign_keyfile_does_not_open_the_vault() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault_path = dir.path().join("vault.dvb");
+
+    let enrolled =
+        devboy_vault_crypto::keyfile::create_keyfile(&dir.path().join("real.key")).expect("real");
+    let foreign =
+        devboy_vault_crypto::keyfile::create_keyfile(&dir.path().join("other.key")).expect("other");
+    assert_ne!(
+        enrolled.as_slice(),
+        foreign.as_slice(),
+        "two generated keyfiles must not collide"
+    );
+
+    {
+        let mut vault = Vault::create(&vault_path, fast_init("correct horse battery staple"))
+            .expect("create")
+            .vault;
+        vault.add_keyfile_envelope(&enrolled).expect("enrol");
+    }
+
+    assert!(
+        Vault::open(&vault_path, UnlockMethod::Keyfile { keyfile: foreign }).is_err(),
+        "a keyfile that was never enrolled must not open the vault"
+    );
+}
+
+/// A vault with no keyfile envelope reports that specifically,
+/// rather than looking like a wrong keyfile — the two need
+/// different fixes.
+#[test]
+fn a_vault_without_a_keyfile_envelope_says_so() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault_path = dir.path().join("vault.dvb");
+    let bytes =
+        devboy_vault_crypto::keyfile::create_keyfile(&dir.path().join("k")).expect("keyfile");
+
+    drop(Vault::create(&vault_path, fast_init("correct horse battery staple")).expect("create"));
+
+    let err = Vault::open(&vault_path, UnlockMethod::Keyfile { keyfile: bytes })
+        .expect_err("no keyfile envelope was enrolled");
+    assert!(
+        err.to_string().contains("keyfile"),
+        "the error should name the missing envelope kind: {err}"
+    );
+}
+
+/// Enrolling a second keyfile retires the first. Two live keyfiles
+/// would mean a rotated-away file still opens the vault, which is
+/// the opposite of what rotating one is for.
+#[test]
+fn enrolling_a_new_keyfile_retires_the_old_one() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault_path = dir.path().join("vault.dvb");
+    let first = devboy_vault_crypto::keyfile::create_keyfile(&dir.path().join("a")).expect("a");
+    let second = devboy_vault_crypto::keyfile::create_keyfile(&dir.path().join("b")).expect("b");
+
+    {
+        let mut vault = Vault::create(&vault_path, fast_init("correct horse battery staple"))
+            .expect("create")
+            .vault;
+        vault.add_keyfile_envelope(&first).expect("enrol first");
+        vault.add_keyfile_envelope(&second).expect("enrol second");
+    }
+
+    assert!(
+        Vault::open(
+            &vault_path,
+            UnlockMethod::Keyfile {
+                keyfile: second.clone()
+            }
+        )
+        .is_ok(),
+        "the newly enrolled keyfile must open the vault"
+    );
+    assert!(
+        Vault::open(&vault_path, UnlockMethod::Keyfile { keyfile: first }).is_err(),
+        "the replaced keyfile must stop working, or rotation buys nothing"
+    );
+}
