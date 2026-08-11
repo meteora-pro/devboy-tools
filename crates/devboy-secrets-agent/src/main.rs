@@ -40,7 +40,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(unix)]
-use devboy_secrets_agent::rpc::{FramingError, JsonRpcError, PARSE_ERROR};
+use devboy_secrets_agent::rpc::{DAEMON_UNTRUSTED, FramingError, JsonRpcError, PARSE_ERROR};
 #[cfg(unix)]
 use devboy_secrets_agent::{
     AgentListener, JsonRpcResponse, VaultServer, default_socket_path, install_sigterm_handler,
@@ -89,6 +89,30 @@ fn detach_from_controlling_terminal() {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     detach_from_controlling_terminal();
 
+    // ADR-024 §7 checks B and C, before anything else happens.
+    //
+    // Fail closed: a degraded-but-running daemon preserves the
+    // appearance of a guarantee that no longer holds, and a user
+    // who does not read status output never learns the difference.
+    let provenance = devboy_secrets_agent::provenance::startup_provenance();
+    if provenance.is_fatal() {
+        eprintln!(
+            "devboy-secrets-agent: refusing to start.\n\n{}",
+            provenance.refusal_message()
+        );
+        std::process::exit(1);
+    }
+    // Warn on *every* launch rather than once — a single line
+    // scrolls away, and the override must never become invisible.
+    for warning in provenance.warnings() {
+        eprintln!("devboy-secrets-agent: WARNING: {warning}");
+    }
+    let trust_level = provenance.trust_level();
+    eprintln!(
+        "devboy-secrets-agent: trust_level={trust_level} totp_available={}",
+        trust_level.allows_totp()
+    );
+
     let vault_path = resolve_vault_path()?;
     let socket_path = default_socket_path()?;
     eprintln!(
@@ -125,6 +149,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             res = listener.accept_authenticated() => {
                 let stream = match res {
                     Ok(s) => s,
+                    // Check A tripped. The stream comes back still
+                    // open specifically so the client learns *why*
+                    // rather than seeing a dropped socket and
+                    // improvising.
+                    Err(devboy_secrets_agent::socket::AgentError::CallerIsAncestor {
+                        peer_pid,
+                        stream,
+                    }) => {
+                        eprintln!(
+                            "devboy-secrets-agent: refusing connection from pid {peer_pid}: it is \
+                             an ancestor of this daemon and could read its memory"
+                        );
+                        tokio::spawn(async move {
+                            let _ = refuse_untrusted_caller(stream).await;
+                        });
+                        continue;
+                    }
                     Err(e) => {
                         eprintln!("devboy-secrets-agent: accept failed: {e}");
                         continue;
@@ -144,6 +185,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(unix)]
+/// Tell a refused caller *why* before closing (ADR-024 §7/§8).
+///
+/// The connection is doomed either way, but a client that receives
+/// `DaemonUntrusted` with its remediation knows to stop, relay a
+/// specific command to the user, and wait — where a client handed
+/// a dropped socket learns only that something broke and will
+/// retry or improvise. A hard failure should still arrive as an
+/// instruction.
+async fn refuse_untrusted_caller(stream: tokio::net::UnixStream) -> Result<(), FramingError> {
+    let (_read, mut write) = tokio::io::split(stream);
+
+    let error = JsonRpcError::new(
+        DAEMON_UNTRUSTED,
+        format!(
+            "The secret daemon was started by this session and cannot protect its own memory \
+             from it. Stop it and start it with `{}`, then retry.",
+            devboy_secrets_agent::provenance::platform_start_command()
+        ),
+    );
+
+    let resp = JsonRpcResponse::err(Value::Null, error);
+    write_response(&mut write, &resp).await
+}
+
 async fn handle_one_connection(
     server: Arc<Mutex<VaultServer>>,
     stream: tokio::net::UnixStream,

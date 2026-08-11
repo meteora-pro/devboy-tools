@@ -54,6 +54,12 @@ pub const BAD_UNLOCK: i32 = -32002;
 pub const NO_MATCHING_ENVELOPE: i32 = -32003;
 /// Underlying I/O error talking to the vault file.
 pub const IO_ERROR: i32 = -32004;
+/// ADR-024 §7 check A: the caller is an ancestor of this daemon
+/// and could `ptrace` it, so the connection is refused.
+///
+/// Sent *before* the socket closes so the caller receives an
+/// instruction rather than a dropped connection.
+pub const DAEMON_UNTRUSTED: i32 = -32005;
 
 // =============================================================================
 // Wire types

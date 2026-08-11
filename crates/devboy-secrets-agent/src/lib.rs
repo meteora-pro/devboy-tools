@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 
 pub mod idle;
+pub mod provenance;
 pub mod rpc;
 #[cfg(unix)]
 pub mod server;
