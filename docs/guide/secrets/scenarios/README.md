@@ -2,7 +2,43 @@
 
 Eight Gherkin `.feature` files covering the user-facing behaviour of the secret framework — the setup-secrets onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, the catalog → provision-dialog rendering contract, the local-vault unlock / create flow, and the first-run onboarding wizard (backend picker).
 
-These are **executable specifications** in the BDD sense — every scenario states a concrete observable outcome a user (developer or AI agent) can verify by running the documented commands. They are not (yet) wired into a `cucumber-rs` test harness; the `.feature` files act as the written contract that the existing unit / integration / end-to-end test suites already cover (look for the named functions and reasons in `crates/devboy-cli/src/secrets_setup.rs`, `crates/devboy-token-catalog/src/lib.rs`, `crates/devboy-mcp/src/secrets_*.rs`).
+Каждый сценарий описывает конкретный наблюдаемый результат, который пользователь (разработчик или AI-агент) может проверить, выполнив описанные команды.
+
+## Как сценарии связаны с кодом
+
+Сценарии **не исполняются** раннером. Вместо этого каждый из них несёт тег `@covered-by:<имя_теста>`, а тест-гейт `crates/devboy-cli/tests/bdd_coverage.rs` в CI проверяет, что:
+
+1. у каждого сценария есть хотя бы один `@covered-by:`;
+2. каждый упомянутый тест реально существует в workspace;
+3. имена сценариев внутри файла не повторяются.
+
+Правило 2 — то, ради чего всё это. Удалили или переименовали тест — сценарий, который на нём держался, роняет CI, и автор обязан либо восстановить покрытие, либо признать, что поведение исчезло. До этого гейта спецификация могла расходиться с кодом сколько угодно и никто бы не заметил: спецификация, которая не может оказаться неправдой, — не спецификация.
+
+### Почему не cucumber-rs
+
+Рассматривали и отказались. Сценарии написаны на уровне абстракции, до которого честный step definition не дотягивается:
+
+```gherkin
+Then the build fails with a typed error because SecretString does not implement AgentSafeReply
+```
+
+```gherkin
+When the user clicks "Deny" in the dialog
+```
+
+Такие шаги можно только сымитировать, а зелёный фейковый шаг **хуже** отсутствия раннера: спецификация выглядит проверенной, ничего не проверяя. Поведение, которое эти шаги описывают, уже покрыто — compile-fail-гейтами, юнит-тестами GUI-рендереров, процессными интеграционными тестами. Просто не из Gherkin.
+
+### Признанные дыры: `@not-covered:`
+
+Семь сценариев из 54 описывают поведение, которое сегодня не покрыто ничем: GUI-кнопка, чей результат ни один тест не читает; `is_first_run()`, который лезет в `dirs::config_dir()` и env напрямую и потому не запускается из теста; пиновые счётчики прополки, для которых нет фикстуры демо-проекта. Повесить на них «примерно подходящий» тест — значит заставить гейт **врать**, а это хуже самой дыры.
+
+Такие сценарии несут `@not-covered:<причина>`, и точный их список приколочен константой `UNCOVERED` в `bdd_coverage.rs`. Список — **храповик**: сценарий без покрытия, которого нет в списке, роняет CI; и наоборот, если покрытие появилось, а запись в списке осталась — тоже роняет. Долг видно, и он не может вырасти случайно.
+
+### Чего гейт НЕ гарантирует
+
+Что названный тест проверяет именно то, что написано в сценарии. Гейт умеет проверить, что ссылка есть и куда-то ведёт; что она ведёт **туда**, проверяет только человек на ревью. Поэтому тег стоит прямо над сценарием — чтобы ревьюер читал оба сразу.
+
+Многие связки покрывают сценарий **частично**: у сценария пять `Then`, а тест проверяет три. Это нормально и намеренно — гейт держит связь живой, а не измеряет полноту.
 
 ## Files
 
@@ -34,3 +70,16 @@ Add a `.feature` block any time:
 - a new policy value lands on the manifest schema (e.g. extending `approve_on_use` with a `Project` or `Org` scope in a future epic).
 
 Keep scenarios concrete — name actual env vars, paths, error reasons. The Examples table is the right place for breadth (P1-P5 outlines).
+
+### Обязательный тег покрытия
+
+Новый сценарий без `@covered-by:` не пройдёт CI. Тег ставится строкой выше заголовка:
+
+```gherkin
+  @covered-by:legacy_env_names_still_resolve_in_ci_mode
+  Scenario: An ADR-005 pipeline keeps working after the default flip
+    Given the pipeline exports DEVBOY_GITLAB_TOKEN
+    ...
+```
+
+Тегов может быть несколько через пробел. Порядок такой: **сначала тест, потом сценарий.** Если покрывающего теста ещё нет — это не повод писать сценарий «на будущее»: непокрытый сценарий обещает то, чего набор тестов не выполняет.

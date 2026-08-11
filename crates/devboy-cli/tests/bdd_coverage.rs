@@ -41,6 +41,21 @@
 //! the author to either restore the coverage or admit the
 //! behaviour is gone.
 //!
+//! # Admitted gaps
+//!
+//! A handful of scenarios describe behaviour nothing tests — a GUI
+//! button whose result flag no test ever inspects, a first-run check
+//! that reads `dirs::config_dir()` and the environment directly and
+//! so cannot be driven from a test. Tagging those with a
+//! loosely-related test would make the gate *lie*, which is worse
+//! than the gap it papers over.
+//!
+//! They carry `@not-covered:<reason>` instead, and
+//! [`UNCOVERED`] pins the exact set. Adding a scenario without
+//! coverage fails; so does quietly swapping which one is uncovered.
+//! The debt is visible and cannot grow by accident, which is the
+//! most a gate can honestly offer here.
+//!
 //! # What this deliberately does not guarantee
 //!
 //! That the named test *means* what the scenario says. A gate can
@@ -54,6 +69,57 @@ use std::path::{Path, PathBuf};
 
 /// Tag prefix that links a scenario to a covering test.
 const COVERAGE_TAG: &str = "@covered-by:";
+
+/// Tag prefix admitting that nothing covers a scenario.
+const UNCOVERED_TAG: &str = "@not-covered:";
+
+/// The scenarios that currently have no covering test, pinned so
+/// the set can shrink but never grow.
+///
+/// Every entry is a real gap found by reading the sources, not a
+/// convenience. Removing one means someone wrote the test.
+const UNCOVERED: &[(&str, &str)] = &[
+    // `OnboardingFrameResult.skip` is set by the button but every
+    // render test discards the returned struct.
+    ("onboarding.feature", "Skip goes straight to the keychain"),
+    // `is_first_run()` reads `dirs::config_dir()` and the process
+    // environment directly, so nothing can drive it.
+    (
+        "onboarding.feature",
+        "The wizard does not re-appear once onboarded",
+    ),
+    // The pinned 845/236/175/161 counts need a checked-in fixture
+    // of the demo project, which does not exist.
+    (
+        "proposer-noise-reduction.feature",
+        "Cumulative noise reduction on the canonical demo project",
+    ),
+    // No egui interaction harness in the test tree — the existing
+    // GUI tests only assert the renderer does not panic.
+    (
+        "ui-catalog-rendering.feature",
+        "The dialog is a modal overlay, not an inline route",
+    ),
+    // Every fixture sets rotation notes and guide URL together, so
+    // the notes-without-URL branch is never rendered.
+    (
+        "ui-catalog-rendering.feature",
+        "Variant with rotation notes but no guide URL still renders the section",
+    ),
+    // `use_keychain` is set by a button and read by the modal, and
+    // no test constructs or inspects the result.
+    (
+        "vault-unlock.feature",
+        "The keychain escape hatch skips the vault for the session",
+    ),
+    // The provision dialog has a render-buffer scan proving the
+    // value never reaches the output; the unlock modal has no
+    // equivalent.
+    (
+        "vault-unlock.feature",
+        "The agent never sees the passphrase",
+    ),
+];
 
 /// Repository root, from this crate's manifest directory.
 fn repo_root() -> PathBuf {
@@ -75,6 +141,8 @@ struct Scenario {
     line: usize,
     name: String,
     covered_by: Vec<String>,
+    /// Set when the scenario admits it has no covering test.
+    uncovered_reason: Option<String>,
 }
 
 /// Parse every `.feature` file in the scenarios directory.
@@ -112,15 +180,18 @@ fn parse_scenarios() -> Vec<Scenario> {
         // Tags accumulate until a scenario consumes them, which is
         // Gherkin's own rule.
         let mut pending: Vec<String> = Vec::new();
+        let mut pending_uncovered: Option<String> = None;
         for (index, raw) in text.lines().enumerate() {
             let line = raw.trim();
 
             if line.starts_with('@') {
-                pending.extend(
-                    line.split_whitespace()
-                        .filter(|t| t.starts_with(COVERAGE_TAG))
-                        .map(|t| t[COVERAGE_TAG.len()..].to_owned()),
-                );
+                for token in line.split_whitespace() {
+                    if let Some(test) = token.strip_prefix(COVERAGE_TAG) {
+                        pending.push(test.to_owned());
+                    } else if let Some(reason) = token.strip_prefix(UNCOVERED_TAG) {
+                        pending_uncovered = Some(reason.to_owned());
+                    }
+                }
                 continue;
             }
 
@@ -133,6 +204,7 @@ fn parse_scenarios() -> Vec<Scenario> {
                     line: index + 1,
                     name: name.trim().to_owned(),
                     covered_by: std::mem::take(&mut pending),
+                    uncovered_reason: pending_uncovered.take(),
                 });
                 continue;
             }
@@ -143,6 +215,7 @@ fn parse_scenarios() -> Vec<Scenario> {
             // silently count as coverage for the first scenario.
             if !line.is_empty() && !line.starts_with('#') {
                 pending.clear();
+                pending_uncovered = None;
             }
         }
     }
@@ -205,20 +278,85 @@ fn workspace_function_names() -> BTreeSet<String> {
 /// nobody checks.
 #[test]
 fn every_scenario_names_a_covering_test() {
-    let uncovered: Vec<String> = parse_scenarios()
+    let untagged: Vec<String> = parse_scenarios()
         .into_iter()
-        .filter(|s| s.covered_by.is_empty())
+        .filter(|s| s.covered_by.is_empty() && s.uncovered_reason.is_none())
         .map(|s| format!("  {}:{} — {}", s.file, s.line, s.name))
         .collect();
 
     assert!(
-        uncovered.is_empty(),
+        untagged.is_empty(),
         "{} scenario(s) claim behaviour that no test is linked to.\n\n{}\n\nAdd a tag line \
          directly above each one:\n\n    {COVERAGE_TAG}name_of_the_test_that_covers_it\n\nIf \
-         nothing covers it yet, write the test first — an unbacked scenario is a promise the \
-         suite does not keep.",
-        uncovered.len(),
-        uncovered.join("\n")
+         nothing covers it yet, write the test first. If it genuinely cannot be tested today, \
+         say so with {UNCOVERED_TAG}<short-reason> and add it to UNCOVERED in this file — but \
+         that list is a ratchet, so expect to justify it.",
+        untagged.len(),
+        untagged.join("\n")
+    );
+}
+
+/// The admitted-gap list is a ratchet: it may shrink, never grow.
+///
+/// Without this, `@not-covered:` would be an unlimited escape hatch
+/// and the gate would decay into decoration.
+#[test]
+fn the_set_of_uncovered_scenarios_matches_the_pinned_list() {
+    let actual: BTreeSet<(String, String)> = parse_scenarios()
+        .into_iter()
+        .filter(|s| s.uncovered_reason.is_some())
+        .map(|s| (s.file, s.name))
+        .collect();
+    let pinned: BTreeSet<(String, String)> = UNCOVERED
+        .iter()
+        .map(|(f, n)| ((*f).to_owned(), (*n).to_owned()))
+        .collect();
+
+    let added: Vec<_> = actual.difference(&pinned).collect();
+    assert!(
+        added.is_empty(),
+        "{} scenario(s) newly admit having no test:\n{}\n\nA specification that grows faster \
+         than the suite is how the two drift apart. Write the test, or add the entry to \
+         UNCOVERED in this file with the reason it cannot be written.",
+        added.len(),
+        added
+            .iter()
+            .map(|(f, n)| format!("  {f} — {n}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    let removed: Vec<_> = pinned.difference(&actual).collect();
+    assert!(
+        removed.is_empty(),
+        "{} scenario(s) in UNCOVERED are no longer marked {UNCOVERED_TAG}:\n{}\n\nIf coverage \
+         landed, delete the entry from UNCOVERED — the list only means something while it is \
+         exact.",
+        removed.len(),
+        removed
+            .iter()
+            .map(|(f, n)| format!("  {f} — {n}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// An admitted gap must say *why*, so the next person can judge
+/// whether it is still true.
+#[test]
+fn every_admitted_gap_carries_a_reason() {
+    let vague: Vec<String> = parse_scenarios()
+        .into_iter()
+        .filter_map(|s| {
+            let reason = s.uncovered_reason?;
+            (reason.len() < 12).then(|| format!("  {} — {} ({reason:?})", s.file, s.name))
+        })
+        .collect();
+
+    assert!(
+        vague.is_empty(),
+        "these admitted gaps do not explain themselves:\n{}",
+        vague.join("\n")
     );
 }
 
