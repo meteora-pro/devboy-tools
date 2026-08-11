@@ -15,6 +15,8 @@
 #![forbid(unsafe_code)]
 
 pub mod idle;
+#[cfg(unix)]
+pub mod prompt;
 pub mod provenance;
 pub mod rpc;
 #[cfg(unix)]
@@ -27,6 +29,8 @@ pub use idle::{
     DEFAULT_IDLE_TIMEOUT, IdleClock, IdleTracker, ManualClock, SIGTERM_GRACE, SystemClock,
     install_sigterm_handler,
 };
+#[cfg(unix)]
+pub use prompt::{TtyPrompt, echo_enabled};
 pub use rpc::{
     BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     IO_ERROR, JSONRPC_VERSION, JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND,

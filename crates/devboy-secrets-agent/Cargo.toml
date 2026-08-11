@@ -37,7 +37,11 @@ dirs.workspace = true
 
 # Unix-only deps for socket creation, file permissions, and peer credential checks.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", default-features = false, features = ["user", "process"] }
+# `term` carries both halves the passphrase prompt needs: termios
+# for the echo-off dance, and `nix::pty` so the tests can drive that
+# prompt over a real terminal rather than a stand-in.
+nix = { version = "0.30", default-features = false, features = ["user", "process", "term"] }
+zeroize = "1.8"
 
 [dev-dependencies]
 tempfile.workspace = true
