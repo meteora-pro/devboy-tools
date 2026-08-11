@@ -1,6 +1,6 @@
 # Secret-framework BDD scenarios
 
-Eight Gherkin `.feature` files covering the user-facing behaviour of the secret framework — the setup-secrets onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, the catalog → provision-dialog rendering contract, the local-vault unlock / create flow, and the first-run onboarding wizard (backend picker).
+Eleven Gherkin `.feature` files covering the user-facing behaviour of the secret framework — the setup-secrets onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, the catalog → provision-dialog rendering contract, the local-vault unlock / create flow, the first-run onboarding wizard (backend picker), and — from ADR-024 — CI env-only resolution, the daemon's startup provenance check, and TOTP re-unlock with its audit trail.
 
 Каждый сценарий описывает конкретный наблюдаемый результат, который пользователь (разработчик или AI-агент) может проверить, выполнив описанные команды.
 
@@ -30,7 +30,7 @@ When the user clicks "Deny" in the dialog
 
 ### Признанные дыры: `@not-covered:`
 
-Семь сценариев из 54 описывают поведение, которое сегодня не покрыто ничем: GUI-кнопка, чей результат ни один тест не читает; `is_first_run()`, который лезет в `dirs::config_dir()` и env напрямую и потому не запускается из теста; пиновые счётчики прополки, для которых нет фикстуры демо-проекта. Повесить на них «примерно подходящий» тест — значит заставить гейт **врать**, а это хуже самой дыры.
+Семь сценариев описывают поведение, которое сегодня не покрыто ничем: GUI-кнопка, чей результат ни один тест не читает; `is_first_run()`, который лезет в `dirs::config_dir()` и env напрямую и потому не запускается из теста; пиновые счётчики прополки, для которых нет фикстуры демо-проекта. Повесить на них «примерно подходящий» тест — значит заставить гейт **врать**, а это хуже самой дыры.
 
 Такие сценарии несут `@not-covered:<причина>`, и точный их список приколочен константой `UNCOVERED` в `bdd_coverage.rs`. Список — **храповик**: сценарий без покрытия, которого нет в списке, роняет CI; и наоборот, если покрытие появилось, а запись в списке осталась — тоже роняет. Долг видно, и он не может вырасти случайно.
 
@@ -51,6 +51,9 @@ When the user clicks "Deny" in the dialog
 | [`proposer-noise-reduction.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/proposer-noise-reduction.feature) | The five-step skip-list expansion (P1-P5) plus the catalog-driven precision (S2 + bundled catalogs) that took the proposer from 236 to 161 paths on the canonical demo project. |
 | [`ui-catalog-rendering.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/ui-catalog-rendering.feature) | The provision dialog binds to the active token catalog (description / numbered steps / notes / console URL), with manifest-only fallback when no catalog matches the path. Covers both the egui and ratatui renderers (U-series). |
 | [`vault-unlock.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/vault-unlock.feature) | The local-vault unlock / create flow in `secrets ui` — env-passphrase fast path, modal unlock prompt for an existing `.dvb`, wrong-passphrase handling, the keychain escape hatch, first-run create-vault with the recovery-phrase gate, and live backend switching (V-series). |
+| [`ci-env-only.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/ci-env-only.feature) | ADR-024 §6 — CI resolves from the environment alone: explicit `DEVBOY_CI` versus heuristic variables, both env-var naming conventions, no prompts, and a missing secret naming the variable that would supply it. |
+| [`daemon-provenance.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/daemon-provenance.feature) | ADR-024 §7 — the daemon's startup ancestry check: fail-closed by default, the insecure override that never upgrades the reported trust level, and the terminal check that stays advisory. |
+| [`totp-unlock-and-audit.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/totp-unlock-and-audit.feature) | ADR-024 §1 + §4 — the reserved TOTP slot an agent cannot read, list or overwrite; replay guard and rate limit; and the encrypted append-only audit log with its splice and truncation detection. |
 | [`onboarding.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/onboarding.feature) | The first-run onboarding wizard — backend picker (keychain / local-vault / HCP Vault, combinations allowed), per-backend sub-forms, the `access` mode for HCP Vault, `sources.toml` write, primary-backend resolution, and the P11 (multi-source routing) / P15 (write path) deferral boundaries (W-series). |
 
 ## Why Gherkin
