@@ -14,6 +14,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit_writer;
 #[cfg(unix)]
 pub mod client;
 pub mod idle;
@@ -27,6 +28,7 @@ pub mod server;
 pub mod socket;
 pub mod totp_session;
 
+pub use audit_writer::{AuditWriter, ScrubbedDetail};
 #[cfg(unix)]
 pub use client::{AgentClient, ClientError};
 #[cfg(unix)]

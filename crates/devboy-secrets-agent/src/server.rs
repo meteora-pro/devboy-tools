@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
 
+use crate::audit_writer::AuditWriter;
 use crate::idle::{IdleClock, IdleTracker, UnlockWindow};
 use crate::rpc::{
     BAD_TOTP, BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INVALID_PARAMS, IO_ERROR, JsonRpcError,
@@ -65,6 +66,12 @@ pub struct VaultServer {
     vault: Option<Vault>,
     /// Idle-timeout state. See ADR-023 §3.3.
     idle: IdleTracker,
+    /// Audit trail, when one is open (ADR-024 §4).
+    ///
+    /// Established on unlock — the log is encrypted under the vault
+    /// key, so there is nothing to write to before one exists — and
+    /// dropped on lock along with the key that could read it.
+    audit: Option<AuditWriter>,
     /// TOTP state: the resident secret plus its replay guard and
     /// rate limit (ADR-024 §1).
     ///
@@ -84,6 +91,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::new(),
+            audit: None,
             totp: crate::totp_session::TotpSession::new(),
         }
     }
@@ -97,6 +105,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::with_timeout(idle_timeout),
+            audit: None,
             totp: crate::totp_session::TotpSession::new(),
         }
     }
@@ -116,6 +125,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::with_window(window, std::sync::Arc::new(crate::idle::SystemClock)),
+            audit: None,
             totp: crate::totp_session::TotpSession::new(),
         }
     }
@@ -140,6 +150,7 @@ impl VaultServer {
             vault_path,
             vault: None,
             idle: IdleTracker::with_clock(idle_timeout, clock),
+            audit: None,
             totp: crate::totp_session::TotpSession::new(),
         }
     }
@@ -171,6 +182,9 @@ impl VaultServer {
         // a code that still re-opened a vault the user deliberately
         // closed would make locking meaningless.
         self.totp.clear();
+        // The audit log is encrypted under the vault key, so a
+        // locked daemon has no way to write to it anyway.
+        self.audit = None;
     }
 
     /// Load the shared TOTP secret out of the vault's reserved slot.
@@ -185,6 +199,68 @@ impl VaultServer {
         if let Ok(Some(secret)) = vault.get(crate::totp_session::TOTP_SECRET_PATH) {
             self.totp
                 .set_secret(secret.expose_secret().as_bytes().to_vec());
+        }
+    }
+
+    /// Open the audit trail for this unlock.
+    ///
+    /// The scrubber is built over the values the vault currently
+    /// holds, so anything that later reaches a record's detail text
+    /// is redacted by path. Failure to open the log is logged and
+    /// swallowed: an audit trail that cannot be written is a
+    /// problem, but refusing to unlock the vault over it would turn
+    /// a diagnostic into an outage.
+    fn open_audit(&mut self) {
+        let Some(vault) = self.vault.as_ref() else {
+            return;
+        };
+
+        // Values for the scrubber: everything the vault holds,
+        // except the reserved slots, which must not be handed
+        // around even to be redacted.
+        let values: Vec<(String, String)> = vault
+            .paths()
+            .filter(|p| !crate::totp_session::is_reserved(p))
+            .filter_map(|p| {
+                vault
+                    .get(p)
+                    .ok()
+                    .flatten()
+                    .map(|v| (p.to_owned(), v.expose_secret().to_owned()))
+            })
+            .collect();
+
+        let path = self.vault_path.with_file_name("audit-log.dvb");
+        match AuditWriter::open(&path, values) {
+            Ok(writer) => {
+                if let Some(warning) = writer.scrub_warning() {
+                    tracing::warn!("{warning}");
+                }
+                self.audit = Some(writer);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "could not open the audit log; continuing without it")
+            }
+        }
+    }
+
+    /// Append an audit record, if a trail is open.
+    ///
+    /// Errors are logged rather than propagated for the same reason
+    /// as above: a failed write should not turn a working secret
+    /// lookup into a failed one.
+    fn audit(&mut self, action: &str, path: &str, actor: &str) {
+        let Some(vault) = self.vault.as_ref() else {
+            return;
+        };
+        let Ok(key) = vault.audit_key() else {
+            return;
+        };
+        let Some(writer) = self.audit.as_mut() else {
+            return;
+        };
+        if let Err(e) = writer.record(&key, action, path, actor, None) {
+            tracing::warn!(error = %e, action, path, "could not append an audit record");
         }
     }
 
@@ -296,6 +372,8 @@ impl VaultServer {
                 // so it becomes resident exactly when the vault
                 // opens.
                 self.adopt_totp_secret();
+                self.open_audit();
+                self.audit("unlock", "vault", "user");
                 JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
@@ -415,6 +493,7 @@ impl VaultServer {
                     .window
                     .resolve(params.duration_seconds.map(Duration::from_secs));
                 self.idle.record_unlock();
+                self.audit("totp-unlock", "vault", "user");
                 JsonRpcResponse::ok(
                     id,
                     json!({
@@ -504,7 +583,14 @@ impl VaultServer {
             Some(v) => v,
             None => return locked_response(id),
         };
-        match vault.get(&params.path) {
+        let outcome = vault.get(&params.path);
+        if matches!(outcome, Ok(Some(_))) {
+            // Recorded after the fact and only on success: an
+            // audit trail of reads that did not happen is noise,
+            // and a failed lookup is already visible to the caller.
+            self.audit("read", &params.path, "agent");
+        }
+        match outcome {
             Ok(Some(value)) => JsonRpcResponse::ok(id, json!({"value": value.expose_secret()})),
             Ok(None) => JsonRpcResponse::err(
                 id,
@@ -570,7 +656,11 @@ impl VaultServer {
             None => return locked_response(id),
         };
         let metadata = params.meta.unwrap_or_default().into_entry_metadata();
-        match vault.put(&params.path, &SecretString::from(params.value), metadata) {
+        let outcome = vault.put(&params.path, &SecretString::from(params.value), metadata);
+        if outcome.is_ok() {
+            self.audit("write", &params.path, "agent");
+        }
+        match outcome {
             Ok(()) => JsonRpcResponse::ok(id, json!({"ok": true})),
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
         }
@@ -1009,6 +1099,99 @@ mod tests {
         assert_eq!(result["unlock_ttl_seconds"], 900);
         assert_eq!(result["max_unlock_ttl_seconds"], 3600);
         assert_eq!(result["idle_relock_seconds"], 300);
+    }
+
+    /// A secret read must leave a trace. The audit log exists so a
+    /// user who suspects an agent has been reading things it should
+    /// not can find out afterwards, without having watched.
+    #[tokio::test]
+    async fn reading_a_secret_leaves_an_audit_record() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        server
+            .vault
+            .as_mut()
+            .unwrap()
+            .put(
+                "team/a/one",
+                &SecretString::from("value-long-enough-to-scrub".to_owned()),
+                EntryMetadata::default(),
+            )
+            .unwrap();
+
+        server
+            .handle_request(req(2, "secret.get", json!({"path": "team/a/one"})))
+            .await;
+
+        let key = server.vault.as_ref().unwrap().audit_key().unwrap();
+        let records = server.audit.as_ref().unwrap().read_all(&key).unwrap();
+
+        assert!(
+            records.iter().any(|r| r.action == "unlock"),
+            "the unlock itself should be recorded"
+        );
+        let read = records
+            .iter()
+            .find(|r| r.action == "read")
+            .expect("the read should be recorded");
+        assert_eq!(read.path, "team/a/one");
+        assert_eq!(read.actor, "agent");
+    }
+
+    /// A lookup that found nothing must not be recorded as a read:
+    /// an audit trail full of reads that did not happen is noise
+    /// that hides the ones that did.
+    #[tokio::test]
+    async fn a_failed_lookup_is_not_recorded_as_a_read() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        server
+            .handle_request(req(2, "secret.get", json!({"path": "no/such/path"})))
+            .await;
+
+        let key = server.vault.as_ref().unwrap().audit_key().unwrap();
+        let records = server.audit.as_ref().unwrap().read_all(&key).unwrap();
+        assert!(
+            !records.iter().any(|r| r.action == "read"),
+            "a miss should not look like a read"
+        );
+    }
+
+    /// Locking drops the trail along with the key that could read
+    /// it — the log is encrypted under a subkey of the vault key,
+    /// so a locked daemon has nothing to write with anyway.
+    #[tokio::test]
+    async fn locking_closes_the_audit_trail() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        assert!(server.audit.is_some());
+
+        server
+            .handle_request(req(2, "vault.lock", Value::Null))
+            .await;
+        assert!(
+            server.audit.is_none(),
+            "a locked daemon must not hold an open audit trail"
+        );
     }
 
     /// A restarted daemon must SAY the TOTP path is gone, not fail

@@ -224,6 +224,10 @@ pub enum VaultError {
     #[error("keyfile envelope error: {0}")]
     Keyfile(#[from] KeyfileError),
 
+    /// HKDF refused to produce the audit-log subkey.
+    #[error("could not derive the audit-log key")]
+    AuditKeyDerivation,
+
     /// `Vault::open` could not find an envelope of the requested kind
     /// in the file. The caller asked for a passphrase unlock but the
     /// vault has only a recovery envelope, for example.
@@ -825,6 +829,26 @@ impl Vault {
     /// has been written.
     pub fn paths(&self) -> impl Iterator<Item = &str> + '_ {
         self.current_entries().map(|e| e.path.as_str())
+    }
+
+    /// Derive the key the audit log is encrypted under.
+    ///
+    /// A separate key rather than the vault key itself: the audit
+    /// writer holds it for the whole session, and a component that
+    /// only needs to write a log should not be holding the key that
+    /// opens every secret. HKDF with a fixed info string makes it
+    /// deterministic — the same vault always yields the same audit
+    /// key, so a log written yesterday still reads today — while
+    /// being useless for anything else.
+    pub fn audit_key(&self) -> Result<Zeroizing<[u8; KEY_LEN]>, VaultError> {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        let hkdf = Hkdf::<Sha256>::new(None, self.vault_key.expose_secret().as_slice());
+        let mut out = Zeroizing::new([0u8; KEY_LEN]);
+        hkdf.expand(b"devboy-vault-audit-key-v1", out.as_mut())
+            .map_err(|_| VaultError::AuditKeyDerivation)?;
+        Ok(out)
     }
 
     /// Borrow the on-disk path for diagnostics.
