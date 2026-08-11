@@ -903,27 +903,60 @@ first agent not on the list. It asks "can my caller `ptrace` me", which is the
 property that actually matters and is the same question regardless of what the
 caller is.
 
-**What happens on failure: degrade, announce, do not crash.** Refusing to start
-would strand users whose setup is merely imperfect. Instead the daemon lowers
-its own trust level and says so:
+**What happens on failure: fail closed.** A degraded-but-running daemon is the
+outcome this ADR spends §7 arguing against — it preserves the appearance of a
+guarantee that no longer holds, and a user who does not read status output will
+never learn the difference. The default is therefore to stop, loudly.
 
-- Check A fails → refuse `secrets_unlock` for *that client* with
-  `DaemonUntrusted`; the passphrase path still works, because it does not
-  depend on daemon memory being private from this caller.
-- Check B or C fails → report level 3 in `secrets_status()` and to `doctor`,
-  omit `"totp"` from `available_methods`, and never claim a level the process
-  layout does not support.
+| Check | Severity | Default behaviour |
+|---|---|---|
+| **A** — client is an ancestor of the daemon | **fatal** | Send `DaemonUntrusted` with its §8 remediation, then close the connection. The client is refused entirely, not merely denied the TOTP path |
+| **B** — parent is not the init system | **fatal** | Refuse to start; exit non-zero with the platform's correct launch command in the message |
+| **C** — controlling terminal present | warning | Start, but warn on every launch and report it in `secrets_status()` and `doctor` |
 
-The trust level therefore becomes a value the daemon computes and publishes,
-not a property the documentation asserts.
+C is a warning rather than fatal because holding a TTY is not itself a
+`ptrace` capability — it is a strong hint about *how* the daemon was launched,
+and about §7's prompt-channel requirement, but the actual exposure is what A
+and B measure.
+
+**The escape hatch, and its honest weakness.** Integration tests spawn the
+daemon from a test harness, and a developer debugging locally starts it from a
+shell; both fail check B legitimately. Setting
+`DEVBOY_INSECURE_ALLOW_UNTRUSTED_DAEMON=1` downgrades A and B from fatal to
+warning.
+
+The name carries `INSECURE` deliberately, so that its appearance in a CI file,
+a Dockerfile, or a diff is self-documenting. When set:
+
+- a warning is emitted on **every** daemon launch and **every** affected
+  connection — never once at startup, because a single line scrolls away;
+- `trust_level` still reports the real value (`agent_parented`), because the
+  override changes what is *permitted*, never what is *claimed*;
+- `available_methods` still omits `"totp"` — the override does not resurrect a
+  guarantee the process layout cannot support;
+- `doctor` reports it as a finding, not as configuration;
+- the audit log (§4) records it, when a vault is open.
+
+Its weakness must be stated rather than discovered: an agent that starts the
+daemon already controls the daemon's environment and can set this variable
+itself. The override therefore protects against **accidental** misconfiguration
+and against an agent acting in good faith — the threat model this ADR claims —
+and not against a hostile one, which §7's limits already concede. Its value is
+that the insecure path cannot be reached *silently* or by default.
 
 **Agent-facing consequence (§8).** `DaemonUntrusted` carries
 `actor: "user"`, `action: "ask_user_to_restart_daemon"`, and a
 `user_message` naming the platform command — for example *"The secret daemon
 was started by this session and cannot protect its own memory from it. Stop it
-and start it via `systemctl --user start devboy-secrets`, then retry."* The
-agent relays that and waits; it must not restart the daemon itself, since doing
-so reproduces exactly the condition being reported.
+and start it via `systemctl --user start devboy-secrets`, then retry."*
+
+Critically, this reply is **sent before the connection closes**, not instead of
+a response. A refused client that receives a dropped socket learns only that
+something broke and will retry or improvise; a client that receives
+`DaemonUntrusted` with its remediation knows to stop, tell the user exactly
+what to run, and wait. The whole point of §8 is that a hard failure still
+arrives as an instruction. The agent must not restart the daemon itself, since
+doing so reproduces exactly the condition being reported.
 
 **Limits, stated so the check is not oversold.**
 
@@ -1114,7 +1147,7 @@ verbatim.
 | `ApprovalDenied` | **user** | `none` | The user said no. Do not re-ask in this session |
 | `LivenessFailed` / expired | **user** | `ask_user_to_rotate` | Token is dead. Surface `retrieval_url` + `rotation_method` |
 | `DaemonNotRunning` | **user** | `ask_user_to_start_daemon` | **Never start it yourself** — see below |
-| `DaemonUntrusted` | **user** | `ask_user_to_restart_daemon` | The daemon found you in its own ancestry (§7 check A). Relay the restart command; restarting it yourself reproduces the fault |
+| `DaemonUntrusted` | **user** | `ask_user_to_restart_daemon` | The daemon found you in its own ancestry (§7 check A) and is closing the connection. Relay the restart command; restarting it yourself reproduces the fault |
 | `NotAvailableInCiMode` | **user** | `set_env_var` | Name every variable that would satisfy this path (§6) |
 
 #### The manifest already holds the useful part
@@ -1243,6 +1276,22 @@ instruction.
   the transcript *and* local socket access *and* acting within 30 s could
   replay the code. **Mitigation:** the replay guard rejects an already-spent
   time-step outright (§1), plus daemon rate-limiting and the socket UID check.
+- ⚠️ **`DEVBOY_INSECURE_ALLOW_UNTRUSTED_DAEMON` becoming ambient.** The escape
+  hatch that unblocks tests and local debugging is an environment variable, and
+  an agent that starts the daemon controls its environment — so a hostile agent
+  can set it. It can also drift into a Dockerfile or CI template and stay there.
+  **Mitigation:** `INSECURE` in the name makes it self-documenting in review;
+  the warning repeats on every launch and every affected connection rather than
+  once; `trust_level` and `available_methods` keep reporting the real posture,
+  so the override changes what is permitted and never what is claimed; `doctor`
+  reports it as a finding. The residual exposure is the one §7 already concedes
+  — a hostile agent that controls the launch environment is out of scope.
+- ⚠️ **Fail-closed checks blocking a legitimate setup.** Check B fails for any
+  daemon a developer starts by hand, which is a normal debugging workflow, and
+  a hard failure there is a support burden. **Mitigation:** the error message
+  carries the correct platform launch command, and the documented override
+  exists precisely for this case; check C stays a warning because holding a TTY
+  is a hint about launch method, not a `ptrace` capability.
 - ⚠️ **A "daemon-rendered" prompt inside the agent's own terminal.** Moving
   passphrase collection into the daemon achieves nothing if the prompt is
   written to a PTY whose master the agent holds — it reads non-echoed input
@@ -1513,7 +1562,14 @@ guarantee the deployment may not have.
     init system (check B) and the absence of a controlling terminal (check C).
     The result is a computed `trust_level` published through `secrets_status()`
     — never a configured claim. Checks must be structural: no list of vendor
-    process names, per CI guard #243.
+    process names, per CI guard #243. A and B are **fatal by default** (refuse
+    the connection after sending `DaemonUntrusted`; refuse to start with the
+    correct launch command in the message); C warns. Only
+    `DEVBOY_INSECURE_ALLOW_UNTRUSTED_DAEMON=1` downgrades A and B to warnings,
+    and it must not suppress the repeated warning, alter `trust_level`, or
+    re-add `"totp"` to `available_methods`. The integration-test harness is the
+    primary consumer of that override and should set it explicitly rather than
+    inheriting it.
   - `crates/devboy-cli/src/doctor/` — report the achieved trusted-path level
     (separate UID / independent lifecycle / agent-parented), the active
     profile, and any legacy keychain entries awaiting migration.
@@ -1566,3 +1622,4 @@ guarantee the deployment may not have.
 | 2026-08-11 | Andrei Mazniak | **New §8: actionable errors.** Every failure reply now carries a `remediation { actor, action, user_message, retryable, retry_after_seconds }`, where `actor` tells the agent whether it can resolve the problem or must stop and fetch a human. Adds the full error → remediation table, and a **negative contract** covering the guesses that silently dismantle the other sub-decisions: never request the passphrase, never start the daemon (a self-spawned daemon is `ptrace`-able and voids §1/§7), never work around a missing secret via env/dotfiles/history, never retry past the stated backoff. Surfaces the ADR-020 manifest metadata (`retrieval_url`, `required_scopes`, `rotation_method`) that has never had a consumer, so `NotProvisioned` tells the user which token to create, with which scopes, and where. `user_message` is daemon-authored, which also closes the prompt-injection concern already listed in Risks. Sub-decision count 7 → 8; gap 6 added to Context; Decision (8), Consequences and Implementation updated. |
 | 2026-08-11 | Andrei Mazniak | **§7: the two credential flows made explicit.** The passphrase travels user → daemon with the agent outside the path entirely; a TOTP code travels user → agent → daemon with the agent as transport. States the rule the asymmetry follows from — *a credential may cross the agent surface only if it is ephemeral **and** cannot perform a cold start* — with the property table showing both conditions are load-bearing. Adds a requirement that was missing: the passphrase prompt must not render into a PTY the agent controls, since an agent that spawned the shell holds the master and reads non-echoed input regardless of which process printed the prompt (`doctor` must grade such a setup as level 3). Documents that the agent learns of an unlock by polling `secrets_status()` — there is deliberately no callback into a flow it does not participate in. Adds the user-facing rule *devboy never asks for your vault passphrase in an agent conversation*, and records the residual risk that the agent can solicit a TOTP code prematurely. Three matching entries added to Risks. |
 | 2026-08-11 | Andrei Mazniak | **§7: the daemon now enforces its own provenance instead of relying on an operational rule.** Three structural self-checks: (A) on every connection, read the client PID and walk the daemon's own parent chain — a client found there can `ptrace` the daemon, so `secrets_unlock` is refused for it with `DaemonUntrusted`; (B) at startup, verify reparenting to the init system; (C) verify no controlling terminal. Checks are deliberately structural rather than nominal — the daemon asks "can my caller `ptrace` me", never "is my ancestor a coding agent", which would need a vendor process-name list that CI guard #243 forbids and that would fail on the first agent not listed. On failure the daemon degrades and announces rather than crashing: `trust_level` becomes a value it computes and publishes through `secrets_status()`, not a claim the documentation makes. Notes that double-forking defeats check A but is self-defeating — `ptrace_scope` evaluates descent at call time, so an orphaned daemon is no longer `ptrace`-able by its starter — and that launch-time environment control (`LD_PRELOAD`, substituted binary) is a code-integrity problem the check does not address. §8 gains the `DaemonUntrusted` row and a strengthened negative contract. |
+| 2026-08-11 | Andrei Mazniak | **§7: provenance checks are fail-closed by default.** The previous revision had the daemon degrade and keep running, which is the outcome §7 spends its length arguing against — it preserves the appearance of a guarantee that no longer holds. Checks A (client is an ancestor) and B (parent is not the init system) are now **fatal**: A sends `DaemonUntrusted` with its §8 remediation *and then closes the connection*, refusing the client entirely rather than only denying the TOTP path; B refuses to start, exiting non-zero with the platform's correct launch command. Check C (controlling terminal) stays a warning, since holding a TTY is a hint about launch method rather than a `ptrace` capability. Adds `DEVBOY_INSECURE_ALLOW_UNTRUSTED_DAEMON=1` for integration tests and hand-started local daemons, which downgrades A and B to warnings but never suppresses them, never alters the reported `trust_level`, and never re-adds `"totp"` to `available_methods` — the override changes what is *permitted*, never what is *claimed*. Its weakness is recorded rather than left to be discovered: an agent that starts the daemon controls its environment and can set the variable, so the override guards against accidental misconfiguration and good-faith agents, not hostile ones. Two matching entries added to Risks. |
