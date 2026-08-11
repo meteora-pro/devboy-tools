@@ -9,6 +9,7 @@ mod secrets_agent_service;
 mod secrets_cmd;
 mod secrets_migrate;
 mod secrets_rotate;
+mod secrets_selftest;
 mod secrets_setup;
 mod secrets_ui;
 mod secrets_validate;

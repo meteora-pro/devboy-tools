@@ -75,6 +75,11 @@ pub enum SecretsCommands {
     /// `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and
     /// `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`.
     Setup(SetupArgs),
+    /// Report which security posture is actually in force, and
+    /// where it is weaker than it looks (ADR-024). `doctor` asks
+    /// "is anything broken"; this asks "what am I actually
+    /// getting".
+    Selftest(crate::secrets_selftest::SelftestArgs),
     /// Work with KDBX 4 (KeePass) files as a SecretSource. The
     /// passphrase is prompted from stdin with no echo; the
     /// decrypted body lives only inside this process and is
@@ -507,6 +512,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
+        SecretsCommands::Selftest(args) => crate::secrets_selftest::handle(args),
         SecretsCommands::Kdbx { command } => match command {
             KdbxCommands::Peek(args) => kdbx_peek(args),
             KdbxCommands::DescribeMetadata(args) => kdbx_describe_metadata(args),
