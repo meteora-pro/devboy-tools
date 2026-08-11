@@ -830,26 +830,62 @@ const NO_CONFIG_ENV: &str = "DEVBOY_NO_CONFIG";
 
 /// Get credential store using the appropriate chain.
 ///
-/// When `DEVBOY_SKIP_KEYCHAIN=1` is set:
-/// - Uses CI chain (env vars + memory, no keychain access)
-///
-/// Otherwise uses the default chain which resolves credentials in this order:
+/// Resolution order after ADR-024 §6:
 /// 1. Environment variables (`DEVBOY_{PROVIDER}_TOKEN`, then `{PROVIDER}_TOKEN`)
-/// 2. OS Keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+/// 2. OS Keychain — **only** when the user opted in with
+///    `[secrets.keychain] enabled = true`
 ///
-/// This allows CI/CD pipelines to use environment variables while local development
-/// uses the keychain seamlessly.
+/// The keychain left the default chain because it only exceeds the protection
+/// of a `0600` file on macOS, while costing a D-Bus dependency, a daemon that
+/// is absent in CI and containers, and prompt failures on locked-down
+/// machines. CI / env-only mode drops it unconditionally.
 fn get_credential_store() -> Box<dyn CredentialStore> {
-    if is_skip_keychain_enabled() {
-        tracing::info!("Using CI credential chain (env vars only, keychain disabled)");
-        Box::new(ChainStore::ci_chain())
+    let config = load_config_for_store();
+    let ci = is_env_only_mode(&config);
+
+    if ci {
+        tracing::info!("env-only credential chain (CI mode: environment variables only)");
+    } else if config.is_keychain_enabled() {
+        tracing::debug!("credential chain: env vars -> OS keychain (opted in)");
     } else {
-        tracing::debug!("Using default credential chain (env vars -> keychain)");
-        Box::new(ChainStore::default_chain())
+        tracing::debug!("credential chain: env vars only (keychain not enabled)");
     }
+
+    Box::new(ChainStore::from_config(&config, ci))
 }
 
-/// Check if keychain should be skipped (for CI/containers).
+/// Load config for credential-chain construction, tolerating a
+/// missing or unreadable file.
+///
+/// A broken config must not make secrets unresolvable — it
+/// degrades to defaults, which after ADR-024 §6 means
+/// environment-only. `DEVBOY_NO_CONFIG=1` skips the file
+/// entirely.
+fn load_config_for_store() -> devboy_core::config::Config {
+    if is_no_config_enabled() {
+        return devboy_core::config::Config::default();
+    }
+    devboy_core::config::Config::load().unwrap_or_default()
+}
+
+/// Whether the process runs in CI / env-only mode (ADR-024 §6).
+///
+/// Three explicit signals, highest priority first: `--ci` (handled
+/// by the caller that owns the parsed CLI), `DEVBOY_CI`, and
+/// `[runtime] ci`. The long-standing `DEVBOY_SKIP_KEYCHAIN` is
+/// honoured as a fourth for backwards compatibility.
+///
+/// Heuristic variables (`CI`, `GITLAB_CI`, …) deliberately do
+/// **not** appear here: they raise a doctor notice instead,
+/// because a security posture must not change because an
+/// unrelated tool exported `CI=1`.
+fn is_env_only_mode(config: &devboy_core::config::Config) -> bool {
+    devboy_storage::detect_ci_mode(false, Some(config.is_ci_forced())).active
+        || is_skip_keychain_enabled()
+}
+
+/// Check if keychain should be skipped (legacy switch, kept for
+/// backwards compatibility with existing CI configs).
 fn is_skip_keychain_enabled() -> bool {
     env_is_truthy(SKIP_KEYCHAIN_ENV)
 }
@@ -3957,18 +3993,24 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
     Ok(())
 }
 
-/// Credential store factory for the MCP command — wraps the default chain in a TTL
+/// Credential store factory for the MCP command — wraps the chain in a TTL
 /// cache when the user enabled it.
+///
+/// Applies the same ADR-024 §6 policy as [`get_credential_store`]: the OS
+/// keychain participates only when explicitly enabled, and CI / env-only mode
+/// drops it unconditionally.
 fn build_mcp_store(cache_ttl_secs: u64) -> Box<dyn CredentialStore> {
-    if is_skip_keychain_enabled() {
-        tracing::info!("Using CI credential chain (env vars only, keychain disabled)");
-        return wrap_with_cache(ChainStore::ci_chain(), cache_ttl_secs);
-    }
+    let config = load_config_for_store();
+    let ci = is_env_only_mode(&config);
+
     tracing::debug!(
         cache_ttl_secs,
-        "Using default credential chain (env vars -> keychain) with TTL cache"
+        ci_mode = ci,
+        keychain = config.is_keychain_enabled(),
+        "building MCP credential chain"
     );
-    wrap_with_cache(ChainStore::default_chain(), cache_ttl_secs)
+
+    wrap_with_cache(ChainStore::from_config(&config, ci), cache_ttl_secs)
 }
 
 /// Configure and launch the telemetry pipeline. Returns `None` when telemetry is

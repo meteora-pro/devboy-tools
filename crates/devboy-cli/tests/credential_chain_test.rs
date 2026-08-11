@@ -203,15 +203,52 @@ fn test_chain_store_delete_from_memory() {
 }
 
 #[test]
-fn test_chain_store_ci_mode_no_keychain() {
+fn test_chain_store_ci_mode_reads_from_env() {
     temp_env::with_var("DEVBOY_CI_MODE_TOKEN", Some("ci_value"), || {
         let chain = ChainStore::ci_chain();
         let result = chain.get("ci.mode.token").unwrap();
         assert_secret_eq(result, Some("ci_value"));
-
-        chain.store("ci.write.key", &secret("written")).unwrap();
-        assert_secret_eq(chain.get("ci.write.key").unwrap(), Some("written"));
     });
+}
+
+/// ADR-024 §6: a write in CI must fail loudly.
+///
+/// The CI chain used to pair the env store with `MemoryStore`, so
+/// a write appeared to succeed and then vanished at process exit
+/// — silent data loss, fine as a test shim and wrong as CI
+/// behaviour. It now has no writable member at all.
+#[test]
+fn test_chain_store_ci_mode_refuses_writes() {
+    let chain = ChainStore::ci_chain();
+
+    let err = chain
+        .store("ci.write.key", &secret("written"))
+        .expect_err("writing in CI mode must fail rather than silently vanish");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("writable"),
+        "error should explain that nothing in the chain accepts writes, got: {message}"
+    );
+
+    // And the value really is not readable afterwards.
+    assert_secret_eq(chain.get("ci.write.key").unwrap(), None);
+}
+
+/// ADR-024 §6: the OS keychain is no longer part of the default
+/// chain. If this ever flips back, the default posture changed.
+#[test]
+fn test_default_chain_excludes_keychain() {
+    assert_eq!(
+        ChainStore::default_chain().len(),
+        1,
+        "default chain should be environment-only after ADR-024 §6"
+    );
+    assert_eq!(
+        ChainStore::with_keychain().len(),
+        2,
+        "opting in should add exactly the keychain store"
+    );
 }
 
 // =============================================================================

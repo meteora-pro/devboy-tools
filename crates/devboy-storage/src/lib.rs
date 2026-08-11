@@ -8,29 +8,37 @@
 //!
 //! # Credential Resolution Order
 //!
-//! When using `ChainStore::default_chain()`, credentials are resolved in this order:
+//! `ChainStore::default_chain()` resolves from **environment variables only**:
 //!
-//! 1. **Environment variables** (highest priority, for CI/CD)
-//!    - `DEVBOY_{PROVIDER}_TOKEN` (e.g., `DEVBOY_GITHUB_TOKEN`)
-//!    - `{PROVIDER}_TOKEN` (fallback, e.g., `GITHUB_TOKEN`)
-//! 2. **OS Keychain** (for local development)
+//! - `DEVBOY_{PROVIDER}_TOKEN` (e.g., `DEVBOY_GITHUB_TOKEN`)
+//! - `{PROVIDER}_TOKEN` (fallback, e.g., `GITHUB_TOKEN`)
+//!
+//! The OS keychain is **no longer in the default chain** (ADR-024 §6). It only
+//! exceeds the protection of a `0600` file on macOS, where item ACLs bind to
+//! the reading process's code signature; on Linux the Secret Service hands a
+//! stored secret to any process in the user's session, and on Windows DPAPI is
+//! scoped to the user. Meanwhile it costs a D-Bus dependency, a daemon absent
+//! in CI and containers, and prompt failures on locked-down machines.
+//!
+//! Use [`ChainStore::from_config`] to apply the configured policy, or
+//! [`ChainStore::with_keychain`] to opt in explicitly.
 //!
 //! # Example
 //!
 //! ```ignore
 //! use devboy_storage::{ChainStore, CredentialStore};
 //!
-//! // Use the default chain (env vars -> keychain)
+//! // Environment-only by default.
 //! let store = ChainStore::default_chain();
-//!
-//! // This will check DEVBOY_GITHUB_TOKEN, then GITHUB_TOKEN,
-//! // then keychain for "github.token"
 //! let token = store.get("github.token")?;
 //!
-//! // Or use keychain directly for local development
+//! // Honour `[secrets.keychain] enabled` and CI mode:
+//! let store = ChainStore::from_config(&config, ci_mode);
+//!
+//! // Or opt the keychain in directly.
 //! use devboy_storage::KeychainStore;
 //! let keychain = KeychainStore::new();
-//! keychain.store("gitlab.token", "glpat-xxx")?;
+//! keychain.store("gitlab.token", &secret)?;
 //! ```
 
 #![deny(rustdoc::broken_intra_doc_links)]
@@ -565,31 +573,67 @@ impl ChainStore {
         Self { stores }
     }
 
-    /// Create the default credential chain.
+    /// Create the default credential chain: environment variables
+    /// only.
     ///
-    /// Order:
-    /// 1. Environment variables (`EnvVarStore`)
-    /// 2. OS Keychain (`KeychainStore`)
+    /// **The OS keychain is no longer in the default chain**
+    /// (ADR-024 §6). It only exceeds the protection of a `0600`
+    /// file on macOS, where item ACLs bind to the reading
+    /// process's code signature; on Linux the Secret Service
+    /// hands a stored secret to any process in the user's
+    /// session, and on Windows DPAPI is scoped to the user. In
+    /// exchange it costs a D-Bus dependency, a daemon that is
+    /// absent in CI and containers, and a class of prompt
+    /// failures on locked-down machines.
     ///
-    /// This is the recommended configuration for most use cases:
-    /// - CI/CD can set `DEVBOY_*` or provider-specific env vars
-    /// - Local development uses keychain transparently
+    /// Use [`Self::with_keychain`] when the user has opted back
+    /// in via `[secrets.keychain] enabled = true`, or
+    /// [`Self::from_config`] to make that decision from config.
     pub fn default_chain() -> Self {
+        Self::new(vec![Box::new(EnvVarStore::new())])
+    }
+
+    /// The default chain plus the OS keychain — the pre-ADR-024
+    /// behaviour, now reachable only by explicit opt-in.
+    pub fn with_keychain() -> Self {
         Self::new(vec![
             Box::new(EnvVarStore::new()),
             Box::new(KeychainStore::new()),
         ])
     }
 
-    /// Create a chain for CI/CD environments (no keychain).
+    /// Create a chain for CI / env-only mode (ADR-024 §6).
     ///
-    /// Only uses environment variables and memory store.
-    /// Useful when keychain is not available.
+    /// Environment variables are the sole source: no keychain, no
+    /// daemon, nothing that can block on IPC or prompt.
+    ///
+    /// Note this deliberately **no longer includes**
+    /// `MemoryStore`. Pairing the env store with an in-memory
+    /// writable store meant a write in CI appeared to succeed and
+    /// then vanished at process exit — a silent data-loss shape
+    /// that is fine as a test shim and wrong as CI behaviour. A
+    /// write now fails loudly instead.
     pub fn ci_chain() -> Self {
-        Self::new(vec![
-            Box::new(EnvVarStore::new()),
-            Box::new(MemoryStore::new()),
-        ])
+        Self::new(vec![Box::new(EnvVarStore::new())])
+    }
+
+    /// Build the chain implied by configuration and CI state.
+    ///
+    /// - CI / env-only mode → [`Self::ci_chain`]
+    /// - `[secrets.keychain] enabled = true` → [`Self::with_keychain`]
+    /// - otherwise → [`Self::default_chain`]
+    ///
+    /// This is the single place the ADR-024 §6 default is decided
+    /// for the legacy credential stack; callers should prefer it
+    /// over picking a constructor themselves.
+    pub fn from_config(config: &devboy_core::config::Config, ci_mode: bool) -> Self {
+        if ci_mode {
+            return Self::ci_chain();
+        }
+        if config.is_keychain_enabled() {
+            return Self::with_keychain();
+        }
+        Self::default_chain()
     }
 
     /// Get the number of stores in the chain.
@@ -1013,17 +1057,48 @@ mod tests {
         assert_eq!(store.len(), 0);
     }
 
+    /// ADR-024 §6: the keychain left the default chain. A change
+    /// here is a change to the product's default security
+    /// posture, not a test detail.
     #[test]
-    fn test_chain_store_default_chain() {
+    fn test_chain_store_default_chain_is_env_only() {
         let store = ChainStore::default_chain();
-        assert_eq!(store.len(), 2); // EnvVarStore + KeychainStore
+        assert_eq!(store.len(), 1, "EnvVarStore only");
         assert!(!store.is_empty());
     }
 
     #[test]
-    fn test_chain_store_ci_chain() {
+    fn test_chain_store_with_keychain_opts_back_in() {
+        let store = ChainStore::with_keychain();
+        assert_eq!(store.len(), 2, "EnvVarStore + KeychainStore");
+    }
+
+    /// The CI chain no longer carries `MemoryStore`: a write used
+    /// to appear to succeed there and vanish at process exit.
+    #[test]
+    fn test_chain_store_ci_chain_has_no_writable_member() {
         let store = ChainStore::ci_chain();
-        assert_eq!(store.len(), 2); // EnvVarStore + MemoryStore
+        assert_eq!(store.len(), 1);
+        assert!(
+            !store.is_writable(),
+            "CI chain must refuse writes rather than absorb them"
+        );
+    }
+
+    #[test]
+    fn test_from_config_honours_ci_and_keychain_switch() {
+        use devboy_core::config::Config;
+
+        let plain = Config::default();
+        assert_eq!(ChainStore::from_config(&plain, false).len(), 1);
+
+        // CI wins even when the keychain is enabled.
+        let mut with_keychain = Config::default();
+        with_keychain
+            .set("secrets.keychain.enabled", "true")
+            .unwrap();
+        assert_eq!(ChainStore::from_config(&with_keychain, false).len(), 2);
+        assert_eq!(ChainStore::from_config(&with_keychain, true).len(), 1);
     }
 
     #[test]
@@ -1165,18 +1240,30 @@ mod tests {
     // build_default_store / wrap_with_cache factories (Wire-up #2)
     // =========================================================================
 
+    /// After ADR-024 §6 the default chain is environment-only,
+    /// and the environment is read-only — so the default store no
+    /// longer accepts writes. Writing requires either opting the
+    /// keychain back in or the local-vault adapter.
     #[test]
-    fn test_build_default_store_zero_ttl_returns_writable_chain() {
+    fn test_build_default_store_zero_ttl_is_read_only() {
         let store = build_default_store(0);
-        // Default chain: env vars (read-only) + keychain (writable) → overall writable.
-        assert!(store.is_writable());
+        assert!(!store.is_writable());
     }
 
     #[test]
-    fn test_build_default_store_positive_ttl_delegates_writable() {
-        let store = build_default_store(60);
-        // Cache must not break write-capability delegation.
-        assert!(store.is_writable());
+    fn test_build_default_store_positive_ttl_delegates_write_capability() {
+        // The cache must report the inner chain's capability
+        // faithfully rather than inventing one.
+        assert_eq!(
+            build_default_store(60).is_writable(),
+            build_default_store(0).is_writable()
+        );
+    }
+
+    #[test]
+    fn test_cache_delegates_writability_of_a_writable_inner() {
+        let inner = MemoryStore::with_credentials([("k".to_string(), "v".to_string())]);
+        assert!(wrap_with_cache(inner, 60).is_writable());
     }
 
     #[test]

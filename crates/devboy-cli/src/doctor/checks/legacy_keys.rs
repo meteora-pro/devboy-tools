@@ -272,6 +272,7 @@ mod tests {
         Config {
             secrets: Some(SecretsConfig {
                 migration_complete: complete,
+                ..SecretsConfig::default()
             }),
             ..Config::default()
         }
