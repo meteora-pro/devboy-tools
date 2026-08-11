@@ -105,12 +105,38 @@ fn resolution_findings(config: &Config) -> Vec<Finding> {
     let mode = if detection.active {
         "env-only (CI)"
     } else if keychain {
-        "env → OS keychain"
+        "env → local vault → OS keychain"
     } else {
-        "env only"
+        "env → local vault"
     };
 
     let mut out = vec![Finding::new("resolution", mode)];
+
+    // The chain lists the vault whether or not the daemon is up,
+    // and a stopped daemon is invisible in normal use: the lookup
+    // simply returns nothing, exactly as if the secret had never
+    // been stored. That is the "healthy but weaker than it looks"
+    // case this command exists for.
+    if !detection.active {
+        let vault = devboy_storage::VaultStore::new();
+        let running = vault.as_ref().is_some_and(|v| v.daemon_present());
+        out.push(
+            Finding::new(
+                "vault daemon",
+                if running { "running" } else { "not running" },
+            )
+            .with_note(match &vault {
+                Some(v) if running => format!("socket {}", v.socket_path().display()),
+                Some(v) => format!(
+                    "no socket at {} — every secret held in the vault is currently unreachable, \
+                     and will report as simply not found. Start it with `devboy secrets agent \
+                     start`.",
+                    v.socket_path().display()
+                ),
+                None => "no socket path could be derived on this machine".to_string(),
+            }),
+        );
+    }
 
     if !detection.active && !keychain {
         out.push(Finding::new("keychain", "disabled (default)").with_note(
@@ -314,11 +340,20 @@ mod tests {
     }
 
     #[test]
-    fn resolution_reports_env_only_when_the_keychain_is_off() {
+    fn resolution_reports_the_vault_chain_when_the_keychain_is_off() {
         let config = Config::default();
         let findings = resolution_findings(&config);
 
-        assert!(findings.iter().any(|f| f.label == "resolution"));
+        let resolution = findings
+            .iter()
+            .find(|f| f.label == "resolution")
+            .expect("resolution is reported");
+        assert!(
+            resolution.value.contains("vault"),
+            "the vault is in the default chain and the report must say so: {}",
+            resolution.value
+        );
+
         let keychain = findings
             .iter()
             .find(|f| f.label == "keychain")
@@ -328,6 +363,29 @@ mod tests {
             keychain.note.is_some(),
             "a disabled keychain should explain how to turn it on"
         );
+    }
+
+    /// A stopped daemon makes every vault-held secret read as
+    /// "not found", which is indistinguishable from never having
+    /// stored it. Reporting the daemon's state is the only place a
+    /// user finds out.
+    #[test]
+    fn resolution_reports_whether_the_vault_daemon_is_running() {
+        let config = Config::default();
+        let findings = resolution_findings(&config);
+
+        let daemon = findings
+            .iter()
+            .find(|f| f.label == "vault daemon")
+            .expect("daemon state is reported outside CI mode");
+
+        if daemon.value.contains("not running") {
+            assert!(
+                daemon.note.as_deref().unwrap_or("").contains("unreachable"),
+                "a stopped daemon must explain what it silently costs: {:?}",
+                daemon.note
+            );
+        }
     }
 
     #[test]

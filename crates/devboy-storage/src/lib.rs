@@ -66,6 +66,7 @@ pub mod router_resolve;
 pub mod secret_path;
 pub mod source;
 pub mod validation;
+pub mod vault_bridge;
 
 pub use cache::CachedStore;
 pub use ci::{
@@ -97,6 +98,7 @@ pub use source::{
     Capabilities, CredentialRef, GetOutcome, RemoteRef, SecretSource, SourceError, SourceStatus,
 };
 pub use validation::{FormatCheck, FormatRuleSource, validate_format};
+pub use vault_bridge::{VaultStore, key_to_vault_path};
 
 /// Service name used in OS keychain.
 const SERVICE_NAME: &str = "devboy-tools";
@@ -573,8 +575,8 @@ impl ChainStore {
         Self { stores }
     }
 
-    /// Create the default credential chain: environment variables
-    /// only.
+    /// Create the default credential chain: environment variables,
+    /// then the local vault.
     ///
     /// **The OS keychain is no longer in the default chain**
     /// (ADR-024 §6). It only exceeds the protection of a `0600`
@@ -586,20 +588,38 @@ impl ChainStore {
     /// absent in CI and containers, and a class of prompt
     /// failures on locked-down machines.
     ///
+    /// The vault takes its place as the durable store, via
+    /// [`VaultStore`]. It sits *after* the environment so an
+    /// explicit variable still wins — the property CI and
+    /// one-off overrides depend on — and it is skipped cheaply
+    /// when the daemon is not running.
+    ///
     /// Use [`Self::with_keychain`] when the user has opted back
     /// in via `[secrets.keychain] enabled = true`, or
     /// [`Self::from_config`] to make that decision from config.
     pub fn default_chain() -> Self {
-        Self::new(vec![Box::new(EnvVarStore::new())])
+        let mut stores: Vec<Box<dyn CredentialStore>> = vec![Box::new(EnvVarStore::new())];
+        if let Some(vault) = VaultStore::new() {
+            stores.push(Box::new(vault));
+        }
+        Self::new(stores)
     }
 
     /// The default chain plus the OS keychain — the pre-ADR-024
     /// behaviour, now reachable only by explicit opt-in.
     pub fn with_keychain() -> Self {
-        Self::new(vec![
-            Box::new(EnvVarStore::new()),
-            Box::new(KeychainStore::new()),
-        ])
+        // Opting the keychain back in adds a store rather than
+        // replacing the vault: a user who enables it has secrets
+        // there, but the vault is still the ADR-024 §6 default and
+        // should answer first. The keychain is also the only
+        // writable member, so it stays the write target — which is
+        // what makes enabling it restore the pre-flip behaviour.
+        let mut stores: Vec<Box<dyn CredentialStore>> = vec![Box::new(EnvVarStore::new())];
+        if let Some(vault) = VaultStore::new() {
+            stores.push(Box::new(vault));
+        }
+        stores.push(Box::new(KeychainStore::new()));
+        Self::new(stores)
     }
 
     /// Create a chain for CI / env-only mode (ADR-024 §6).
@@ -670,8 +690,19 @@ impl CredentialStore for ChainStore {
                 }
             }
         }
+        // Reaching here without a `last_error` means no store in
+        // the chain accepts writes at all — the normal state since
+        // ADR-024 §6 demoted the keychain, because environment
+        // variables are read-only and the vault takes writes only
+        // through an unlock-carrying path. Say what would make a
+        // write possible instead of stating the fact and stopping.
         Err(last_error.unwrap_or_else(|| {
-            Error::Storage("No writable credential store available in chain".to_string())
+            Error::Storage(format!(
+                "nowhere to store '{key}': environment variables are read-only and the local \
+                 vault only accepts writes through an unlocked session. Store it with `devboy \
+                 secrets ui`, export the matching environment variable, or re-enable the OS \
+                 keychain with `devboy config set secrets.keychain.enabled true`."
+            ))
         }))
     }
 
@@ -1057,20 +1088,40 @@ mod tests {
         assert_eq!(store.len(), 0);
     }
 
-    /// ADR-024 §6: the keychain left the default chain. A change
+    /// ADR-024 §6: the keychain left the default chain, and the
+    /// local vault took its place as the durable store. A change
     /// here is a change to the product's default security
     /// posture, not a test detail.
+    ///
+    /// The assertion is on *writability* rather than on a member
+    /// count, because the count is legitimately 1 or 2 — the vault
+    /// store is skipped on a machine with no derivable config
+    /// directory — while the security property holds either way:
+    /// nothing in the default chain accepts a write.
     #[test]
-    fn test_chain_store_default_chain_is_env_only() {
+    fn test_chain_store_default_chain_has_no_writable_member() {
         let store = ChainStore::default_chain();
-        assert_eq!(store.len(), 1, "EnvVarStore only");
         assert!(!store.is_empty());
+        assert!(
+            !store.is_writable(),
+            "the default chain must not absorb writes: the environment is read-only and the \
+             vault takes writes only through an unlock-carrying path"
+        );
     }
 
+    /// Opting the keychain back in restores a write target, which
+    /// is the whole point of the switch.
     #[test]
     fn test_chain_store_with_keychain_opts_back_in() {
         let store = ChainStore::with_keychain();
-        assert_eq!(store.len(), 2, "EnvVarStore + KeychainStore");
+        assert!(
+            store.is_writable(),
+            "enabling the keychain must restore somewhere to write"
+        );
+        assert!(
+            store.len() > ChainStore::default_chain().len(),
+            "the keychain is added to the default chain, not swapped for it"
+        );
     }
 
     /// The CI chain no longer carries `MemoryStore`: a write used
@@ -1090,15 +1141,26 @@ mod tests {
         use devboy_core::config::Config;
 
         let plain = Config::default();
-        assert_eq!(ChainStore::from_config(&plain, false).len(), 1);
+        assert!(
+            !ChainStore::from_config(&plain, false).is_writable(),
+            "the default posture has no write target"
+        );
 
-        // CI wins even when the keychain is enabled.
         let mut with_keychain = Config::default();
         with_keychain
             .set("secrets.keychain.enabled", "true")
             .unwrap();
-        assert_eq!(ChainStore::from_config(&with_keychain, false).len(), 2);
-        assert_eq!(ChainStore::from_config(&with_keychain, true).len(), 1);
+        assert!(
+            ChainStore::from_config(&with_keychain, false).is_writable(),
+            "enabling the keychain must restore a write target"
+        );
+
+        // CI wins even when the keychain is enabled: a container has
+        // no keychain daemon and no vault daemon, so reaching for
+        // either is a hang waiting to happen.
+        let ci = ChainStore::from_config(&with_keychain, true);
+        assert_eq!(ci.len(), 1, "the CI chain is environment variables alone");
+        assert!(!ci.is_writable());
     }
 
     #[test]
@@ -1137,14 +1199,29 @@ mod tests {
         assert_eq!(exposed(&chain.get("test.key").unwrap()), Some("test-value"));
     }
 
+    /// A chain with nowhere to write is now the normal default, so
+    /// its error is a message users will actually meet. It has to
+    /// name the key and offer a way forward — "no writable store"
+    /// states a fact and leaves the user stuck.
     #[test]
-    fn test_chain_store_no_writable_store_error() {
-        // Chain with only read-only stores
+    fn test_chain_store_no_writable_store_error_is_actionable() {
         let chain = ChainStore::new(vec![Box::new(EnvVarStore::new())]);
 
-        let result = chain.store("test.key", &secret("value"));
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No writable"));
+        let message = chain
+            .store("test.key", &secret("value"))
+            .expect_err("a read-only chain must refuse the write")
+            .to_string();
+
+        assert!(
+            message.contains("test.key"),
+            "the error should name the key: {message}"
+        );
+        assert!(
+            message.contains("secrets ui")
+                || message.contains("environment variable")
+                || message.contains("keychain"),
+            "the error should offer a way forward: {message}"
+        );
     }
 
     #[test]

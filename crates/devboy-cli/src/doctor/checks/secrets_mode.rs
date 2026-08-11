@@ -6,10 +6,10 @@
 //!
 //! - **env-only / CI** — the environment is the sole source; no
 //!   vault, no daemon, no keychain, no prompt.
-//! - **default** — environment variables only, because the OS
-//!   keychain left the default chain.
-//! - **keychain opted in** — environment variables, then the OS
-//!   keychain.
+//! - **default** — environment variables, then the local vault,
+//!   which replaced the OS keychain as the durable store.
+//! - **keychain opted in** — environment variables, then the local
+//!   vault, then the OS keychain.
 //!
 //! Before this check there was no way to see which one applied
 //! without reading the source. That matters because the failure
@@ -37,9 +37,11 @@ use crate::doctor::{CheckResult, CheckStatus, DiagnosticCheck, DiagnosticContext
 pub enum SecretsMode {
     /// CI / env-only: the environment is the only source.
     EnvOnly,
-    /// Interactive, keychain not enabled: environment only.
+    /// Interactive, keychain not enabled: environment, then the
+    /// local vault.
     EnvDefault,
-    /// Interactive with `[secrets.keychain] enabled = true`.
+    /// Interactive with `[secrets.keychain] enabled = true`: the
+    /// keychain is added after the vault, not in place of it.
     EnvThenKeychain,
 }
 
@@ -54,10 +56,18 @@ impl SecretsMode {
     }
 
     /// One-line description of where secrets come from.
+    ///
+    /// This is read as a factual account of the chain, so it has to
+    /// track [`ChainStore`](devboy_storage::ChainStore) exactly —
+    /// a description that omits a member is worse than none, since
+    /// it makes a secret resolved from that member look impossible.
     pub fn chain_description(self) -> &'static str {
         match self {
-            Self::EnvOnly | Self::EnvDefault => "environment variables",
-            Self::EnvThenKeychain => "environment variables, then the OS keychain",
+            Self::EnvOnly => "environment variables",
+            Self::EnvDefault => "environment variables, then the local vault",
+            Self::EnvThenKeychain => {
+                "environment variables, then the local vault, then the OS keychain"
+            }
         }
     }
 }

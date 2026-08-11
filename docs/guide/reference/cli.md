@@ -70,6 +70,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets catalog pin`↴](#devboy-secrets-catalog-pin)
 * [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
 * [`devboy secrets setup`↴](#devboy-secrets-setup)
+* [`devboy secrets selftest`↴](#devboy-secrets-selftest)
 * [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
 * [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
 * [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
@@ -796,6 +797,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `rotate` — Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
 * `catalog` — Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
 * `setup` — Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
+* `selftest` — Report which security posture is actually in force, and where it is weaker than it looks (ADR-024). `doctor` asks "is anything broken"; this asks "what am I actually getting"
 * `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
 
 
@@ -1098,6 +1100,19 @@ Run the setup-secrets wizard against the current directory. Default mode is `--s
 * `--force` — Allow `--write-manifest` to overwrite an existing `<root>/.devboy/secrets.toml`. No-op without `--write-manifest`
 * `--resume` — Resume the wizard from the recorded state file (`~/.devboy/secrets/setup-state.toml`). Skips phases already marked `done` / `skipped`. Implies a full wizard run, not just the scan preview
 * `--json` — Emit JSON-lines events to stdout instead of human prose. One event per line with shape `{"phase":"scan","status":"completed","message":"…"}` — designed for the AI agent driving the skill. The `message` key is optional: only `PhaseProgress`, `PhaseCompleted`, `PhaseSkipped`, and `PhaseFailed` carry a body; `PhaseStarted` and the terminal `wizard-completed` event omit it
+
+
+
+## `devboy secrets selftest`
+
+Report which security posture is actually in force, and where it is weaker than it looks (ADR-024). `doctor` asks "is anything broken"; this asks "what am I actually getting"
+
+**Usage:** `devboy secrets selftest [OPTIONS]`
+
+###### **Options:**
+
+* `--json` — Emit JSON instead of the human-readable table
+* `--path <PATH>` — Check the environment variables that would satisfy this path, under both naming conventions
 
 
 

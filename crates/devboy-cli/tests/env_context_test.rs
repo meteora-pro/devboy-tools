@@ -270,9 +270,14 @@ fn test_ci_chain_refuses_writes() {
     let err = chain
         .store("ci.context.test.key", &secret("test_value"))
         .expect_err("writes must fail in CI rather than vanish at process exit");
+    let message = err.to_string();
     assert!(
-        err.to_string().contains("writable"),
-        "error should name the missing capability, got: {err}"
+        message.contains("ci.context.test.key"),
+        "error should name the key that could not be stored, got: {message}"
+    );
+    assert!(
+        message.contains("environment variable"),
+        "error should point at the one mechanism that works in CI, got: {message}"
     );
 
     assert_secret_eq(chain.get("ci.context.test.key").unwrap(), None);

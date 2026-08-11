@@ -227,8 +227,12 @@ fn test_chain_store_ci_mode_refuses_writes() {
 
     let message = err.to_string();
     assert!(
-        message.contains("writable"),
-        "error should explain that nothing in the chain accepts writes, got: {message}"
+        message.contains("ci.write.key"),
+        "error should name the key that could not be stored, got: {message}"
+    );
+    assert!(
+        message.contains("environment variable"),
+        "error should point at the one thing that does work in CI, got: {message}"
     );
 
     // And the value really is not readable afterwards.
@@ -236,18 +240,30 @@ fn test_chain_store_ci_mode_refuses_writes() {
 }
 
 /// ADR-024 §6: the OS keychain is no longer part of the default
-/// chain. If this ever flips back, the default posture changed.
+/// chain, and the local vault took its place. If this ever flips
+/// back, the default posture changed.
+///
+/// Asserted through writability rather than a member count: the
+/// vault store is skipped on a machine with no derivable config
+/// directory, so the count is legitimately 1 or 2, while the
+/// posture — nothing in the default chain accepts a write, and
+/// enabling the keychain restores one — holds on every machine.
 #[test]
 fn test_default_chain_excludes_keychain() {
-    assert_eq!(
-        ChainStore::default_chain().len(),
-        1,
-        "default chain should be environment-only after ADR-024 §6"
+    let default_chain = ChainStore::default_chain();
+    assert!(
+        !default_chain.is_writable(),
+        "the default chain must have no writable member after ADR-024 §6"
     );
-    assert_eq!(
-        ChainStore::with_keychain().len(),
-        2,
-        "opting in should add exactly the keychain store"
+
+    let with_keychain = ChainStore::with_keychain();
+    assert!(
+        with_keychain.is_writable(),
+        "opting the keychain in must restore a write target"
+    );
+    assert!(
+        with_keychain.len() > default_chain.len(),
+        "opting in should add the keychain to the chain, not replace it"
     );
 }
 
