@@ -100,9 +100,17 @@ Feature: Proposer drops noise but keeps real credentials
       | DB_PASSWORD          |
 
   @covered-by:proposer_picks_catalog_pattern_over_heuristic @covered-by:proposer_openai_api_key_known_provider @covered-by:proposer_catalog_pattern_supports_glob_wildcard
-  Scenario Outline: Catalog patterns route credentials to canonical paths (S2 + bundled)
+  Scenario Outline: Credentials route to canonical paths (S2 + bundled)
     When the proposer sees env-var "<env_var>"
     Then the proposal is "Path" with path "<path>" and provider_known = true
+
+    Note: two mechanisms are at work here and the table does not
+    distinguish them. Rows whose provider ships an `env_var_patterns`
+    block come from the catalog; `OPENAI_API_KEY` does not — openai.json
+    declares no patterns, so that row comes from the heuristic. The
+    covering tests exercise the mechanisms against synthetic catalogs
+    rather than the bundled ones, so these specific rows are illustrative
+    of the shape, not pinned end-to-end.
 
     Examples:
       | env_var                | path                                    |
@@ -131,5 +139,7 @@ Feature: Proposer drops noise but keeps real credentials
   Scenario: Cumulative noise reduction on the canonical demo project
     Given the meteora/devboy-env-1 fixture project (845 env-var references in 123 files)
     When the proposer is run with the bundled catalogs
-    Then the proposed-paths count is at most 175 (-25% from the pre-P1 baseline of 236)
+    Then the proposed-path count is materially lower than the pre-P1 baseline
+    (the exact figures quoted here were measured once by hand and no fixture
+    reproduces them, which is why this scenario is marked @not-covered)
     And every real credential listed in the catalog patterns is mapped, not skipped

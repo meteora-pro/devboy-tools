@@ -19,7 +19,7 @@ Feature: Approve-on-use protocol gates resolve-time access to high-stakes paths
     When the agent invokes a tool that resolves "@secret:personal/openai/api-key"
     Then the value is resolved without surfacing the use-approval dialog
     And the agent observes the high-level tool's normal response
-    And the SessionApprovalCache records nothing for this path
+    And no cache entry is involved, because a `never` path is not gated at all
 
   @covered-by:evaluate_session_prompts_when_cache_miss @covered-by:evaluate_session_returns_already_approved_when_cached @covered-by:gated_resolver_passes_session_policy_after_cache_record
   Scenario: `session` paths prompt once, then cache for the rest of the session
@@ -43,7 +43,9 @@ Feature: Approve-on-use protocol gates resolve-time access to high-stakes paths
     And the user clicks "Deny"
     Then the daemon refuses the resolve
     And the high-level tool returns an error to the agent surface
-    And the SessionApprovalCache stays empty for this path
+    And the denial is not remembered: nothing feeds a Deny back into
+    SessionApprovalCache, so the next call asks again rather than
+    staying refused
     And no future call within this session can promote the denial without a fresh dialog
 
   @covered-by:use_approval_ttl_seconds_caps_at_registry_ttl @covered-by:ttl_default_is_five_minutes_per_adr

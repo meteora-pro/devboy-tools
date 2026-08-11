@@ -41,12 +41,22 @@ Feature: Agent surface never leaks secret values
     And the daemon-side resolver supplies the value to the high-level provider tool internally
 
   @covered-by:expose_secret_only_appears_in_allowlisted_mcp_files @covered-by:allowlist_entries_actually_match_real_files
-  Scenario: AgentSafeReply marker enforces invariant at compile time
-    Given a contributor adds a new field "value: SecretString" to SecretsListItem
+  Scenario: A new reply type cannot be returned without being marked agent-safe
+    Given a contributor adds a reply struct and returns it from a secrets_* tool
     When CI runs the workspace check
-    Then the build fails with a typed error because SecretString does not implement AgentSafeReply
-    And the negative test in tests/secret_tool_responses_never_leak_value.rs catches the leak even if the marker is bypassed
-    And the grep gate in tests/no_expose_secret_outside_allowlist.rs flags any new `.expose_secret()` call outside the allowlist
+    Then the build fails, because the audit fence names every returnable
+    type and `assert_safe` demands an AgentSafeReply impl
+    And the grep gate flags any new `.expose_secret()` call outside the allowlist
+
+  @covered-by:no_agent_facing_reply_declares_a_secret_field @covered-by:the_scanner_flags_a_secret_field
+  Scenario: A secret-typed field cannot be added to a reply that is already marked
+    Given a contributor adds a field "value: SecretString" to SecretsListItem
+    When CI runs the workspace check
+    Then the declaration gate fails, naming the file and the field
+    But NOT because of AgentSafeReply: that trait sits on the struct
+    and does not recurse into its fields, so the struct still satisfies it
+    And this distinction matters, because for most of ADR-024's development
+    the specification claimed the type system caught this and it did not
 
   @covered-by:a_declined_approval_ends_the_exchange @covered-by:gated_resolver_always_refuses_per_call_even_with_cache
   Scenario: Approve-on-use deny propagates as a hard error, not a hidden value
@@ -54,5 +64,6 @@ Feature: Agent surface never leaks secret values
     When the agent invokes a high-level tool that needs the value
     And the user clicks "Deny" in the dialog
     Then the high-level tool returns an MCP error result (isError = true)
-    And the error reason names the path and the policy ("denied by user; path requires per-call approval")
+    And the error reason names the policy: "approve-on-use policy `per-call`
+    requires user approval; surface secrets_request_use_approval and retry"
     And the agent never receives the value

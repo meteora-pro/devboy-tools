@@ -31,15 +31,17 @@ Feature: setup-secrets wizard onboards a fresh project
   Scenario: Re-running with --resume picks up where the wizard left off
     Given a previous wizard run got as far as Phase 3 (Provision) and recorded "scan" + "propose" as done
     When I run "devboy secrets setup --resume --root <repo>"
-    Then the wizard prints "resuming at phase 3/4"
-    And Scan and Propose phases emit "Skipped — already done"
+    Then the wizard resumes at the first phase that is not done
+    And the Scan and Propose phases are skipped with the reason "already done"
     And only the Provision and Doctor phases re-run
 
   @covered-by:proposer_picks_catalog_pattern_over_heuristic @covered-by:proposer_catalog_skip_outranks_path_proposal @covered-by:proposer_skips_ambiguous_generic_segments
   Scenario: Catalog-driven proposer accuracy on a real project
     Given the bundled token catalogs are loaded
     When I run "devboy secrets setup --scan-only --root meteora/devboy-env-1"
-    Then the proposed-paths count is at most 175
+    Then the proposed-path count is materially lower than the pre-skip-list
+    baseline (no fixture pins the exact number — see the @not-covered
+    scenario in proposer-noise-reduction.feature)
     And "ANTHROPIC_API_KEY" maps to "team/anthropic/anthropic-api-key" (provider_known=true)
     And "ANTHROPIC_BASE_URL" is dropped with reason "skipped by catalog `anthropic` env_var_skip pattern `ANTHROPIC_BASE_URL`"
     And "SERVICE_TOKEN" is dropped with the "ambiguous provider segment" reason
