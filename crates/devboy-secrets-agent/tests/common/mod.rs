@@ -113,14 +113,24 @@ impl DaemonHarness {
         let mut cmd = match mode {
             SpawnMode::Child => Command::new(Self::daemon_bin()),
             SpawnMode::Orphaned => {
-                // `--fork` is load-bearing. Plain `setsid` forks
-                // only when the caller is already a process-group
-                // leader; spawned from a test it is not, so
-                // `setsid` would just `exec` the daemon and leave
-                // this process as its parent — producing exactly
-                // the layout this mode is supposed to avoid.
-                let mut c = Command::new("setsid");
-                c.arg("--fork").arg(Self::daemon_bin());
+                // Background the daemon from a throwaway shell: the
+                // shell forks, the daemon keeps running, the shell
+                // exits, and the kernel reparents the daemon to
+                // init. That is exactly the layout this mode is for
+                // — the daemon must not be a direct child of the
+                // test process.
+                //
+                // This used to be `setsid --fork`, which works on
+                // Linux and does not exist on macOS at all —
+                // `setsid` is util-linux, and the three tests in
+                // this mode failed there with a bare
+                // "No such file or directory". A shell is present
+                // on every platform the daemon supports.
+                let mut c = Command::new("sh");
+                c.arg("-c").arg(format!(
+                    "exec {} &",
+                    shell_quote(&Self::daemon_bin().display().to_string())
+                ));
                 c
             }
         };
@@ -318,4 +328,15 @@ impl DaemonStartFailure {
     pub fn mentions(&self, needle: &str) -> bool {
         self.stderr.contains(needle)
     }
+}
+
+/// Single-quote a path for `sh -c`.
+///
+/// The daemon binary lives under `target/`, which is usually tame —
+/// but a checkout under a path with a space would otherwise split
+/// into two arguments and fail in a way that looks like the binary
+/// is missing, which is precisely the confusion this mode just
+/// spent a CI cycle on.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
 }

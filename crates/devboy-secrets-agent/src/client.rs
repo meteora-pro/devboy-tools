@@ -14,13 +14,20 @@
 //! where blocking on a nested runtime panics. The wire format is
 //! line-delimited JSON over a UNIX socket, so a blocking client is
 //! short and has nothing to conflict with.
+//!
+//! # Why it compiles on Windows at all
+//!
+//! The daemon protocol is UNIX-socket-only by design, but consumers
+//! import this type unconditionally. Rather than push `#[cfg]` onto
+//! every call site, the type exists everywhere and every call
+//! short-circuits to [`ClientError::Protocol`] off UNIX — the same
+//! shape `AgentError` already uses in `lib.rs`.
 
-#![cfg(unix)]
-
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[cfg(unix)]
+use std::io::{BufRead, BufReader, Write};
 
 use serde_json::{Value, json};
 
@@ -79,8 +86,12 @@ pub struct AgentClient {
 impl AgentClient {
     /// Build a client against the canonical socket, or `None` when
     /// no path can be derived.
+    ///
+    /// Off UNIX this is always `None`: there is no socket path to
+    /// derive, which is the honest answer rather than handing back
+    /// a client that can only fail.
     pub fn new() -> Option<Self> {
-        crate::socket::default_socket_path()
+        crate::default_socket_path()
             .ok()
             .map(|socket_path| Self { socket_path })
     }
@@ -106,7 +117,10 @@ impl AgentClient {
     }
 
     /// Send one request and read one response.
+    #[cfg(unix)]
     pub fn call(&self, method: &str, params: Value) -> Result<Value, ClientError> {
+        use std::os::unix::net::UnixStream;
+
         let stream = UnixStream::connect(&self.socket_path).map_err(ClientError::Unreachable)?;
         stream.set_read_timeout(Some(RPC_TIMEOUT)).ok();
         stream.set_write_timeout(Some(RPC_TIMEOUT)).ok();
@@ -148,6 +162,17 @@ impl AgentClient {
         }
 
         Ok(response.get("result").cloned().unwrap_or(Value::Null))
+    }
+
+    /// Send one request and read one response.
+    ///
+    /// The daemon speaks only over UNIX domain sockets, so off UNIX
+    /// there is nothing to reach.
+    #[cfg(not(unix))]
+    pub fn call(&self, _method: &str, _params: Value) -> Result<Value, ClientError> {
+        Err(ClientError::Protocol(
+            "the secret daemon is only reachable over UNIX domain sockets".to_owned(),
+        ))
     }
 
     /// `vault.status`.
