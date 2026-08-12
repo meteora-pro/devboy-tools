@@ -34,6 +34,7 @@ devboy-executor = { workspace = true }
 devboy-mcp = { workspace = true }
 devboy-storage = { workspace = true }
 devboy-secret-patterns = { workspace = true }
+devboy-otel-scan = { workspace = true }
 devboy-secrets-agent = { workspace = true }
 # `devboy-secrets-ui` (no `gui` feature here) supplies the TUI
 # inventory/dialog rendering and the shared inventory data types

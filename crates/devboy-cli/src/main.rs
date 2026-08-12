@@ -4,6 +4,7 @@ mod agents_cmd;
 mod doctor;
 mod hooks_cmd;
 mod onboard_cmd;
+mod otel_scan_cmd;
 mod secrets_agent;
 mod secrets_agent_service;
 mod secrets_cmd;
@@ -329,6 +330,12 @@ enum Commands {
     Trace {
         #[command(subcommand)]
         command: TraceCommands,
+    },
+
+    /// Inspect OpenTelemetry artifacts for leaked secrets.
+    Otel {
+        #[command(subcommand)]
+        command: otel_scan_cmd::OtelCommands,
     },
 
     /// Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628).
@@ -927,6 +934,7 @@ async fn main() -> Result<()> {
                 command: Some(ToolsCommands::Call { .. } | ToolsCommands::List),
             })
             | Some(Commands::FormatPipeline { .. })
+            | Some(Commands::Otel { .. })
     );
 
     // Always install sentry-tracing layer when feature is enabled.
@@ -966,6 +974,7 @@ async fn main() -> Result<()> {
         | Some(Commands::Upgrade { .. })
         | Some(Commands::Benchmark { .. })
         | Some(Commands::FormatPipeline { .. })
+        | Some(Commands::Otel { .. })
         | None => None,
         _ => Some(tokio::spawn(update_check::check_and_notify())),
     };
@@ -1082,6 +1091,11 @@ async fn main() -> Result<()> {
 
             Some(Commands::Trace { command }) => {
                 skills_cmd::handle_trace(command).await?;
+            }
+
+            Some(Commands::Otel { command }) => {
+                let exit_code = otel_scan_cmd::handle(command)?;
+                std::process::exit(exit_code);
             }
 
             Some(Commands::Doctor {
