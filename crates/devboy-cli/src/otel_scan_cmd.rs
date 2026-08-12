@@ -1,5 +1,6 @@
 //! `devboy otel scan` command family.
 
+use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
@@ -46,6 +47,7 @@ pub enum ScanFormat {
 pub enum ScanOutput {
     Text,
     Json,
+    Sarif,
 }
 
 /// Executes an OTEL command and returns its documented process exit code.
@@ -69,6 +71,7 @@ fn scan(args: ScanArgs) -> Result<i32> {
     match args.output {
         ScanOutput::Text => print_text(&args.input, &report),
         ScanOutput::Json => print_json(&report)?,
+        ScanOutput::Sarif => print_sarif(&report)?,
     }
     Ok(exit_code(&report))
 }
@@ -272,6 +275,158 @@ fn print_json(report: &ScanReport) -> Result<()> {
     Ok(())
 }
 
+/// Prints SARIF 2.1.0 compatible with GitHub code scanning. Messages use the
+/// redacted preview; raw matches must never be exported in a SARIF upload.
+fn print_sarif(report: &ScanReport) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(&sarif_log(report))?);
+    Ok(())
+}
+
+fn sarif_log(report: &ScanReport) -> SarifLog<'_> {
+    let mut rules = BTreeMap::new();
+    for finding in &report.findings {
+        rules
+            .entry(finding.category.clone())
+            .or_insert_with(|| SarifRule {
+                id: finding.category.clone(),
+                name: finding.display_name.clone(),
+                short_description: SarifMessage {
+                    text: format!(
+                        "Detects {} in OpenTelemetry artifacts",
+                        finding.display_name
+                    ),
+                },
+                default_configuration: SarifDefaultConfiguration {
+                    level: sarif_level(finding).to_owned(),
+                },
+            });
+    }
+    SarifLog {
+        version: "2.1.0",
+        schema: "https://json.schemastore.org/sarif-2.1.0.json",
+        runs: vec![SarifRun {
+            tool: SarifTool {
+                driver: SarifDriver {
+                    name: "devboy otel scan",
+                    information_uri: "https://github.com/meteora-pro/devboy-tools",
+                    rules: rules.into_values().collect(),
+                },
+            },
+            results: report
+                .findings
+                .iter()
+                .map(|finding| SarifResult {
+                    rule_id: &finding.category,
+                    level: sarif_level(finding),
+                    message: SarifMessage {
+                        text: format!(
+                            "{} detected at {} ({})",
+                            finding.display_name, finding.attribute_path, finding.match_redacted
+                        ),
+                    },
+                    locations: vec![SarifLocation {
+                        physical_location: SarifPhysicalLocation {
+                            artifact_location: SarifArtifactLocation {
+                                uri: &finding.source,
+                            },
+                            region: finding.line.map(|line| SarifRegion { start_line: line }),
+                        },
+                    }],
+                })
+                .collect(),
+        }],
+    }
+}
+
+fn sarif_level(finding: &Finding) -> &'static str {
+    match finding.severity {
+        devboy_secret_patterns::Severity::High => "error",
+        devboy_secret_patterns::Severity::Medium => "warning",
+        devboy_secret_patterns::Severity::Low => "note",
+    }
+}
+
+#[derive(Serialize)]
+struct SarifLog<'a> {
+    version: &'static str,
+    #[serde(rename = "$schema")]
+    schema: &'static str,
+    runs: Vec<SarifRun<'a>>,
+}
+
+#[derive(Serialize)]
+struct SarifRun<'a> {
+    tool: SarifTool,
+    results: Vec<SarifResult<'a>>,
+}
+
+#[derive(Serialize)]
+struct SarifTool {
+    driver: SarifDriver,
+}
+
+#[derive(Serialize)]
+struct SarifDriver {
+    name: &'static str,
+    #[serde(rename = "informationUri")]
+    information_uri: &'static str,
+    rules: Vec<SarifRule>,
+}
+
+#[derive(Serialize)]
+struct SarifRule {
+    id: String,
+    name: String,
+    #[serde(rename = "shortDescription")]
+    short_description: SarifMessage,
+    #[serde(rename = "defaultConfiguration")]
+    default_configuration: SarifDefaultConfiguration,
+}
+
+#[derive(Serialize)]
+struct SarifDefaultConfiguration {
+    level: String,
+}
+
+#[derive(Serialize)]
+struct SarifResult<'a> {
+    #[serde(rename = "ruleId")]
+    rule_id: &'a str,
+    level: &'static str,
+    message: SarifMessage,
+    locations: Vec<SarifLocation<'a>>,
+}
+
+#[derive(Serialize)]
+struct SarifMessage {
+    text: String,
+}
+
+#[derive(Serialize)]
+struct SarifLocation<'a> {
+    #[serde(rename = "physicalLocation")]
+    physical_location: SarifPhysicalLocation<'a>,
+}
+
+#[derive(Serialize)]
+struct SarifPhysicalLocation<'a> {
+    #[serde(rename = "artifactLocation")]
+    artifact_location: SarifArtifactLocation<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    region: Option<SarifRegion>,
+}
+
+#[derive(Serialize)]
+struct SarifArtifactLocation<'a> {
+    uri: &'a str,
+}
+
+#[derive(Serialize)]
+struct SarifRegion {
+    #[serde(rename = "startLine")]
+    start_line: u64,
+}
+
 fn severity_label(finding: &Finding) -> &'static str {
     match finding.severity {
         devboy_secret_patterns::Severity::High => "HIGH",
@@ -366,5 +521,30 @@ mod tests {
             .find(|finding| finding.category == "github-pat")
             .expect("GitHub PAT finding");
         assert_eq!(finding.record_id.as_deref(), Some("traces:1"));
+    }
+
+    #[test]
+    fn sarif_uses_standard_fields_and_redacts_the_match() {
+        let token = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ";
+        let catalogue = Catalogue::builtins_only();
+        let scanner = Scanner::new(&catalogue);
+        let report = scanner.scan_value(
+            &devboy_otel_scan::ScanContext {
+                source: "fixture.jsonl".to_owned(),
+                line: Some(7),
+                record_id: None,
+            },
+            &serde_json::json!({"body": format!("Bearer {token}")}),
+        );
+        let value = serde_json::to_value(sarif_log(&report)).expect("SARIF serializes");
+
+        assert_eq!(value["version"], "2.1.0");
+        assert_eq!(value["runs"][0]["results"][0]["ruleId"], "github-pat");
+        assert_eq!(value["runs"][0]["results"][0]["level"], "error");
+        assert_eq!(
+            value["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["region"]["startLine"],
+            7
+        );
+        assert!(!serde_json::to_string(&value).expect("JSON").contains(token));
     }
 }
