@@ -10,6 +10,9 @@
 
 #![forbid(unsafe_code)]
 
+use std::fmt;
+use std::io::{self, BufRead};
+
 use devboy_secret_patterns::{Catalogue, SecretPattern, Severity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -85,6 +88,18 @@ pub struct ScanReport {
     pub summary: ScanSummary,
 }
 
+impl ScanReport {
+    /// Incorporates a per-record report into this report.
+    pub fn extend(&mut self, other: Self) {
+        self.findings.extend(other.findings);
+        self.summary.records += other.summary.records;
+        self.summary.findings_total += other.summary.findings_total;
+        self.summary.high += other.summary.high;
+        self.summary.medium += other.summary.medium;
+        self.summary.low += other.summary.low;
+    }
+}
+
 /// Stateless, non-mutating scanner over a shared secret-pattern catalogue.
 pub struct Scanner<'a> {
     patterns: Vec<&'a dyn SecretPattern>,
@@ -105,6 +120,84 @@ impl<'a> Scanner<'a> {
         report.summary.records = 1;
         report
     }
+}
+
+/// Error while reading a JSONL artifact.
+///
+/// Its display text deliberately omits input content, which could contain a
+/// secret and may be printed by callers in CI logs.
+#[derive(Debug)]
+pub enum JsonlScanError {
+    /// The input stream could not be read.
+    Read(io::Error),
+    /// A non-blank line did not contain a JSON value.
+    InvalidJson {
+        /// One-based line number in the source.
+        line: u64,
+    },
+}
+
+impl fmt::Display for JsonlScanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read(_) => f.write_str("failed to read JSONL input"),
+            Self::InvalidJson { line } => write!(f, "invalid JSON on line {line}"),
+        }
+    }
+}
+
+impl std::error::Error for JsonlScanError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Read(error) => Some(error),
+            Self::InvalidJson { .. } => None,
+        }
+    }
+}
+
+/// Scans a JSONL input stream without loading it fully into memory.
+///
+/// Each non-blank line must be an independent JSON value. Finding locations
+/// retain the physical source line number so they can be located directly.
+pub fn scan_jsonl<R: BufRead>(
+    scanner: &Scanner<'_>,
+    source: impl Into<String>,
+    reader: R,
+) -> Result<ScanReport, JsonlScanError> {
+    let source = source.into();
+    let mut report = ScanReport::default();
+
+    for (index, line) in reader.lines().enumerate() {
+        let line_number = u64::try_from(index).expect("line index always fits u64") + 1;
+        let line = line.map_err(JsonlScanError::Read)?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&line)
+            .map_err(|_| JsonlScanError::InvalidJson { line: line_number })?;
+        let context = ScanContext {
+            source: source.clone(),
+            line: Some(line_number),
+            record_id: record_id(&value),
+        };
+        report.extend(scanner.scan_value(&context, &value));
+    }
+
+    Ok(report)
+}
+
+fn record_id(value: &Value) -> Option<String> {
+    ["span_id", "log_record_id", "record_id", "id"]
+        .into_iter()
+        .find_map(|key| value.get(key).and_then(Value::as_str))
+        .map(str::to_owned)
+        .or_else(|| {
+            value
+                .get("data")
+                .and_then(|data| data.get("span_id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
 }
 
 fn scan_value_at(
@@ -247,5 +340,34 @@ mod tests {
         let value = "postgres://user:p4ssw0rd@db.example.test:5432/appdb";
         let report = scanner().scan_value(&ScanContext::default(), &json!({"db.url": value}));
         assert!(report.findings.iter().any(|f| f.category == "postgres-url"));
+    }
+
+    #[test]
+    fn scans_jsonl_one_record_at_a_time_with_source_locations() {
+        let token = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ";
+        let input = format!(
+            "\n{{\"span_id\":\"abc123\",\"body\":\"safe\"}}\n{{\"body\":\"Bearer {token}\"}}\n"
+        );
+        let report = scan_jsonl(&scanner(), "fixture.jsonl", std::io::Cursor::new(input))
+            .expect("valid JSONL");
+
+        assert_eq!(report.summary.records, 2);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.category == "github-pat")
+            .expect("GitHub PAT finding");
+        assert_eq!(finding.source, "fixture.jsonl");
+        assert_eq!(finding.line, Some(3));
+        assert!(!serde_json::to_string(&report).unwrap().contains(token));
+    }
+
+    #[test]
+    fn malformed_jsonl_is_reported_without_echoing_the_input() {
+        let malformed = "{ definitely-not-json and possibly-secret=ghp_should_not_appear }\n";
+        let error = scan_jsonl(&scanner(), "fixture.jsonl", std::io::Cursor::new(malformed))
+            .expect_err("must reject malformed JSON");
+        assert_eq!(error.to_string(), "invalid JSON on line 1");
+        assert!(!error.to_string().contains("possibly-secret"));
     }
 }
