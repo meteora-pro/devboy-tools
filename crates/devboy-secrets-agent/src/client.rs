@@ -171,12 +171,22 @@ impl AgentClient {
     /// Send one request and read one response.
     ///
     /// The daemon speaks only over UNIX domain sockets, so off UNIX
-    /// there is nothing to reach.
+    /// there is nothing to reach — and that is [`Unreachable`],
+    /// not [`Protocol`]. The distinction is the point of the enum:
+    /// callers treat `Unreachable` as "carry on without it" and a
+    /// protocol error as something that went wrong in an exchange
+    /// that happened. No exchange happens here, and a platform
+    /// without the transport is the most unreachable a daemon can
+    /// be.
+    ///
+    /// [`Unreachable`]: ClientError::Unreachable
+    /// [`Protocol`]: ClientError::Protocol
     #[cfg(not(unix))]
     pub fn call(&self, _method: &str, _params: Value) -> Result<Value, ClientError> {
-        Err(ClientError::Protocol(
-            "the secret daemon is only reachable over UNIX domain sockets".to_owned(),
-        ))
+        Err(ClientError::Unreachable(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "the secret daemon is only reachable over UNIX domain sockets",
+        )))
     }
 
     /// `vault.status`.
@@ -215,6 +225,13 @@ mod tests {
     /// An unreachable daemon must be distinguishable from one that
     /// answered with an error: the first means "carry on without
     /// it", the second is an answer worth forwarding.
+    ///
+    /// Holds on every platform, by different routes: on UNIX the
+    /// socket is absent, off UNIX the transport is. Both are the
+    /// same answer to a caller, and this failed on Windows when
+    /// the off-UNIX path classified itself as a protocol error —
+    /// which would have had callers treat "this platform has no
+    /// daemon" as "the exchange went wrong".
     #[test]
     fn an_unreachable_daemon_is_its_own_error() {
         let client = AgentClient::with_socket("/nonexistent/devboy-client-test.sock");
