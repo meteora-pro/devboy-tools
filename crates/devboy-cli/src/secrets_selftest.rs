@@ -427,14 +427,20 @@ fn storage_findings(config: &Config) -> Vec<Finding> {
         None => out.push(Finding::new("keyfile", "not configured")),
     }
 
-    out.push(Finding::new(
-        "migration",
-        if config.is_secrets_migration_complete() {
-            "complete — the legacy keychain reader is disabled"
-        } else {
-            "not complete — the legacy keychain reader is still active"
-        },
-    ));
+    // `migration_complete` currently gates nothing: there is no
+    // fallback reader for it to switch off. Saying otherwise — as
+    // this line did — tells an upgrading user they are covered when
+    // they are not, which is the worst thing this command can do.
+    out.push(if config.is_secrets_migration_complete() {
+        Finding::new("migration", "marked complete")
+    } else {
+        Finding::new("migration", "not marked complete").with_note(
+            "this flag only affects reporting today — nothing reads the OS keychain as a \
+             fallback. If you upgraded from 0.33 with tokens stored there, they no longer \
+             resolve: re-enable the keychain with `devboy config set secrets.keychain.enabled \
+             true`, or move them with `devboy secrets migrate`.",
+        )
+    });
 
     out
 }
