@@ -1666,6 +1666,19 @@ const UNLOCK_TIMEOUT: Duration = Duration::from_secs(120);
 /// than being told.
 const UNLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
+/// Why an unlock cannot even be attempted when no socket path
+/// resolves.
+///
+/// Two situations reach it and both mean the same thing to the
+/// caller: off UNIX there is no daemon to have a socket, and on
+/// UNIX it means no config directory could be derived. Either
+/// way the answer is "there is nothing to unlock", and the
+/// message has to say *that* — a caller told only that a path
+/// could not be resolved learns nothing about what to do next.
+const NO_SOCKET_PATH: &str = "no socket path resolves, so there is no secret daemon to unlock \
+                              here. Supply the secrets this process needs through the \
+                              environment instead.";
+
 /// Ask the daemon to unlock itself, then wait for it.
 ///
 /// The passphrase never enters this process. The request carries no
@@ -1673,8 +1686,7 @@ const UNLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// reads stdin, so there is no path by which a passphrase could
 /// arrive even if a caller tried to supply it.
 async fn agent_unlock(args: AgentUnlockArgs) -> Result<()> {
-    let client = devboy_secrets_agent::AgentClient::new()
-        .context("could not resolve the agent socket path")?;
+    let client = devboy_secrets_agent::AgentClient::new().context(NO_SOCKET_PATH)?;
 
     anyhow::ensure!(
         client.is_running(),
@@ -2213,6 +2225,24 @@ fn load_resolved() -> Result<(MergeOutput, ProjectManifest)> {
 
 #[cfg(test)]
 mod tests {
+    /// The integration test for `secrets agent unlock` asserts the
+    /// failure is about the daemon rather than about input — that
+    /// is the whole claim of moving the prompt out of this
+    /// process. It only fires where no socket path resolves, which
+    /// on a developer machine is nowhere, so the wording was
+    /// written blind and a Windows runner found it saying
+    /// "could not resolve the agent socket path" — true, and about
+    /// a path rather than about a daemon.
+    #[test]
+    fn the_no_socket_message_is_about_the_daemon_not_about_a_path() {
+        let text = super::NO_SOCKET_PATH.to_lowercase();
+        assert!(text.contains("daemon"), "{text}");
+        assert!(
+            text.contains("environment"),
+            "with no daemon there has to be somewhere else to get the secret: {text}"
+        );
+    }
+
     use super::*;
     use devboy_storage::{IndexEntry, OverrideEntry, RotationMethod};
 
