@@ -577,6 +577,13 @@ impl VaultServer {
                 "unlock_ttl_seconds": window.unlock_ttl.as_secs(),
                 "max_unlock_ttl_seconds": window.max_unlock_ttl.as_secs(),
                 "idle_relock_seconds": window.idle_relock.map(|d| d.as_secs()),
+                // The window's *policy* is not its *state*. A
+                // caller told the vault re-locks after 900s of
+                // inactivity still cannot tell whether it has
+                // 800 seconds left or 8, and deciding whether to
+                // act now or ask the user first is exactly what
+                // that number is for.
+                "unlock_seconds_remaining": self.idle.remaining_seconds(),
                 "available_methods": available_methods,
                 "trust_level": trust.as_str(),
                 // §7 level 2 vs level 3 turns on who owns the input
@@ -1450,6 +1457,48 @@ mod tests {
             err.data.expect("data payload")["retry_after_seconds"],
             42,
             "the wait has to be machine-readable, not only in the message"
+        );
+    }
+
+    /// The policy is not the state. A caller told the vault
+    /// re-locks after N seconds of inactivity still cannot tell
+    /// whether it has most of that left or almost none, and that
+    /// is the difference between acting now and asking the user
+    /// first. `remaining_seconds()` computed the answer and
+    /// nothing put it in the reply.
+    #[tokio::test]
+    async fn status_reports_how_much_of_the_window_is_left_not_just_its_size() {
+        let (_dir, mut server) = fresh_vault("p");
+
+        let locked = server
+            .handle_request(req(1, "vault.status", Value::Null))
+            .await;
+        assert!(
+            locked.result.expect("status")["unlock_seconds_remaining"].is_null(),
+            "a locked vault has no window to have a remainder of"
+        );
+
+        server
+            .handle_request(req(
+                2,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        let r = server
+            .handle_request(req(3, "vault.status", Value::Null))
+            .await;
+        let result = r.result.expect("status");
+
+        let remaining = result["unlock_seconds_remaining"]
+            .as_u64()
+            .expect("an unlocked vault reports its remainder");
+        let ttl = result["unlock_ttl_seconds"].as_u64().expect("ttl");
+
+        assert!(
+            remaining > 0 && remaining <= ttl,
+            "remainder {remaining} is not inside the window {ttl}"
         );
     }
 

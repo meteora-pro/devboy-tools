@@ -32,6 +32,7 @@ use std::path::Path;
 use devboy_secret_patterns::scrubber::Scrubber;
 use devboy_vault_crypto::aead::KEY_LEN;
 use devboy_vault_crypto::audit::{AuditError, AuditLog, AuditRecord};
+use tracing::warn;
 
 /// Text that has been through the scrubber.
 ///
@@ -113,7 +114,23 @@ impl AuditWriter {
     /// Run text through the scrubber, producing the only type
     /// [`Self::record`] will accept.
     pub fn scrub(&self, text: &str) -> ScrubbedDetail {
-        ScrubbedDetail(self.scrubber.scrub(text).text)
+        let out = self.scrubber.scrub(text);
+        if out.had_leak() {
+            // The scrubber firing is not routine. It means some
+            // component built an audit detail containing a live
+            // secret value, and only the scrubber stopped it from
+            // being written down. The redaction worked; the bug
+            // that produced the text did not go away, and this is
+            // the only place anyone can find out about it.
+            //
+            // The warning carries no part of the value — saying
+            // that a redaction happened is the whole message.
+            warn!(
+                "an audit detail contained a live secret value and was redacted before writing. \
+                 This is a bug in whatever produced that text, not a normal event."
+            );
+        }
+        ScrubbedDetail(out.text)
     }
 
     /// Append one record.
@@ -194,6 +211,33 @@ mod tests {
 
     fn writer(dir: &tempfile::TempDir, values: Vec<(&str, &str)>) -> AuditWriter {
         AuditWriter::open(&dir.path().join("audit-log.dvb"), values).expect("open")
+    }
+
+    /// The scrubber's own verdict must not be dropped on the
+    /// floor. It fires only when something built an audit detail
+    /// out of a live secret value, and that is a bug in whatever
+    /// produced the text — the redaction fixes the log, not the
+    /// producer. `scrub` took `.text` and discarded `had_leak`,
+    /// so the one place that could tell anyone said nothing.
+    #[test]
+    fn a_redaction_is_distinguishable_from_a_clean_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = writer(&dir, vec![("team/github/token", "ghp-supersecretvalue")]);
+
+        let clean = w.scrub("nothing sensitive here at all");
+        assert_eq!(clean.as_str(), "nothing sensitive here at all");
+
+        let redacted = w.scrub("request failed with ghp-supersecretvalue");
+        assert!(
+            !redacted.as_str().contains("ghp-supersecretvalue"),
+            "{}",
+            redacted.as_str()
+        );
+        assert_ne!(
+            redacted.as_str(),
+            "request failed with ghp-supersecretvalue",
+            "the text has to change, or nothing was redacted at all"
+        );
     }
 
     /// The point of the whole module: a value that reaches the
