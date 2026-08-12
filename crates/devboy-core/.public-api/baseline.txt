@@ -1672,7 +1672,35 @@ pub fn devboy_core::provider::UserProvider::get_user_profile<'life0, 'life1, 'as
 pub fn devboy_core::provider::UserProvider::lookup_user_by_email<'life0, 'life1, 'async_trait>(&'life0 self, _email: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<core::option::Option<devboy_core::types::User>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_core::provider::UserProvider::provider_name(&self) -> &'static str
 pub mod devboy_core::remote_config
+pub struct devboy_core::remote_config::RemoteSecretsDefaults
+pub devboy_core::remote_config::RemoteSecretsDefaults::idle_relock_seconds: core::option::Option<u64>
+pub devboy_core::remote_config::RemoteSecretsDefaults::keychain_enabled: core::option::Option<bool>
+pub devboy_core::remote_config::RemoteSecretsDefaults::max_unlock_ttl_seconds: core::option::Option<u64>
+pub devboy_core::remote_config::RemoteSecretsDefaults::profile: core::option::Option<devboy_core::config::SecretsProfile>
+pub devboy_core::remote_config::RemoteSecretsDefaults::unlock_ttl_seconds: core::option::Option<u64>
+impl devboy_core::remote_config::RemoteSecretsDefaults
+pub fn devboy_core::remote_config::RemoteSecretsDefaults::describe(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn devboy_core::remote_config::RemoteSecretsDefaults::is_empty(&self) -> bool
+impl core::clone::Clone for devboy_core::remote_config::RemoteSecretsDefaults
+pub fn devboy_core::remote_config::RemoteSecretsDefaults::clone(&self) -> devboy_core::remote_config::RemoteSecretsDefaults
+impl core::cmp::Eq for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::cmp::PartialEq for devboy_core::remote_config::RemoteSecretsDefaults
+pub fn devboy_core::remote_config::RemoteSecretsDefaults::eq(&self, other: &devboy_core::remote_config::RemoteSecretsDefaults) -> bool
+impl core::default::Default for devboy_core::remote_config::RemoteSecretsDefaults
+pub fn devboy_core::remote_config::RemoteSecretsDefaults::default() -> devboy_core::remote_config::RemoteSecretsDefaults
+impl core::fmt::Debug for devboy_core::remote_config::RemoteSecretsDefaults
+pub fn devboy_core::remote_config::RemoteSecretsDefaults::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::marker::Freeze for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::marker::Send for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::marker::Sync for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::marker::Unpin for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::marker::UnsafeUnpin for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::remote_config::RemoteSecretsDefaults
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::remote_config::RemoteSecretsDefaults
 pub async fn devboy_core::remote_config::fetch_and_merge(local_config: devboy_core::config::Config, token_from_keychain: core::option::Option<&str>) -> devboy_core::config::Config
+pub async fn devboy_core::remote_config::fetch_secrets_defaults(url: &str, token: core::option::Option<&str>) -> core::result::Result<devboy_core::remote_config::RemoteSecretsDefaults, alloc::string::String>
+pub fn devboy_core::remote_config::read_secrets_defaults(remote: &devboy_core::config::Config) -> core::result::Result<devboy_core::remote_config::RemoteSecretsDefaults, alloc::string::String>
 pub fn devboy_core::remote_config::redact_url_for_display(raw: &str) -> alloc::string::String
 pub fn devboy_core::remote_config::resolve_url(local_config: &devboy_core::config::Config) -> core::option::Option<alloc::string::String>
 pub mod devboy_core::secret_approval

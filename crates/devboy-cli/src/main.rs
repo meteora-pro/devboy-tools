@@ -1289,6 +1289,11 @@ struct InitOptions {
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
     remote_config: Option<devboy_core::RemoteConfigSettings>,
+    /// Secrets posture the config server wants a fresh install
+    /// to start from. Applied once, here, so it lands in the
+    /// file the user can read and edit — never re-applied over
+    /// the network on later runs.
+    secrets: Option<devboy_core::config::SecretsConfig>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1423,6 +1428,20 @@ async fn handle_init_command(
 
     // Add remote config settings if provided
     if let Some(url) = remote_config_url {
+        // Ask the config server what posture it wants this
+        // install to start from, before the token is moved into
+        // `options`.
+        options.secrets = fetch_operator_secrets_defaults(&url, remote_config_token.as_deref())
+            .await
+            .map(|(secrets, applied)| {
+                println!("Applying the secrets defaults from the remote config:");
+                for line in applied {
+                    println!("  {line}");
+                }
+                println!("  (edit them in {INIT_CONFIG_FILE}; they are not re-fetched)");
+                secrets
+            });
+
         let token_key = if let Some(token_value) = remote_config_token {
             let key = "remote_config.token".to_string();
             options.tokens.push((key.clone(), token_value));
@@ -2023,6 +2042,71 @@ fn minimal_devboy_toml_template() -> String {
 }
 
 /// Build Config from collected options.
+/// Ask the config server for the secrets posture a fresh install
+/// should start from, and turn it into a `SecretsConfig`.
+///
+/// Returns `None` when there is nothing to apply — including when
+/// the server cannot be reached. Setting up a machine must not
+/// depend on a config server being up: without it the built-in
+/// defaults apply, which is a working install, just not the one
+/// the operator had in mind. The warning says which happened.
+///
+/// The posture is written into the local config **once**, at
+/// init. It is deliberately not re-fetched: a value that changed
+/// under the user on every invocation would be a security setting
+/// they cannot see in any file they own.
+async fn fetch_operator_secrets_defaults(
+    url: &str,
+    token: Option<&str>,
+) -> Option<(devboy_core::config::SecretsConfig, Vec<String>)> {
+    let defaults = match devboy_core::remote_config::fetch_secrets_defaults(url, token).await {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!(
+                "warning: could not read secrets defaults from the remote config: {e}\n  \
+                 continuing with the built-in defaults — change them later with `devboy config \
+                 set secrets.<field> <value>`"
+            );
+            return None;
+        }
+    };
+
+    if defaults.is_empty() {
+        return None;
+    }
+
+    Some((secrets_config_from_defaults(&defaults), defaults.describe()))
+}
+
+/// Turn an operator-supplied posture into the config section
+/// `init` writes out.
+///
+/// Split from the fetch so the mapping is testable without a
+/// server: the interesting property is not that the HTTP call
+/// works, it is that the two fields the remote side must never
+/// set stay at their local defaults no matter what came back.
+fn secrets_config_from_defaults(
+    defaults: &devboy_core::remote_config::RemoteSecretsDefaults,
+) -> devboy_core::config::SecretsConfig {
+    // Starting from `default()` is the load-bearing part:
+    // `keyfile_path` and `migration_complete` are simply never
+    // assigned here, so no future field on the wire can reach
+    // them by accident.
+    let mut secrets = devboy_core::config::SecretsConfig::default();
+
+    if let Some(p) = defaults.profile {
+        secrets.profile = p;
+    }
+    secrets.unlock_ttl_seconds = defaults.unlock_ttl_seconds;
+    secrets.max_unlock_ttl_seconds = defaults.max_unlock_ttl_seconds;
+    secrets.idle_relock_seconds = defaults.idle_relock_seconds;
+    if let Some(enabled) = defaults.keychain_enabled {
+        secrets.keychain.enabled = enabled;
+    }
+
+    secrets
+}
+
 fn build_config(options: &InitOptions) -> Config {
     let mut config = Config::default();
 
@@ -2062,6 +2146,10 @@ fn build_config(options: &InitOptions) -> Config {
     // Add remote config settings if provided
     if let Some(remote_config) = &options.remote_config {
         config.remote_config = Some(remote_config.clone());
+    }
+
+    if let Some(secrets) = &options.secrets {
+        config.secrets = Some(secrets.clone());
     }
 
     config
@@ -6184,6 +6272,71 @@ fn detect_data_type(value: &serde_json::Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use devboy_core::config::SecretsProfile;
+    use devboy_core::remote_config::RemoteSecretsDefaults;
+
+    use super::secrets_config_from_defaults;
+
+    // ===========================================================
+    // Ф13 — the posture an operator hands a fresh install
+    // ===========================================================
+
+    #[test]
+    fn an_operator_posture_lands_in_the_config_init_writes() {
+        let secrets = secrets_config_from_defaults(&RemoteSecretsDefaults {
+            profile: Some(SecretsProfile::Strict),
+            unlock_ttl_seconds: Some(900),
+            max_unlock_ttl_seconds: Some(3600),
+            idle_relock_seconds: Some(300),
+            keychain_enabled: Some(true),
+        });
+
+        assert_eq!(secrets.profile, SecretsProfile::Strict);
+        assert_eq!(secrets.unlock_ttl_seconds, Some(900));
+        assert_eq!(secrets.max_unlock_ttl_seconds, Some(3600));
+        assert_eq!(secrets.idle_relock_seconds, Some(300));
+        assert!(secrets.keychain.enabled);
+    }
+
+    /// The two fields a config server must never reach. Both
+    /// would be dangerous in the same quiet way: `keyfile_path`
+    /// picks which file on this machine is read as key material,
+    /// and `migration_complete` switches off the read-only legacy
+    /// keychain fallback on a machine that may still need it.
+    ///
+    /// Asserted here as well as at the parsing boundary because
+    /// this is the last point before the values reach a file:
+    /// a field added to `RemoteSecretsDefaults` later would have
+    /// to pass through this function to do any harm.
+    #[test]
+    fn a_remote_posture_cannot_reach_the_keyfile_path_or_the_migration_flag() {
+        let secrets = secrets_config_from_defaults(&RemoteSecretsDefaults {
+            profile: Some(SecretsProfile::Strict),
+            unlock_ttl_seconds: Some(900),
+            max_unlock_ttl_seconds: Some(3600),
+            idle_relock_seconds: Some(300),
+            keychain_enabled: Some(true),
+        });
+
+        assert!(
+            secrets.keyfile_path.is_none(),
+            "the remote side chose which file is read as key material"
+        );
+        assert!(
+            !secrets.migration_complete,
+            "the remote side switched off the legacy keychain fallback"
+        );
+    }
+
+    /// An operator who pins nothing gets the built-in defaults —
+    /// not zeroes, and not a half-filled section.
+    #[test]
+    fn an_empty_posture_maps_to_the_built_in_defaults() {
+        let secrets = secrets_config_from_defaults(&RemoteSecretsDefaults::default());
+
+        assert_eq!(secrets, devboy_core::config::SecretsConfig::default());
+    }
+
     use super::*;
     use devboy_core::ConfluenceConfig;
     use devboy_storage::MemoryStore;
