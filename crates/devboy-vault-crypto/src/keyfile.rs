@@ -288,10 +288,64 @@ pub fn unwrap_keyfile(
 /// platform's state dir), while the vault lives under the config
 /// dir. Keeping them in separate trees is what makes a keyfile
 /// worth having: a backup or sync of one does not carry the other.
+///
+/// # Why the separation is checked rather than assumed
+///
+/// The platform's "state" and "config" directories are distinct
+/// on Linux and Windows, and on macOS they are *the same
+/// directory* — `dirs` maps state, data and config all to
+/// `~/Library/Application Support`. Deriving the path and hoping
+/// silently produced a keyfile sitting next to the vault it is
+/// supposed to be separable from, which defeats the point while
+/// looking correct.
+///
+/// So the derived path is checked against the config dir, and a
+/// collision falls back to [`home_state_keyfile`] —
+/// `~/.local/state/devboy-tools/vault.key` spelled out. Any
+/// future platform where `dirs` collapses two of these gets the
+/// same treatment without anybody having to notice.
 pub fn default_keyfile_path() -> Option<std::path::PathBuf> {
-    dirs::state_dir()
+    let derived = dirs::state_dir()
         .or_else(dirs::data_local_dir)
-        .map(|d| d.join("devboy-tools").join("vault.key"))
+        .map(|d| d.join("devboy-tools").join("vault.key"));
+
+    keyfile_path_from(derived, dirs::config_dir().as_deref(), home_state_keyfile())
+}
+
+/// The choice itself, with the environment passed in.
+///
+/// Split out because the interesting branch only fires on
+/// platforms where `dirs` collapses two directories into one:
+/// tested through [`default_keyfile_path`] it would be exercised
+/// on macOS and nowhere else, which is the wrong way round for a
+/// fix whose whole job is to hold on the platform the developer
+/// is least likely to be running.
+fn keyfile_path_from(
+    derived: Option<std::path::PathBuf>,
+    config: Option<&std::path::Path>,
+    fallback: Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    match (derived, config) {
+        (Some(path), Some(config)) if path.starts_with(config) => fallback,
+        (Some(path), _) => Some(path),
+        (None, _) => fallback,
+    }
+}
+
+/// The XDG state path spelled out relative to `$HOME`.
+///
+/// Used where the platform's own state directory is unusable —
+/// either absent, or the same directory as the config dir. Not a
+/// native macOS convention, but it is stable, is not purged the
+/// way `~/Library/Caches` is, and reads the same in the docs on
+/// every UNIX.
+fn home_state_keyfile() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|home| {
+        home.join(".local")
+            .join("state")
+            .join("devboy-tools")
+            .join("vault.key")
+    })
 }
 
 #[cfg(test)]
@@ -459,13 +513,16 @@ mod tests {
 
     /// The whole point of the default location: vault and keyfile
     /// must not share a directory, or a single backup carries both.
+    ///
+    /// This one caught the macOS case, where `dirs` returns the
+    /// same directory for state, data and config — so keep it
+    /// honest about skipping. A `return` on a missing home dir
+    /// reads like a pass and would hide a real regression on any
+    /// runner configured that way.
     #[test]
     fn default_path_is_outside_the_config_tree() {
-        let Some(keyfile) = default_keyfile_path() else {
-            return; // No home directory in this environment.
-        };
-        let Some(config) = dirs::config_dir() else {
-            return;
+        let (Some(keyfile), Some(config)) = (default_keyfile_path(), dirs::config_dir()) else {
+            panic!("expected both a keyfile default and a config dir in a test environment");
         };
 
         assert!(
@@ -474,5 +531,78 @@ mod tests {
             keyfile.display(),
             config.display()
         );
+    }
+
+    /// macOS in a nutshell: `dirs` hands back the same directory
+    /// for state and for config, so the derived path lands next
+    /// to the vault it is supposed to be separable from. Written
+    /// against the pure function so every platform runs it.
+    #[test]
+    fn a_state_dir_that_is_the_config_dir_falls_back() {
+        let shared = std::path::Path::new("/somewhere/Application Support");
+        let derived = shared.join("devboy-tools").join("vault.key");
+        let fallback = std::path::PathBuf::from("/home/u/.local/state/devboy-tools/vault.key");
+
+        let chosen = keyfile_path_from(Some(derived), Some(shared), Some(fallback.clone()));
+
+        assert_eq!(chosen, Some(fallback), "a collision must not be kept");
+    }
+
+    #[test]
+    fn a_state_dir_distinct_from_the_config_dir_is_kept() {
+        let derived = std::path::PathBuf::from("/home/u/.local/state/devboy-tools/vault.key");
+        let config = std::path::Path::new("/home/u/.config");
+        let fallback = std::path::PathBuf::from("/unused");
+
+        let chosen = keyfile_path_from(Some(derived.clone()), Some(config), Some(fallback));
+
+        assert_eq!(chosen, Some(derived), "no collision, nothing to fix");
+    }
+
+    /// A path that merely shares a *prefix string* with the config
+    /// dir is not inside it. `starts_with` on `Path` compares
+    /// whole components, and this pins that: `/home/u/.config-old`
+    /// is a sibling, not a child.
+    #[test]
+    fn a_sibling_directory_is_not_mistaken_for_a_collision() {
+        let derived = std::path::PathBuf::from("/home/u/.config-old/devboy-tools/vault.key");
+        let config = std::path::Path::new("/home/u/.config");
+        let fallback = std::path::PathBuf::from("/fallback");
+
+        let chosen = keyfile_path_from(Some(derived.clone()), Some(config), Some(fallback));
+
+        assert_eq!(chosen, Some(derived));
+    }
+
+    #[test]
+    fn no_derivable_state_dir_falls_back() {
+        let fallback = std::path::PathBuf::from("/home/u/.local/state/devboy-tools/vault.key");
+        let chosen = keyfile_path_from(
+            None,
+            Some(std::path::Path::new("/c")),
+            Some(fallback.clone()),
+        );
+        assert_eq!(chosen, Some(fallback));
+    }
+
+    /// The fallback is only reachable on platforms that collapse
+    /// the directories, so exercise it directly — otherwise the
+    /// branch that fixes macOS is untested everywhere else.
+    #[test]
+    fn the_home_relative_fallback_is_also_outside_the_config_tree() {
+        let Some(fallback) = home_state_keyfile() else {
+            panic!("expected a home directory in a test environment");
+        };
+        let Some(config) = dirs::config_dir() else {
+            panic!("expected a config dir in a test environment");
+        };
+
+        assert!(
+            !fallback.starts_with(&config),
+            "the fallback {} defeats its own purpose under {}",
+            fallback.display(),
+            config.display()
+        );
+        assert!(fallback.ends_with("devboy-tools/vault.key"));
     }
 }

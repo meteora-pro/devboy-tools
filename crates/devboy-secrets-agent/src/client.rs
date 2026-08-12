@@ -24,10 +24,11 @@
 //! shape `AgentError` already uses in `lib.rs`.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 #[cfg(unix)]
 use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -36,7 +37,10 @@ use crate::rpc::JsonRpcError;
 /// How long to wait on the daemon before giving up.
 ///
 /// Short on purpose: a wedged daemon must not stall a caller that
-/// has something else it could do.
+/// has something else it could do. UNIX-only alongside the socket
+/// it applies to — off UNIX there is no connection to time out,
+/// and `-D warnings` rightly calls an unused constant dead.
+#[cfg(unix)]
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Why a call did not produce a result.
