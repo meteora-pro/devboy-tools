@@ -17,11 +17,38 @@
 //!    the suggestion at the prompt or pre-supply one through
 //!    `--target <path>`.
 //! 3. Validate the target as a [`SecretPath`].
-//! 4. Write the value at the new key in the credential store.
+//! 4. Write the value at the new path through the credential
+//!    chain.
 //! 5. Register the entry in the global index with a
 //!    "migrated from `<legacy>`" description.
 //! 6. Confirm with the user, then delete the legacy entry —
 //!    unless `--keep-legacy` is set.
+//!
+//! ## Source and destination are not the same store
+//!
+//! ADR-020 wrote the new path back into the keychain: at the time
+//! the keychain *was* the credential chain, so a migration was a
+//! rename in place. [ADR-024] §6 demoted the keychain out of the
+//! chain, and a rename in place stopped being a migration — it
+//! would move the value to a path the resolver no longer reads,
+//! and then delete the only copy that still worked.
+//!
+//! So the two roles are explicit now: the **legacy store** (the OS
+//! keychain, addressed directly rather than through the chain,
+//! because the chain may no longer contain it) is read from and
+//! deleted from, and the **destination** (the credential chain, so
+//! normally the local vault) is written to.
+//!
+//! ## Re-running a migration
+//!
+//! A destination that already holds the target path is not an
+//! error to overwrite blindly, it is a question: the value there
+//! may be the one an earlier run of this command wrote, or it may
+//! be an unrelated secret that happens to share the path. The two
+//! are told apart by comparing the values, and only the first
+//! counts as "already migrated" — see [`TargetWrite`].
+//!
+//! [ADR-024]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-024-agent-mediated-secret-access.md
 //!
 //! ## Batch mode
 //!
@@ -46,7 +73,7 @@ use anyhow::{Context, Result, bail};
 use clap::Args;
 use devboy_storage::{CredentialStore, GlobalIndex, IndexEntry, KeychainStore, SecretPath};
 use dialoguer::{Confirm, Input};
-use secrecy::SecretString;
+use secrecy::ExposeSecret;
 use serde::Serialize;
 use tracing::debug;
 
@@ -102,12 +129,42 @@ pub struct MigrationPlan {
     pub delete_legacy: bool,
 }
 
+/// What happened at the destination path.
+///
+/// A bool cannot carry this: "did not write" covers both the
+/// harmless re-run and the case where an unrelated secret is
+/// sitting on the target path, and those two have opposite
+/// consequences for deleting the legacy entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetWrite {
+    /// The value was written at the target path.
+    Written,
+    /// The destination already held this exact value — an earlier
+    /// run of the same migration. Nothing to do, and the legacy
+    /// entry is safe to drop.
+    AlreadyMigrated,
+    /// The destination already held a *different* value at this
+    /// path. Nothing is written and the legacy entry is kept: one
+    /// of the two secrets would otherwise be lost, and this
+    /// command cannot know which one is wanted.
+    Conflict,
+}
+
+impl TargetWrite {
+    /// Whether the destination is known to hold the legacy value
+    /// after this step — the precondition for deleting the source.
+    fn value_is_at_target(self) -> bool {
+        matches!(self, Self::Written | Self::AlreadyMigrated)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MigrationOutcome {
     /// The plan that was executed.
     pub plan: MigrationPlan,
-    /// `true` when the new credential store entry was written.
-    pub wrote_target: bool,
+    /// What happened at the destination path.
+    pub target: TargetWrite,
     /// `true` when the index was updated (insert).
     pub registered_in_index: bool,
     /// `true` when the legacy entry was deleted.
@@ -126,11 +183,18 @@ pub async fn handle(args: MigrateArgs) -> Result<()> {
         bail!("provide a legacy key (e.g. `devboy secrets migrate github/token`) or pass --all");
     }
 
-    let store: Arc<dyn CredentialStore> = Arc::new(KeychainStore::new());
+    // The legacy store is addressed directly rather than through
+    // the chain: since ADR-024 §6 the chain does not contain the
+    // keychain unless the user opted back in, and a migration
+    // that cannot see its own source is useless.
+    let legacy: Arc<dyn CredentialStore> = Arc::new(KeychainStore::new());
+    // The destination is the chain, so the value lands wherever
+    // reads will actually look for it — normally the local vault.
+    let destination = crate::credential_chain();
     let mut index = GlobalIndex::load().context("failed to load global index")?;
 
     let plans = if args.all {
-        plan_all(&store, args.keep_legacy)
+        plan_all(&legacy, args.keep_legacy)
     } else {
         let key = args.legacy_key.as_ref().expect("guarded above");
         let target = resolve_target_path(&args, key)?;
@@ -167,7 +231,7 @@ pub async fn handle(args: MigrateArgs) -> Result<()> {
 
     let mut outcomes = Vec::with_capacity(plans.len());
     for plan in plans {
-        let outcome = execute_plan(&plan, store.as_ref(), &mut index)?;
+        let outcome = execute_plan(&plan, legacy.as_ref(), &destination, &mut index)?;
         outcomes.push(outcome);
     }
 
@@ -260,7 +324,8 @@ fn plan_one(legacy_key: &str, target_path: &str, delete_legacy: bool) -> Migrati
 /// resulting outcomes.
 pub fn execute_plan(
     plan: &MigrationPlan,
-    store: &dyn CredentialStore,
+    legacy: &dyn CredentialStore,
+    destination: &dyn CredentialStore,
     index: &mut GlobalIndex,
 ) -> Result<MigrationOutcome> {
     let target_path = SecretPath::parse(&plan.target_path).with_context(|| {
@@ -270,16 +335,33 @@ pub fn execute_plan(
         )
     })?;
 
-    let value = store
+    let value = legacy
         .get(&plan.legacy_key)
         .with_context(|| format!("failed to read legacy key '{}'", plan.legacy_key))?
         .ok_or_else(|| anyhow::anyhow!("legacy key '{}' is not present", plan.legacy_key))?;
 
-    // Write at the new path.
-    store
-        .store(target_path.as_str(), &value)
-        .with_context(|| format!("failed to write '{target_path}'"))?;
-    let wrote_target = true;
+    // Look before writing. An occupied target is either this
+    // migration already having run, or a different secret living
+    // at the same path; overwriting is only safe in the first
+    // case. A plain byte comparison is right here — both values
+    // are already in this process's memory, so there is no
+    // timing signal an attacker could be on the other side of.
+    let existing = destination
+        .get(target_path.as_str())
+        .with_context(|| format!("failed to read '{target_path}' at the destination"))?;
+
+    let target = match existing {
+        Some(found) if found.expose_secret() == value.expose_secret() => {
+            TargetWrite::AlreadyMigrated
+        }
+        Some(_) => TargetWrite::Conflict,
+        None => {
+            destination
+                .store(target_path.as_str(), &value)
+                .with_context(|| format!("failed to write '{target_path}'"))?;
+            TargetWrite::Written
+        }
+    };
 
     // Register in the index. The migrated entry gets a
     // description noting its provenance; nothing else is
@@ -291,14 +373,20 @@ pub fn execute_plan(
         )),
         ..IndexEntry::default()
     };
-    let registered_in_index = index.insert(target_path.clone(), entry).is_none();
+    // A conflict means the destination does not hold this value,
+    // so pointing the index at that path would advertise the
+    // wrong secret.
+    let registered_in_index =
+        target.value_is_at_target() && index.insert(target_path.clone(), entry).is_none();
 
     // Optionally delete the legacy entry. Best-effort — a delete
     // failure is not a hard fail because the new entry is
-    // already in place; just surface a warning.
+    // already in place; just surface a warning. Deleting is
+    // gated on the value actually being at the target: on a
+    // conflict the legacy copy is the only one left.
     let mut deleted_legacy = false;
-    if plan.delete_legacy {
-        match store.delete(&plan.legacy_key) {
+    if plan.delete_legacy && target.value_is_at_target() {
+        match legacy.delete(&plan.legacy_key) {
             Ok(()) => deleted_legacy = true,
             Err(e) => {
                 eprintln!(
@@ -311,11 +399,10 @@ pub fn execute_plan(
 
     // Discard the value early. SecretString zeroizes on drop.
     drop(value);
-    let _ = SecretString::from(String::new()); // keep import alive in tests
 
     Ok(MigrationOutcome {
         plan: plan.clone(),
-        wrote_target,
+        target,
         registered_in_index,
         deleted_legacy,
     })
@@ -340,8 +427,12 @@ fn print_plan(p: &MigrationPlan) {
 
 fn print_outcome(o: &MigrationOutcome) {
     let mut bits: Vec<&str> = Vec::new();
-    if o.wrote_target {
-        bits.push("wrote new entry");
+    match o.target {
+        TargetWrite::Written => bits.push("wrote new entry"),
+        TargetWrite::AlreadyMigrated => bits.push("already migrated, left as is"),
+        TargetWrite::Conflict => {
+            bits.push("SKIPPED: a different secret is already at that path");
+        }
     }
     if o.registered_in_index {
         bits.push("registered in index");
@@ -383,7 +474,7 @@ pub fn confirm_delete(legacy_key: &str, default: bool) -> Result<bool> {
 mod tests {
     use super::*;
     use devboy_storage::MemoryStore;
-    use secrecy::ExposeSecret;
+    use secrecy::{ExposeSecret, SecretString};
 
     fn p(s: &str) -> SecretPath {
         SecretPath::parse(s).unwrap()
@@ -394,6 +485,12 @@ mod tests {
             legacy_key.to_owned(),
             value.to_owned(),
         )]))
+    }
+
+    /// An empty destination — the normal state before a
+    /// migration runs.
+    fn empty_destination() -> Arc<dyn CredentialStore> {
+        Arc::new(MemoryStore::new())
     }
 
     // -- plan_one --------------------------------------------------
@@ -408,23 +505,41 @@ mod tests {
 
     // -- execute_plan happy path ----------------------------------
 
+    /// The whole point of the command post-ADR-024: the value
+    /// leaves the legacy store and lands in the destination. A
+    /// version of this that wrote back into the legacy store
+    /// would pass every other assertion here while moving the
+    /// secret somewhere reads no longer reach.
     #[test]
-    fn execute_plan_writes_target_registers_index_and_deletes_legacy() {
-        let store = fresh_store_with("github/token", "ghp_fixture");
+    fn execute_plan_moves_the_value_from_the_legacy_store_to_the_destination() {
+        let legacy = fresh_store_with("github/token", "ghp_fixture");
+        let destination = empty_destination();
         let mut index = GlobalIndex::new();
         let plan = plan_one("github/token", "personal/github/token-legacy", true);
 
-        let outcome = execute_plan(&plan, store.as_ref(), &mut index).unwrap();
-        assert!(outcome.wrote_target);
+        let outcome =
+            execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap();
+        assert_eq!(outcome.target, TargetWrite::Written);
         assert!(outcome.registered_in_index);
         assert!(outcome.deleted_legacy);
 
-        // Target read back.
-        let val = store.get("personal/github/token-legacy").unwrap().unwrap();
+        // The destination holds it.
+        let val = destination
+            .get("personal/github/token-legacy")
+            .unwrap()
+            .unwrap();
         assert_eq!(val.expose_secret(), "ghp_fixture");
 
-        // Legacy gone.
-        assert!(store.get("github/token").unwrap().is_none());
+        // The legacy store holds neither the old key nor the new
+        // path — nothing was written back into it.
+        assert!(legacy.get("github/token").unwrap().is_none());
+        assert!(
+            legacy
+                .get("personal/github/token-legacy")
+                .unwrap()
+                .is_none(),
+            "the migration must not write the target back into the legacy store"
+        );
 
         // Index has an entry with a provenance description.
         let entry = index.get(&p("personal/github/token-legacy")).unwrap();
@@ -439,21 +554,24 @@ mod tests {
 
     #[test]
     fn execute_plan_keeps_legacy_when_delete_is_false() {
-        let store = fresh_store_with("gitlab/token", "glpat-fixture");
+        let legacy = fresh_store_with("gitlab/token", "glpat-fixture");
+        let destination = empty_destination();
         let mut index = GlobalIndex::new();
         let plan = plan_one("gitlab/token", "personal/gitlab/token-legacy", false);
 
-        let outcome = execute_plan(&plan, store.as_ref(), &mut index).unwrap();
-        assert!(outcome.wrote_target);
+        let outcome =
+            execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap();
+        assert_eq!(outcome.target, TargetWrite::Written);
         assert!(!outcome.deleted_legacy);
 
         // Legacy still present.
-        assert!(store.get("gitlab/token").unwrap().is_some());
+        assert!(legacy.get("gitlab/token").unwrap().is_some());
     }
 
     #[test]
     fn execute_plan_returns_false_for_index_when_target_already_existed() {
-        let store = fresh_store_with("github/token", "ghp_fixture");
+        let legacy = fresh_store_with("github/token", "ghp_fixture");
+        let destination = empty_destination();
         let mut index = GlobalIndex::new();
         index.insert(
             p("personal/github/token-legacy"),
@@ -464,9 +582,10 @@ mod tests {
         );
         let plan = plan_one("github/token", "personal/github/token-legacy", false);
 
-        let outcome = execute_plan(&plan, store.as_ref(), &mut index).unwrap();
+        let outcome =
+            execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap();
         // Target was overwritten in the index.
-        assert!(outcome.wrote_target);
+        assert_eq!(outcome.target, TargetWrite::Written);
         assert!(
             !outcome.registered_in_index,
             "index entry already existed; insert() returns Some(prev)"
@@ -487,23 +606,144 @@ mod tests {
 
     #[test]
     fn execute_plan_rejects_invalid_target_path() {
-        let store = fresh_store_with("github/token", "ghp");
+        let legacy = fresh_store_with("github/token", "ghp");
+        let destination = empty_destination();
         let mut index = GlobalIndex::new();
         // 2 segments — fails ADR-020 validator.
         let plan = plan_one("github/token", "github/token", true);
-        let err = execute_plan(&plan, store.as_ref(), &mut index).unwrap_err();
+        let err =
+            execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("not a valid ADR-020 path"));
     }
 
     #[test]
     fn execute_plan_errors_when_legacy_absent() {
-        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::new());
+        let legacy = empty_destination();
+        let destination = empty_destination();
         let mut index = GlobalIndex::new();
         let plan = plan_one("github/token", "personal/github/token-legacy", true);
-        let err = execute_plan(&plan, store.as_ref(), &mut index).unwrap_err();
+        let err =
+            execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("not present"));
+    }
+
+    // -- execute_plan: an occupied target -------------------------
+
+    /// Re-running the same migration must be a no-op, not a
+    /// rewrite. This is the ordinary case: `--all` defaults to
+    /// keeping the legacy entries, so the second run sees the
+    /// same sources it saw the first time.
+    #[test]
+    fn a_second_run_over_the_same_value_writes_nothing_and_still_clears_the_legacy_entry() {
+        let legacy = fresh_store_with("github/token", "ghp_fixture");
+        let destination = empty_destination();
+        let mut index = GlobalIndex::new();
+        let plan = plan_one("github/token", "personal/github/token-legacy", true);
+
+        // First run migrates but keeps nothing to distinguish
+        // from a fresh install, so re-seed the legacy entry to
+        // model "the user ran with --keep-legacy, then again
+        // without".
+        execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap();
+        legacy
+            .store(
+                "github/token",
+                &SecretString::from("ghp_fixture".to_owned()),
+            )
+            .unwrap();
+
+        let second =
+            execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap();
+        assert_eq!(second.target, TargetWrite::AlreadyMigrated);
+        assert!(
+            second.deleted_legacy,
+            "the value is demonstrably at the target, so the source copy is redundant"
+        );
+        assert_eq!(
+            destination
+                .get("personal/github/token-legacy")
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "ghp_fixture"
+        );
+    }
+
+    /// The dangerous case: something unrelated already occupies
+    /// the target path. Overwriting loses that secret; deleting
+    /// the legacy entry loses the other one. Neither is this
+    /// command's call to make, so it does neither.
+    #[test]
+    fn a_different_secret_at_the_target_is_neither_overwritten_nor_costs_the_legacy_copy() {
+        let legacy = fresh_store_with("github/token", "ghp_fixture");
+        let destination: Arc<dyn CredentialStore> = Arc::new(MemoryStore::with_credentials([(
+            "personal/github/token-legacy".to_owned(),
+            "someone-elses-secret".to_owned(),
+        )]));
+        let mut index = GlobalIndex::new();
+        let plan = plan_one("github/token", "personal/github/token-legacy", true);
+
+        let outcome =
+            execute_plan(&plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap();
+
+        assert_eq!(outcome.target, TargetWrite::Conflict);
+        assert!(!outcome.deleted_legacy, "the legacy copy is the only one");
+        assert!(
+            !outcome.registered_in_index,
+            "the index must not point at a path holding a different secret"
+        );
+        assert_eq!(
+            destination
+                .get("personal/github/token-legacy")
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "someone-elses-secret",
+            "the occupant survives"
+        );
+        assert!(
+            legacy.get("github/token").unwrap().is_some(),
+            "and so does the source"
+        );
+    }
+
+    /// A destination that refuses writes — the normal state when
+    /// the vault is locked and the keychain is opted out — must
+    /// fail before the legacy entry is touched. Losing the only
+    /// copy to a failed write is the worst outcome available.
+    #[test]
+    fn a_failing_destination_leaves_the_legacy_entry_alone() {
+        let legacy = fresh_store_with("github/token", "ghp_fixture");
+        let destination = ReadOnlyStore;
+        let mut index = GlobalIndex::new();
+        let plan = plan_one("github/token", "personal/github/token-legacy", true);
+
+        let err = execute_plan(&plan, legacy.as_ref(), &destination, &mut index).unwrap_err();
+        assert!(format!("{err:#}").contains("failed to write"));
+        assert!(
+            legacy.get("github/token").unwrap().is_some(),
+            "a failed write must not cost the source copy"
+        );
+    }
+
+    /// Stands in for the locked vault: reads fine, refuses writes.
+    struct ReadOnlyStore;
+
+    impl CredentialStore for ReadOnlyStore {
+        fn store(&self, _key: &str, _value: &SecretString) -> devboy_core::Result<()> {
+            Err(devboy_core::Error::Storage("nowhere to store".into()))
+        }
+        fn get(&self, _key: &str) -> devboy_core::Result<Option<SecretString>> {
+            Ok(None)
+        }
+        fn delete(&self, _key: &str) -> devboy_core::Result<()> {
+            Ok(())
+        }
+        fn is_writable(&self) -> bool {
+            false
+        }
     }
 
     // -- plan_all --------------------------------------------------
@@ -543,23 +783,34 @@ mod tests {
 
     #[test]
     fn batch_through_execute_plan_handles_two_entries() {
-        let store: Arc<dyn CredentialStore> = Arc::new(MemoryStore::with_credentials([
+        let legacy: Arc<dyn CredentialStore> = Arc::new(MemoryStore::with_credentials([
             ("github/token".into(), "ghp".into()),
             ("gitlab/token".into(), "glpat".into()),
         ]));
+        let destination = empty_destination();
         let mut index = GlobalIndex::new();
-        let plans = plan_all(&store, /*keep_legacy=*/ false);
+        let plans = plan_all(&legacy, /*keep_legacy=*/ false);
         assert_eq!(plans.len(), 2);
 
         for plan in &plans {
-            execute_plan(plan, store.as_ref(), &mut index).unwrap();
+            execute_plan(plan, legacy.as_ref(), destination.as_ref(), &mut index).unwrap();
         }
 
-        // Both new keys present, both legacy keys gone.
-        assert!(store.get("personal/github/token-legacy").unwrap().is_some());
-        assert!(store.get("personal/gitlab/token-legacy").unwrap().is_some());
-        assert!(store.get("github/token").unwrap().is_none());
-        assert!(store.get("gitlab/token").unwrap().is_none());
+        // Both new paths in the destination, both legacy keys gone.
+        assert!(
+            destination
+                .get("personal/github/token-legacy")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            destination
+                .get("personal/gitlab/token-legacy")
+                .unwrap()
+                .is_some()
+        );
+        assert!(legacy.get("github/token").unwrap().is_none());
+        assert!(legacy.get("gitlab/token").unwrap().is_none());
 
         // Index has both entries.
         assert!(index.get(&p("personal/github/token-legacy")).is_some());
