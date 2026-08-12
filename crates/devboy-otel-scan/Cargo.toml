@@ -1,0 +1,20 @@
+[package]
+name = "devboy-otel-scan"
+description = "Streaming-friendly secret finding engine for OpenTelemetry artifacts."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords = ["devboy", "opentelemetry", "security", "secret-scanning"]
+categories = ["development-tools", "authentication"]
+
+[dependencies]
+devboy-secret-patterns = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
