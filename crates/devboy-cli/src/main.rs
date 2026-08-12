@@ -936,6 +936,85 @@ fn load_config_for_store() -> devboy_core::config::Config {
 /// `proxy.my-server.token` is served by
 /// `DEVBOY_PROXY_MY_SERVER_TOKEN`. Used to tell the user what to
 /// set when nothing in the chain accepts writes.
+/// How a secret reached this process.
+///
+/// The distinction is not cosmetic. A value passed as a
+/// command-line argument is written to the shell's history file
+/// and is readable from `/proc/<pid>/cmdline` by any other user
+/// on the box while the command runs. Dotfiles — history included
+/// — get committed to repositories routinely, so a token handed
+/// over this way outlives the terminal it was typed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SecretInput {
+    /// A literal on the command line. Leaks as described above.
+    Argv,
+    /// `-`, meaning "read it from stdin". Never in the process
+    /// table, never in a history file.
+    Stdin,
+    /// From the environment. Also visible to the process itself
+    /// and its children, but not recorded by the shell.
+    Env,
+    /// Not supplied at all.
+    Absent,
+}
+
+/// Decide where a secret is coming from.
+///
+/// Split from the reading so the rule is testable without a
+/// terminal, an environment, or a real secret.
+pub(crate) fn classify_secret_input(flag: Option<&str>, env_present: bool) -> SecretInput {
+    match flag {
+        Some("-") => SecretInput::Stdin,
+        Some(_) => SecretInput::Argv,
+        None if env_present => SecretInput::Env,
+        None => SecretInput::Absent,
+    }
+}
+
+/// What to tell someone who just put a secret in their shell
+/// history, without repeating the secret back at them.
+pub(crate) fn argv_leak_warning(flag_name: &str, env_var: &str) -> String {
+    format!(
+        "warning: the value of `{flag_name}` was passed on the command line, so your shell has \
+         recorded it in its history file and it was visible in the process list while this ran. \
+         Treat it as disclosed and rotate it if it matters. Next time pass `{flag_name} -` to \
+         read it from stdin, or set {env_var}."
+    )
+}
+
+/// Resolve a secret-bearing flag from argv, stdin or the
+/// environment, warning when it arrived the leaky way.
+fn resolve_secret_arg(
+    flag: Option<String>,
+    env_var: &str,
+    flag_name: &str,
+) -> Result<Option<String>> {
+    let env_value = std::env::var(env_var).ok().filter(|v| !v.trim().is_empty());
+
+    match classify_secret_input(flag.as_deref(), env_value.is_some()) {
+        SecretInput::Stdin => {
+            if io::stdin().is_terminal() {
+                eprintln!("reading the value for `{flag_name}` from stdin; end with Enter");
+            }
+            let mut line = String::new();
+            io::stdin().read_line(&mut line).with_context(|| {
+                format!("failed to read the value for `{flag_name}` from stdin")
+            })?;
+            let value = line.trim().to_owned();
+            if value.is_empty() {
+                anyhow::bail!("`{flag_name} -` was given but stdin held no value");
+            }
+            Ok(Some(value))
+        }
+        SecretInput::Argv => {
+            eprintln!("{}", argv_leak_warning(flag_name, env_var));
+            Ok(flag)
+        }
+        SecretInput::Env => Ok(env_value),
+        SecretInput::Absent => Ok(None),
+    }
+}
+
 fn env_var_name_for_key(key: &str) -> String {
     let body: String = key
         .chars()
@@ -1315,6 +1394,16 @@ async fn handle_init_command(
     remote_config_token: Option<String>,
     detect_git: bool,
 ) -> Result<()> {
+    // Secrets first: a value that arrived through argv is already
+    // in the shell's history, and the user deserves to hear that
+    // before anything else scrolls it away.
+    let remote_config_token = resolve_secret_arg(
+        remote_config_token,
+        "DEVBOY_REMOTE_CONFIG_TOKEN",
+        "--remote-config-token",
+    )?;
+    let proxy_token = resolve_secret_arg(proxy_token, "DEVBOY_PROXY_TOKEN", "--proxy-token")?;
+
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
 
@@ -4178,6 +4267,17 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
             client_secret,
             store_client_secret,
         } => {
+            let refresh_token = resolve_secret_arg(
+                refresh_token,
+                "DEVBOY_CONFLUENCE_REFRESH_TOKEN",
+                "--refresh-token",
+            )?;
+            let client_secret = resolve_secret_arg(
+                client_secret,
+                "DEVBOY_CONFLUENCE_CLIENT_SECRET",
+                "--client-secret",
+            )?;
+
             let (config, _) = load_runtime_config()?;
             let store = get_credential_store();
             let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
@@ -4503,6 +4603,8 @@ fn handle_proxy_add(
     auth_type: Option<AuthType>,
     force: bool,
 ) -> Result<()> {
+    let token = resolve_secret_arg(token, "DEVBOY_PROXY_TOKEN", "--token")?;
+
     let (mut config, config_path) = load_runtime_config()?;
 
     // Check if proxy with same name exists
@@ -6336,6 +6438,62 @@ mod tests {
     use devboy_core::remote_config::RemoteSecretsDefaults;
 
     use super::secrets_config_from_defaults;
+
+    // ===========================================================
+    // Секрет в argv — история шелла и /proc
+    // ===========================================================
+
+    use super::{SecretInput, argv_leak_warning, classify_secret_input};
+
+    #[test]
+    fn a_literal_on_the_command_line_is_recognised_as_the_leaky_path() {
+        assert_eq!(
+            classify_secret_input(Some("ghp_realtokenvalue"), false),
+            SecretInput::Argv
+        );
+    }
+
+    /// `-` is the escape hatch and must never be mistaken for a
+    /// one-character secret.
+    #[test]
+    fn a_lone_dash_means_stdin_not_a_value() {
+        assert_eq!(classify_secret_input(Some("-"), false), SecretInput::Stdin);
+    }
+
+    /// The flag wins over the environment: someone who passes both
+    /// meant the one they just typed, and still needs the warning.
+    #[test]
+    fn the_flag_wins_over_the_environment_and_still_warns() {
+        assert_eq!(
+            classify_secret_input(Some("value"), true),
+            SecretInput::Argv
+        );
+    }
+
+    #[test]
+    fn the_environment_is_used_when_no_flag_is_given() {
+        assert_eq!(classify_secret_input(None, true), SecretInput::Env);
+        assert_eq!(classify_secret_input(None, false), SecretInput::Absent);
+    }
+
+    /// The warning has one job beyond scolding: tell the person
+    /// what to do instead, and never repeat the value back — it
+    /// would land in the same history it is warning about.
+    #[test]
+    fn the_warning_names_both_escapes_and_carries_no_value() {
+        let w = argv_leak_warning("--remote-config-token", "DEVBOY_REMOTE_CONFIG_TOKEN");
+
+        assert!(w.contains("--remote-config-token -"), "{w}");
+        assert!(w.contains("DEVBOY_REMOTE_CONFIG_TOKEN"), "{w}");
+        assert!(
+            w.contains("history"),
+            "the reason has to be stated or it reads as noise: {w}"
+        );
+        assert!(
+            w.contains("rotate"),
+            "a disclosed secret needs an action, not just a notice: {w}"
+        );
+    }
 
     // ===========================================================
     // Ф13 — the posture an operator hands a fresh install
