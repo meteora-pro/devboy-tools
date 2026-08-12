@@ -6,6 +6,12 @@
 //! built on it worthless. These check the harness before anything
 //! relies on it.
 
+// The daemon is UNIX-only, and so is everything that
+// drives it here: UNIX domain sockets, `SO_PEERCRED`,
+// process reparenting. Off UNIX this compiles to an
+// empty test binary rather than a build failure.
+#![cfg(unix)]
+
 mod common;
 
 use common::{DaemonHarness, SpawnMode};

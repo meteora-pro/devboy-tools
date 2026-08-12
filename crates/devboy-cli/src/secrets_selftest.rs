@@ -390,7 +390,8 @@ fn daemon_status() -> Option<serde_json::Value> {
     }
     #[cfg(not(unix))]
     {
-        let _ = config;
+        // The daemon speaks over a UNIX domain socket, so off
+        // UNIX there is nothing to ask.
         None
     }
 }

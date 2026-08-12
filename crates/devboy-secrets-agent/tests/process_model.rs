@@ -9,6 +9,11 @@
 //! the Windows path answers the same question through the service
 //! manager instead.
 
+// The daemon is UNIX-only, and so is everything that
+// drives it here: UNIX domain sockets, `SO_PEERCRED`,
+// process reparenting. Off UNIX this compiles to an
+// empty test binary rather than a build failure.
+#![cfg(unix)]
 #![cfg(unix)]
 
 mod common;

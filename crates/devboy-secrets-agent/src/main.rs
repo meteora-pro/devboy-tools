@@ -24,6 +24,13 @@
 //!
 //! [ADR-023]: https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-023-secret-store-ux-layer.md
 
+/// Everything in this file below the non-UNIX `main` is part of
+/// the daemon proper and needs `#[cfg(unix)]`. The daemon speaks
+/// over a UNIX domain socket and identifies its callers through
+/// `SO_PEERCRED`, neither of which exists elsewhere. An item that
+/// forgets the attribute does not fail here — it fails on a
+/// Windows runner, which is why `cargo check --target
+/// x86_64-pc-windows-gnu` is worth running before pushing.
 #[cfg(not(unix))]
 fn main() {
     eprintln!(
@@ -53,6 +60,7 @@ use tokio::io::BufReader;
 #[cfg(unix)]
 use tokio::sync::{Mutex, Notify};
 
+#[cfg(unix)]
 #[cfg(unix)]
 const VAULT_PATH_ENV: &str = "DEVBOY_VAULT_PATH";
 
@@ -231,6 +239,7 @@ async fn refuse_untrusted_caller(stream: tokio::net::UnixStream) -> Result<(), F
     write_response(&mut write, &resp).await
 }
 
+#[cfg(unix)]
 async fn handle_one_connection(
     server: Arc<Mutex<VaultServer>>,
     stream: tokio::net::UnixStream,

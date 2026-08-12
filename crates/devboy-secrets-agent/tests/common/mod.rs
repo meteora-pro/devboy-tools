@@ -25,6 +25,11 @@
 //! fail the test in seconds rather than hang CI until the job
 //! times out with no useful output.
 
+// The daemon is UNIX-only, and so is everything that
+// drives it here: UNIX domain sockets, `SO_PEERCRED`,
+// process reparenting. Off UNIX this compiles to an
+// empty test binary rather than a build failure.
+#![cfg(unix)]
 #![allow(dead_code)] // Each integration test uses a subset.
 
 use std::io::{BufRead, BufReader, Write};
