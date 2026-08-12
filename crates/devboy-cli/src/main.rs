@@ -1289,11 +1289,6 @@ struct InitOptions {
     tokens: Vec<(String, String)>, // (key, value) pairs for keychain
     proxy: Option<ProxyMcpServerConfig>,
     remote_config: Option<devboy_core::RemoteConfigSettings>,
-    /// Secrets posture the config server wants a fresh install
-    /// to start from. Applied once, here, so it lands in the
-    /// file the user can read and edit — never re-applied over
-    /// the network on later runs.
-    secrets: Option<devboy_core::config::SecretsConfig>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1431,16 +1426,11 @@ async fn handle_init_command(
         // Ask the config server what posture it wants this
         // install to start from, before the token is moved into
         // `options`.
-        options.secrets = fetch_operator_secrets_defaults(&url, remote_config_token.as_deref())
-            .await
-            .map(|(secrets, applied)| {
-                println!("Applying the secrets defaults from the remote config:");
-                for line in applied {
-                    println!("  {line}");
-                }
-                println!("  (edit them in {INIT_CONFIG_FILE}; they are not re-fetched)");
-                secrets
-            });
+        if let Some((secrets, applied)) =
+            fetch_operator_secrets_defaults(&url, remote_config_token.as_deref()).await
+        {
+            apply_operator_secrets_posture(secrets, &applied, dry_run)?;
+        }
 
         let token_key = if let Some(token_value) = remote_config_token {
             let key = "remote_config.token".to_string();
@@ -2078,6 +2068,80 @@ async fn fetch_operator_secrets_defaults(
     Some((secrets_config_from_defaults(&defaults), defaults.describe()))
 }
 
+/// Write an operator-supplied posture into the config that the
+/// daemon and the credential chain actually read.
+///
+/// # Why the global config and not `.devboy.toml`
+///
+/// `.devboy.toml` is the project file, and for providers and
+/// contexts it wins over the global one. The secrets posture is
+/// not project-scoped: the daemon holding the vault key is one
+/// per user and reads `Config::load()` — the global path — at
+/// startup, and so does the credential chain. A `[secrets]` block
+/// in a project file changes neither. Writing it there would have
+/// produced a file that says `profile = "strict"` on a machine
+/// running the convenient profile, which is worse than not
+/// writing it at all.
+///
+/// # Why an existing posture is left alone
+///
+/// A `[secrets]` section that differs from the defaults is a
+/// decision someone made on this machine. An operator default is
+/// the *starting* posture for a fresh install, not a standing
+/// instruction, so it yields — and says what it would have set,
+/// so adopting it stays one command away.
+fn apply_operator_secrets_posture(
+    secrets: devboy_core::config::SecretsConfig,
+    applied: &[String],
+    dry_run: bool,
+) -> Result<()> {
+    let path = devboy_core::config::Config::config_path()
+        .context("Failed to determine the config path")?;
+    let mut config = devboy_core::config::Config::load().unwrap_or_default();
+
+    let existing_is_customised = config
+        .secrets
+        .as_ref()
+        .is_some_and(|s| *s != devboy_core::config::SecretsConfig::default());
+
+    if existing_is_customised {
+        println!("The remote config suggests these secrets defaults:");
+        for line in applied {
+            println!("  {line}");
+        }
+        println!(
+            "Leaving your existing [secrets] in {} as it is — set them yourself with `devboy \
+             config set <field> <value>` if you want them.",
+            path.display()
+        );
+        return Ok(());
+    }
+
+    if dry_run {
+        println!("[dry-run] Would apply the secrets defaults from the remote config:");
+        for line in applied {
+            println!("  {line}");
+        }
+        println!("[dry-run] Would write them to {}", path.display());
+        return Ok(());
+    }
+
+    config.secrets = Some(secrets);
+    config
+        .save()
+        .context("Failed to save the secrets defaults from the remote config")?;
+
+    println!("Applied the secrets defaults from the remote config:");
+    for line in applied {
+        println!("  {line}");
+    }
+    println!(
+        "  written to {} — they are not re-fetched, edit them there",
+        path.display()
+    );
+    Ok(())
+}
+
 /// Turn an operator-supplied posture into the config section
 /// `init` writes out.
 ///
@@ -2146,10 +2210,6 @@ fn build_config(options: &InitOptions) -> Config {
     // Add remote config settings if provided
     if let Some(remote_config) = &options.remote_config {
         config.remote_config = Some(remote_config.clone());
-    }
-
-    if let Some(secrets) = &options.secrets {
-        config.secrets = Some(secrets.clone());
     }
 
     config

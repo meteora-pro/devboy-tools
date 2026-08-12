@@ -98,6 +98,48 @@ pub fn handle(args: SelftestArgs) -> Result<()> {
     Ok(())
 }
 
+/// What the daemon's state costs, in words.
+///
+/// Split from [`resolution_findings`] because the no-socket case
+/// never fires on a developer's own machine — it is the platform
+/// without UNIX sockets, and the environment with no config
+/// directory. Reached only through the real store, that branch
+/// would be written blind and verified by a CI runner, which is
+/// how it came to explain the cause and forget the consequence.
+fn daemon_note(socket: Option<&std::path::Path>, running: bool) -> String {
+    match socket {
+        Some(path) if running => format!("socket {}", path.display()),
+        Some(path) => format!(
+            "no socket at {} — every secret held in the vault is currently unreachable, and \
+             will report as simply not found. Start it with `devboy secrets agent start`.",
+            path.display()
+        ),
+        None => format!(
+            "{WHY_NO_SOCKET} — every secret held in the vault is therefore unreachable and \
+             will report as simply not found. Supply those secrets through the environment \
+             instead."
+        ),
+    }
+}
+
+/// Why no daemon socket path exists, when none does.
+///
+/// The two reasons are not the same problem. Off UNIX there is
+/// no daemon to have a socket, which is a property of the
+/// platform and nothing the user can fix. On UNIX it means the
+/// config directory could not be derived, which is a broken
+/// environment.
+///
+/// Either way the *consequence* is identical and is what the
+/// report leads with: vault-held secrets read as absent rather
+/// than as unreachable, which is the one failure this command
+/// exists to make visible.
+#[cfg(unix)]
+const WHY_NO_SOCKET: &str = "no socket path could be derived on this machine";
+#[cfg(not(unix))]
+const WHY_NO_SOCKET: &str =
+    "the vault daemon speaks over a UNIX domain socket, which this platform does not have";
+
 /// Where secrets come from, and whether anything is implicit.
 fn resolution_findings(config: &Config) -> Vec<Finding> {
     let detection = devboy_storage::detect_ci_mode(false, Some(config.is_ci_forced()));
@@ -126,16 +168,10 @@ fn resolution_findings(config: &Config) -> Vec<Finding> {
                 "vault daemon",
                 if running { "running" } else { "not running" },
             )
-            .with_note(match &vault {
-                Some(v) if running => format!("socket {}", v.socket_path().display()),
-                Some(v) => format!(
-                    "no socket at {} — every secret held in the vault is currently unreachable, \
-                     and will report as simply not found. Start it with `devboy secrets agent \
-                     start`.",
-                    v.socket_path().display()
-                ),
-                None => "no socket path could be derived on this machine".to_string(),
-            }),
+            .with_note(daemon_note(
+                vault.as_ref().map(|v| v.socket_path()),
+                running,
+            )),
         );
     }
 
@@ -552,6 +588,38 @@ mod tests {
         assert!(
             keychain.note.is_some(),
             "a disabled keychain should explain how to turn it on"
+        );
+    }
+
+    /// The three shapes of the daemon note. The point every one
+    /// of them has to make is the *consequence*: a vault the
+    /// process cannot reach reports its secrets as absent, which
+    /// looks exactly like never having stored them.
+    #[test]
+    fn every_unreachable_daemon_note_says_what_it_costs() {
+        let path = std::path::Path::new("/run/user/1000/devboy/agent.sock");
+
+        let running = daemon_note(Some(path), true);
+        assert!(running.contains("agent.sock"), "{running}");
+
+        let stopped = daemon_note(Some(path), false);
+        assert!(stopped.contains("unreachable"), "{stopped}");
+        assert!(
+            stopped.contains("secrets agent start"),
+            "a stopped daemon has a fix: {stopped}"
+        );
+
+        // The branch a developer machine never takes: no socket
+        // path at all. Off UNIX this is every run.
+        let absent = daemon_note(None, false);
+        assert!(
+            absent.contains("unreachable"),
+            "explaining the cause without the consequence is what broke this on Windows: \
+             {absent}"
+        );
+        assert!(
+            absent.contains("environment"),
+            "with no daemon there has to be somewhere else to put the secret: {absent}"
         );
     }
 
