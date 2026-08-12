@@ -300,7 +300,7 @@ pub fn unwrap_keyfile(
 /// looking correct.
 ///
 /// So the derived path is checked against the config dir, and a
-/// collision falls back to [`home_state_keyfile`] —
+/// collision falls back to `home_state_keyfile` —
 /// `~/.local/state/devboy-tools/vault.key` spelled out. Any
 /// future platform where `dirs` collapses two of these gets the
 /// same treatment without anybody having to notice.

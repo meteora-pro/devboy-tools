@@ -324,6 +324,28 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::index::IndexEnt
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::index::IndexEntry
 pub const devboy_storage::index::INDEX_FILENAME: &str
 pub const devboy_storage::index::SECRETS_SUBDIR: &str
+pub mod devboy_storage::legacy_keychain
+pub struct devboy_storage::legacy_keychain::LegacyKeychainStore
+impl devboy_storage::legacy_keychain::LegacyKeychainStore
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::new() -> Self
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::wrapping(inner: devboy_storage::KeychainStore) -> Self
+impl core::default::Default for devboy_storage::legacy_keychain::LegacyKeychainStore
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::default() -> Self
+impl devboy_storage::CredentialStore for devboy_storage::legacy_keychain::LegacyKeychainStore
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::is_available(&self) -> bool
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::is_writable(&self) -> bool
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::store(&self, key: &str, _value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl !core::marker::Freeze for devboy_storage::legacy_keychain::LegacyKeychainStore
+impl core::marker::Send for devboy_storage::legacy_keychain::LegacyKeychainStore
+impl core::marker::Sync for devboy_storage::legacy_keychain::LegacyKeychainStore
+impl core::marker::Unpin for devboy_storage::legacy_keychain::LegacyKeychainStore
+impl core::marker::UnsafeUnpin for devboy_storage::legacy_keychain::LegacyKeychainStore
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::legacy_keychain::LegacyKeychainStore
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::legacy_keychain::LegacyKeychainStore
+pub const devboy_storage::legacy_keychain::FALLBACK_REMOVED_IN: &str
 pub mod devboy_storage::manifest
 pub enum devboy_storage::manifest::ManifestError
 pub devboy_storage::manifest::ManifestError::Parse
@@ -3289,6 +3311,13 @@ pub fn devboy_storage::MemoryStore::get(&self, key: &str) -> devboy_core::error:
 pub fn devboy_storage::MemoryStore::is_available(&self) -> bool
 pub fn devboy_storage::MemoryStore::is_writable(&self) -> bool
 pub fn devboy_storage::MemoryStore::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
+impl devboy_storage::CredentialStore for devboy_storage::legacy_keychain::LegacyKeychainStore
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::delete(&self, key: &str) -> devboy_core::error::Result<()>
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::exists(&self, key: &str) -> bool
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::get(&self, key: &str) -> devboy_core::error::Result<core::option::Option<secrecy::SecretString>>
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::is_available(&self) -> bool
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::is_writable(&self) -> bool
+pub fn devboy_storage::legacy_keychain::LegacyKeychainStore::store(&self, key: &str, _value: &secrecy::SecretString) -> devboy_core::error::Result<()>
 impl<S: devboy_storage::CredentialStore> devboy_storage::CredentialStore for devboy_storage::cache::CachedStore<S>
 pub fn devboy_storage::cache::CachedStore<S>::delete(&self, key: &str) -> devboy_core::error::Result<()>
 pub fn devboy_storage::cache::CachedStore<S>::exists(&self, key: &str) -> bool

@@ -51,3 +51,49 @@ Feature: Moving secrets out of the OS keychain
     And the secret already in the vault is untouched
     And the keychain copy is kept, because it is the only one
     And the index is not pointed at the occupied path
+
+  @covered-by:a_value_written_before_the_upgrade_still_resolves
+  Scenario: An upgrade does not silently lose every secret I own
+    Given I upgraded from a release where the keychain was the
+      credential store
+    And I have not migrated anything yet
+    When a secret is resolved
+    Then the value still comes back, from the read-only legacy
+      fallback
+    And a warning names the release the fallback goes away in
+
+  @covered-by:the_same_key_warns_once_and_a_second_key_warns_again
+  Scenario: The warning is one line per secret, not one per read
+    Given two secrets resolve through the legacy fallback
+    And one of them is read several times in a single command
+    When the command finishes
+    Then each secret warned exactly once
+    And neither warning was repeated per read
+
+  @covered-by:writes_are_refused_and_say_where_to_put_it_instead
+  Scenario: The fallback never becomes a place to put new secrets
+    Given the legacy fallback is active
+    When something tries to write a secret through it
+    Then the write is refused
+    And the refusal names somewhere the value can actually go
+
+  @covered-by:a_partly_migrated_keychain_still_has_entries_remaining
+  Scenario: A half-finished migration keeps the fallback on
+    Given two secrets are in the keychain
+    And I migrate only one of them
+    Then the fallback stays on
+    And the report says how many entries are left
+
+  @covered-by:an_empty_keychain_has_nothing_remaining
+  Scenario: Finishing the migration switches the fallback off
+    Given every legacy entry has been migrated
+    When the last one is moved
+    Then migration_complete is recorded
+    And the credential chain stops consulting the keychain
+
+  @covered-by:detects_present_legacy_entries_and_emits_warning
+  Scenario: Doctor says what is standing on the fallback
+    Given secrets resolve only through the legacy fallback
+    When I run "devboy doctor"
+    Then it reports how many secrets depend on it
+    And it names the release it is removed in

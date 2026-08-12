@@ -235,6 +235,8 @@ pub async fn handle(args: MigrateArgs) -> Result<()> {
         outcomes.push(outcome);
     }
 
+    settle_migration_flag(legacy.as_ref(), &outcomes);
+
     // Persist the index once at the end so a multi-entry batch
     // doesn't write the file N times.
     index
@@ -406,6 +408,83 @@ pub fn execute_plan(
         registered_in_index,
         deleted_legacy,
     })
+}
+
+// =============================================================================
+// Turning the legacy fallback off
+// =============================================================================
+
+/// Set `secrets.migration_complete` once the keychain is empty of
+/// legacy entries, which is what switches off the read-only
+/// legacy fallback in the credential chain.
+///
+/// The flag is an assertion that nothing is left behind, so it is
+/// set from a fresh scan of the keychain rather than from the
+/// outcomes: `--all` keeps the legacy entries by default, a
+/// single-key run only moves one of several, and a conflict
+/// deliberately leaves its source in place. In each of those the
+/// migration is genuinely unfinished and the fallback has to stay.
+///
+/// Best-effort in both directions. Failing to save the config
+/// does not fail a migration that already succeeded — the worst
+/// case is a warning that persists until the next run — and the
+/// flag is never cleared here, because a user who set it by hand
+/// made a claim this function has no business overruling.
+/// Legacy keys still present in the store.
+///
+/// Split out from [`settle_migration_flag`] so the decision can
+/// be tested without a config file: the wrapper's remaining job
+/// is to load, set and save, and it is the scan that decides
+/// whether the fallback stays on.
+fn legacy_entries_remaining(legacy: &dyn CredentialStore) -> Vec<String> {
+    known_legacy_keys()
+        .into_iter()
+        .filter(|k| legacy.exists(k))
+        .collect()
+}
+
+fn settle_migration_flag(legacy: &dyn CredentialStore, outcomes: &[MigrationOutcome]) {
+    if outcomes.is_empty() {
+        return;
+    }
+
+    let remaining = legacy_entries_remaining(legacy);
+
+    if !remaining.is_empty() {
+        println!(
+            "  note: {} legacy entr{} still in the OS keychain, so the read-only fallback stays \
+             on. Run `devboy secrets migrate --all` to finish.",
+            remaining.len(),
+            if remaining.len() == 1 { "y" } else { "ies" }
+        );
+        return;
+    }
+
+    let mut config = match devboy_core::config::Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("warning: could not load config to record migration completion: {e}");
+            return;
+        }
+    };
+
+    if config.is_secrets_migration_complete() {
+        return;
+    }
+
+    if let Err(e) = config
+        .set("secrets.migration_complete", "true")
+        .and_then(|()| config.save())
+    {
+        eprintln!("warning: migration finished but the flag could not be saved: {e}");
+        eprintln!("  set it yourself with `devboy config set secrets.migration_complete true`");
+        return;
+    }
+
+    println!(
+        "  the OS keychain holds no more legacy entries — set \
+         secrets.migration_complete, and the read-only legacy fallback is now off"
+    );
 }
 
 // =============================================================================
@@ -744,6 +823,43 @@ mod tests {
         fn is_writable(&self) -> bool {
             false
         }
+    }
+
+    // -- turning the fallback off ---------------------------------
+
+    /// The flag means "nothing is left in the keychain". A run
+    /// that moved one of several entries has not earned it —
+    /// `--all` keeps the sources by default and a conflict
+    /// deliberately leaves one behind, so reading completion off
+    /// the outcomes rather than off the keychain would switch the
+    /// fallback off while secrets still depend on it.
+    #[test]
+    fn a_partly_migrated_keychain_still_has_entries_remaining() {
+        let legacy: Arc<dyn CredentialStore> = Arc::new(MemoryStore::with_credentials([(
+            "gitlab/token".to_owned(),
+            "glpat".to_owned(),
+        )]));
+
+        assert_eq!(legacy_entries_remaining(legacy.as_ref()), ["gitlab/token"]);
+    }
+
+    #[test]
+    fn an_empty_keychain_has_nothing_remaining() {
+        let legacy = empty_destination();
+        assert!(legacy_entries_remaining(legacy.as_ref()).is_empty());
+    }
+
+    /// Only keys the migration actually knows about count. A
+    /// user's own unrelated keychain entry is not a legacy devboy
+    /// secret and must not hold the fallback on forever.
+    #[test]
+    fn an_unrelated_keychain_entry_does_not_count_as_remaining() {
+        let legacy: Arc<dyn CredentialStore> = Arc::new(MemoryStore::with_credentials([(
+            "my-own-app/api-key".to_owned(),
+            "whatever".to_owned(),
+        )]));
+
+        assert!(legacy_entries_remaining(legacy.as_ref()).is_empty());
     }
 
     // -- plan_all --------------------------------------------------

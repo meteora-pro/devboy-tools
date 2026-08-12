@@ -53,6 +53,7 @@ pub mod cache;
 pub mod ci;
 pub mod expiry;
 pub mod index;
+pub mod legacy_keychain;
 pub mod manifest;
 pub mod merge;
 pub mod pattern_resolution;

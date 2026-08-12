@@ -879,6 +879,22 @@ pub(crate) fn credential_chain() -> ChainStore {
         tracing::debug!("credential chain: env vars -> local vault");
     }
 
+    // Last resort, and only until the user has migrated: an
+    // install that predates ADR-024 §6 keeps every secret in the
+    // OS keychain, and dropping the keychain from the chain turns
+    // all of them into "no such secret" at once. Read-only, so
+    // nothing new comes to depend on the keychain, and loud, so
+    // the fallback does not become permanent. `secrets migrate`
+    // sets the flag and this stops being appended.
+    //
+    // CI never reaches here — `ci_chain()` returned above.
+    if !config.is_secrets_migration_complete() {
+        tracing::debug!("credential chain: appending the read-only legacy keychain fallback");
+        stores.push(Box::new(
+            devboy_storage::legacy_keychain::LegacyKeychainStore::new(),
+        ));
+    }
+
     ChainStore::new(stores)
 }
 
