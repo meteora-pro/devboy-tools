@@ -68,6 +68,7 @@ devboy-telegram = { workspace = true }
 devboy-format-pipeline = { workspace = true }
 devboy-skills = { workspace = true }
 serde_yaml = "0.9"
+rusqlite = { version = "0.37", features = ["bundled"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

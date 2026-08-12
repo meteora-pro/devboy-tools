@@ -8,6 +8,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use devboy_otel_scan::{Finding, ScanReport, Scanner, scan_jsonl};
 use devboy_secret_patterns::Catalogue;
+use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::Serialize;
 
 /// `devboy otel <subcommand>`.
@@ -20,12 +21,12 @@ pub enum OtelCommands {
 /// Arguments for `devboy otel scan`.
 #[derive(Args)]
 pub struct ScanArgs {
-    /// JSONL file or directory to scan. Use `jsonl:<path>` to force JSONL,
-    /// or `-` to read JSONL from standard input.
+    /// Artifact to scan. Supports JSONL files/directories, `sqlite:<path>`,
+    /// and `-` for JSONL from standard input.
     #[arg(long)]
     input: String,
 
-    /// Input format. `auto` detects `.jsonl` files and directories of them.
+    /// Input format. `auto` detects `.jsonl`, `.db`, and `.sqlite` inputs.
     #[arg(long, value_enum, default_value_t = ScanFormat::Auto)]
     format: ScanFormat,
 
@@ -38,6 +39,7 @@ pub struct ScanArgs {
 pub enum ScanFormat {
     Auto,
     Jsonl,
+    Sqlite,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -81,13 +83,25 @@ fn scan_input(
             .map_err(|error| error.to_string());
     }
 
-    let (forced_jsonl, raw_path) = input
-        .strip_prefix("jsonl:")
-        .map_or((false, input), |path| (true, path));
+    let (forced_format, raw_path) = if let Some(path) = input.strip_prefix("jsonl:") {
+        (Some(ScanFormat::Jsonl), path)
+    } else if let Some(path) = input.strip_prefix("sqlite:") {
+        (Some(ScanFormat::Sqlite), path)
+    } else {
+        (None, input)
+    };
     let path = Path::new(raw_path);
     let metadata = fs::metadata(path).map_err(|_| format!("could not open input '{raw_path}'"))?;
     if metadata.is_file() {
-        if forced_jsonl || matches!(format, ScanFormat::Jsonl) || is_jsonl(path) {
+        let selected = forced_format.unwrap_or(format);
+        if matches!(selected, ScanFormat::Sqlite)
+            || (matches!(selected, ScanFormat::Auto) && is_sqlite(path))
+        {
+            return scan_sqlite_file(scanner, path);
+        }
+        if matches!(selected, ScanFormat::Jsonl)
+            || (matches!(selected, ScanFormat::Auto) && is_jsonl(path))
+        {
             return scan_jsonl_file(scanner, path);
         }
         return Err(format!(
@@ -146,6 +160,76 @@ fn collect_jsonl_files_at(directory: &Path, files: &mut Vec<PathBuf>) -> Result<
 fn is_jsonl(path: &Path) -> bool {
     path.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"))
+}
+
+fn is_sqlite(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| {
+        extension.eq_ignore_ascii_case("db") || extension.eq_ignore_ascii_case("sqlite")
+    })
+}
+
+/// Scans textual fields from the local collect-mode SQLite tables. The query
+/// is intentionally read-only and tolerates `metrics`/`logs` being absent in
+/// an older database. JSON columns are parsed before scanning; other text is
+/// scanned as a scalar, so future schema additions require no migration here.
+fn scan_sqlite_file(scanner: &Scanner<'_>, path: &Path) -> Result<ScanReport, String> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|_| format!("could not open SQLite input '{}'", path.display()))?;
+    let mut report = ScanReport::default();
+    for table in ["traces", "metrics", "logs"] {
+        if !table_exists(&connection, table)? {
+            continue;
+        }
+        let mut statement = connection
+            .prepare(&format!("SELECT rowid, * FROM {table}"))
+            .map_err(|_| format!("could not read SQLite table '{table}'"))?;
+        let names: Vec<String> = statement
+            .column_names()
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        let mut rows = statement
+            .query([])
+            .map_err(|_| format!("could not query SQLite table '{table}'"))?;
+        while let Some(row) = rows
+            .next()
+            .map_err(|_| format!("could not read SQLite table '{table}'"))?
+        {
+            let rowid: i64 = row
+                .get(0)
+                .map_err(|_| format!("could not read SQLite table '{table}'"))?;
+            let mut record = serde_json::Map::new();
+            for (index, name) in names.iter().enumerate().skip(1) {
+                let ValueRef::Text(text) = row
+                    .get_ref(index)
+                    .map_err(|_| format!("could not read SQLite table '{table}'"))?
+                else {
+                    continue;
+                };
+                let text = String::from_utf8_lossy(text);
+                let value = serde_json::from_str(&text)
+                    .unwrap_or_else(|_| serde_json::Value::String(text.into_owned()));
+                record.insert(name.clone(), value);
+            }
+            let context = devboy_otel_scan::ScanContext {
+                source: path.display().to_string(),
+                line: None,
+                record_id: Some(format!("{table}:{rowid}")),
+            };
+            report.extend(scanner.scan_value(&context, &serde_json::Value::Object(record)));
+        }
+    }
+    Ok(report)
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(|_| "could not inspect SQLite schema".to_owned())
 }
 
 fn print_text(input: &str, report: &ScanReport) {
@@ -250,5 +334,37 @@ mod tests {
                 .iter()
                 .any(|finding| finding.category == "github-pat")
         );
+    }
+
+    #[test]
+    fn sqlite_input_scans_json_columns_with_a_row_identifier() {
+        let dir = TempDir::new().expect("temp directory");
+        let path = dir.path().join("otel.db");
+        let connection = Connection::open(&path).expect("SQLite fixture");
+        connection
+            .execute_batch(
+                "CREATE TABLE traces (trace_id TEXT, attributes TEXT, resource_attributes TEXT);\
+                 INSERT INTO traces VALUES ('trace-1',\
+                   '{\"tool_input\":\"Bearer ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ\"}',\
+                   '{\"service.name\":\"test\"}');",
+            )
+            .expect("fixture data");
+
+        let catalogue = Catalogue::builtins_only();
+        let scanner = Scanner::new(&catalogue);
+        let report = scan_input(
+            &scanner,
+            &format!("sqlite:{}", path.display()),
+            ScanFormat::Auto,
+        )
+        .expect("SQLite scan");
+
+        assert_eq!(report.summary.records, 1);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.category == "github-pat")
+            .expect("GitHub PAT finding");
+        assert_eq!(finding.record_id.as_deref(), Some("traces:1"));
     }
 }
