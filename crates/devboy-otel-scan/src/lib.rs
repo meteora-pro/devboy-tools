@@ -342,9 +342,17 @@ fn scan_text(
     report: &mut ScanReport,
 ) {
     // Catalogue regexes validate a full secret. Feed the complete scalar first
-    // (private keys and URLs), then shell/JSON-shaped tokens within it.
+    // (private keys and URLs), then shell/JSON-shaped tokens within it. A
+    // whitespace-containing scalar cannot match the anchored token patterns;
+    // the only exception is a PEM private-key header. Skipping the redundant
+    // regex pass is important for wide, human-readable OTEL attributes.
     let whole_candidate = text.trim_matches(|c: char| matches!(c, '=' | ':' | '`' | '.'));
-    scan_candidate(patterns, context, path, whole_candidate, report);
+    let contains_whitespace = whole_candidate
+        .bytes()
+        .any(|byte| byte.is_ascii_whitespace());
+    if !contains_whitespace || whole_candidate.contains("PRIVATE KEY") {
+        scan_candidate(patterns, context, path, whole_candidate, report);
+    }
 
     for candidate in text.split(|c: char| {
         c.is_whitespace()
@@ -369,7 +377,10 @@ fn scan_candidate(
     candidate: &str,
     report: &mut ScanReport,
 ) {
-    if candidate.is_empty() {
+    // The shortest built-in secret is an AWS access-key id (20 bytes).
+    // Fast-rejecting shorter words avoids applying the entire catalogue to
+    // every word of prose in large OTEL attributes.
+    if candidate.len() < 20 {
         return;
     }
     for (pattern, severity) in patterns {
