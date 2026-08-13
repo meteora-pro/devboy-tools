@@ -34,6 +34,10 @@ pub struct ScanArgs {
     /// Report format.
     #[arg(long, value_enum, default_value_t = ScanOutput::Text)]
     output: ScanOutput,
+
+    /// Minimum severity that causes a non-zero exit. Defaults to `medium`.
+    #[arg(long, value_enum, default_value_t = FailOn::Medium)]
+    fail_on: FailOn,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -50,6 +54,19 @@ pub enum ScanOutput {
     Sarif,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+pub enum FailOn {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+struct ScanResult {
+    report: ScanReport,
+    files: u64,
+}
+
 /// Executes an OTEL command and returns its documented process exit code.
 pub fn handle(command: OtelCommands) -> Result<i32> {
     match command {
@@ -60,8 +77,8 @@ pub fn handle(command: OtelCommands) -> Result<i32> {
 fn scan(args: ScanArgs) -> Result<i32> {
     let catalogue = Catalogue::builtins_only();
     let scanner = Scanner::new(&catalogue);
-    let report = match scan_input(&scanner, &args.input, args.format) {
-        Ok(report) => report,
+    let result = match scan_input(&scanner, &args.input, args.format) {
+        Ok(result) => result,
         Err(error) => {
             eprintln!("scan error: {error}");
             return Ok(3);
@@ -69,20 +86,21 @@ fn scan(args: ScanArgs) -> Result<i32> {
     };
 
     match args.output {
-        ScanOutput::Text => print_text(&args.input, &report),
-        ScanOutput::Json => print_json(&report)?,
-        ScanOutput::Sarif => print_sarif(&report)?,
+        ScanOutput::Text => print_text(&args.input, &result),
+        ScanOutput::Json => print_json(&result)?,
+        ScanOutput::Sarif => print_sarif(&result.report)?,
     }
-    Ok(exit_code(&report))
+    Ok(exit_code(&result.report, args.fail_on))
 }
 
 fn scan_input(
     scanner: &Scanner<'_>,
     input: &str,
     format: ScanFormat,
-) -> Result<ScanReport, String> {
-    if input == "-" {
+) -> Result<ScanResult, String> {
+    if matches!(input, "-" | "stdin") {
         return scan_jsonl(scanner, "stdin", BufReader::new(io::stdin().lock()))
+            .map(|report| ScanResult { report, files: 1 })
             .map_err(|error| error.to_string());
     }
 
@@ -100,12 +118,12 @@ fn scan_input(
         if matches!(selected, ScanFormat::Sqlite)
             || (matches!(selected, ScanFormat::Auto) && is_sqlite(path))
         {
-            return scan_sqlite_file(scanner, path);
+            return scan_sqlite_file(scanner, path).map(|report| ScanResult { report, files: 1 });
         }
         if matches!(selected, ScanFormat::Jsonl)
             || (matches!(selected, ScanFormat::Auto) && is_jsonl(path))
         {
-            return scan_jsonl_file(scanner, path);
+            return scan_jsonl_file(scanner, path).map(|report| ScanResult { report, files: 1 });
         }
         return Err(format!(
             "could not detect a supported format for '{raw_path}'"
@@ -117,10 +135,14 @@ fn scan_input(
         if files.is_empty() {
             return Err(format!("no .jsonl files found under '{raw_path}'"));
         }
+        let file_count = u64::try_from(files.len()).expect("file count always fits u64");
         for file in files {
             report.extend(scan_jsonl_file(scanner, &file)?);
         }
-        return Ok(report);
+        return Ok(ScanResult {
+            report,
+            files: file_count,
+        });
     }
     Err(format!(
         "input '{raw_path}' is not a regular file or directory"
@@ -235,7 +257,8 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool, String> {
         .map_err(|_| "could not inspect SQLite schema".to_owned())
 }
 
-fn print_text(input: &str, report: &ScanReport) {
+fn print_text(input: &str, result: &ScanResult) {
+    let report = &result.report;
     println!("Scanning: {input}");
     println!("{}", "=".repeat(32));
     for finding in &report.findings {
@@ -252,27 +275,60 @@ fn print_text(input: &str, report: &ScanReport) {
         );
     }
     println!("\nSummary:");
+    println!("  Files:    {}", result.files);
     println!("  Records:  {}", report.summary.records);
     println!(
         "  Findings: {} HIGH, {} MEDIUM, {} LOW",
         report.summary.high, report.summary.medium, report.summary.low
     );
+    let categories = category_counts(report);
+    if !categories.is_empty() {
+        println!("  Categories: {categories}");
+    }
 }
 
-fn print_json(report: &ScanReport) -> Result<()> {
+fn print_json(result: &ScanResult) -> Result<()> {
     #[derive(Serialize)]
     struct JsonReport<'a> {
-        scan_summary: &'a devboy_otel_scan::ScanSummary,
+        scan_summary: JsonSummary<'a>,
         findings: &'a [Finding],
     }
     println!(
         "{}",
         serde_json::to_string_pretty(&JsonReport {
-            scan_summary: &report.summary,
-            findings: &report.findings
+            scan_summary: JsonSummary {
+                files: result.files,
+                scan: &result.report.summary,
+                categories: category_counts_map(&result.report),
+            },
+            findings: &result.report.findings
         })?
     );
     Ok(())
+}
+
+#[derive(Serialize)]
+struct JsonSummary<'a> {
+    files: u64,
+    #[serde(flatten)]
+    scan: &'a devboy_otel_scan::ScanSummary,
+    categories: BTreeMap<String, u64>,
+}
+
+fn category_counts_map(report: &ScanReport) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for finding in &report.findings {
+        *counts.entry(finding.category.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn category_counts(report: &ScanReport) -> String {
+    category_counts_map(report)
+        .into_iter()
+        .map(|(category, count)| format!("{category} ({count})"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Prints SARIF 2.1.0 compatible with GitHub code scanning. Messages use the
@@ -435,10 +491,21 @@ fn severity_label(finding: &Finding) -> &'static str {
     }
 }
 
-fn exit_code(report: &ScanReport) -> i32 {
-    if report.summary.high > 0 || report.summary.medium > 0 {
+fn exit_code(report: &ScanReport, fail_on: FailOn) -> i32 {
+    let threshold_met = match fail_on {
+        FailOn::None => false,
+        FailOn::Low => {
+            report.summary.high > 0 || report.summary.medium > 0 || report.summary.low > 0
+        }
+        FailOn::Medium => report.summary.high > 0 || report.summary.medium > 0,
+        FailOn::High => report.summary.high > 0,
+    };
+    if threshold_met {
         1
-    } else if report.summary.low > 0 {
+    } else if report.summary.low > 0 && matches!(fail_on, FailOn::Medium) {
+        // Preserve issue #242's default contract: low-only findings are
+        // distinguishable from a clean scan. An explicit threshold override
+        // returns success when it is not reached.
         2
     } else {
         0
@@ -453,11 +520,15 @@ mod tests {
     #[test]
     fn exit_code_prioritizes_high_and_medium_findings() {
         let mut report = ScanReport::default();
-        assert_eq!(exit_code(&report), 0);
+        assert_eq!(exit_code(&report, FailOn::Medium), 0);
         report.summary.low = 1;
-        assert_eq!(exit_code(&report), 2);
+        assert_eq!(exit_code(&report, FailOn::Medium), 2);
         report.summary.medium = 1;
-        assert_eq!(exit_code(&report), 1);
+        assert_eq!(exit_code(&report, FailOn::Medium), 1);
+        assert_eq!(exit_code(&report, FailOn::None), 0);
+        report.summary.medium = 0;
+        assert_eq!(exit_code(&report, FailOn::High), 0);
+        assert_eq!(exit_code(&report, FailOn::Low), 1);
     }
 
     #[test]
@@ -482,9 +553,11 @@ mod tests {
         )
         .expect("directory scan");
 
-        assert_eq!(report.summary.records, 2);
+        assert_eq!(report.files, 2);
+        assert_eq!(report.report.summary.records, 2);
         assert!(
             report
+                .report
                 .findings
                 .iter()
                 .any(|finding| finding.category == "github-pat")
@@ -514,8 +587,10 @@ mod tests {
         )
         .expect("SQLite scan");
 
-        assert_eq!(report.summary.records, 1);
+        assert_eq!(report.files, 1);
+        assert_eq!(report.report.summary.records, 1);
         let finding = report
+            .report
             .findings
             .iter()
             .find(|finding| finding.category == "github-pat")
