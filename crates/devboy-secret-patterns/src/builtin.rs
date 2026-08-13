@@ -44,10 +44,22 @@ pub struct Builtin {
     /// preference to touching this field directly.
     pub regex: OnceLock<Regex>,
     /// Lazily-derived scanning regex, or `None` when this pattern is
-    /// unfit to scan free text. Derived from `regex_src` by
+    /// unfit to scan free text. Derived from `regex_src` (or from
+    /// `scan_src` when that is set) by
     /// [`crate::scanning::scanning_regex`]; use
     /// `Builtin::compiled_scan_regex` rather than touching it.
     pub scan: OnceLock<Option<Regex>>,
+    /// Explicit scanning source, when deriving one from `regex_src`
+    /// would be wrong.
+    ///
+    /// The private-key patterns need this. Their `regex_src` matches
+    /// the `-----BEGIN …-----` line, which is the right *detector* —
+    /// it still fires on a key whose footer was cut off. But
+    /// redacting only what that matches leaves the entire key body in
+    /// the text while the output says `[REDACTED:private-key-rsa]`,
+    /// which is worse than not redacting at all: the reader is told
+    /// the secret was removed.
+    pub scan_src: Option<&'static str>,
     /// Optional descriptive metadata (provider id, retrieval URL,
     /// expiry default, scope hints).
     pub metadata: Option<PatternMetadata>,
@@ -82,7 +94,9 @@ impl Builtin {
     /// answer meaning "validate whole strings only".
     fn compiled_scan_regex(&self) -> Option<&Regex> {
         self.scan
-            .get_or_init(|| crate::scanning::scanning_regex(self.regex_src))
+            .get_or_init(|| {
+                crate::scanning::scanning_regex(self.scan_src.unwrap_or(self.regex_src))
+            })
             .as_ref()
     }
 }
@@ -169,6 +183,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^gh[pousr]_[A-Za-z0-9]{36,255}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta_with_expiry(
                 "github",
                 "https://github.com/settings/tokens",
@@ -184,6 +199,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^github_pat_[A-Za-z0-9_]{82,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta_with_expiry(
                 "github",
                 "https://github.com/settings/personal-access-tokens/new",
@@ -200,6 +216,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^glpat-[A-Za-z0-9_-]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta_with_expiry(
                 "gitlab",
                 "https://gitlab.com/-/profile/personal_access_tokens",
@@ -215,6 +232,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^gldt-[A-Za-z0-9_-]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta(
                 "gitlab",
                 "https://gitlab.com/<group-or-project>/-/settings/repository#js-deploy-tokens",
@@ -230,6 +248,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^AKIA[0-9A-Z]{16}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta_with_expiry(
                 "aws",
                 "https://console.aws.amazon.com/iam/home#/security_credentials",
@@ -246,6 +265,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^sk-(proj-)?[A-Za-z0-9_-]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("openai", "https://platform.openai.com/api-keys")),
             rotation: None,
             liveness: None,
@@ -257,6 +277,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^sk-ant-[A-Za-z0-9_-]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta(
                 "anthropic",
                 "https://console.anthropic.com/settings/keys",
@@ -271,6 +292,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^sk-[A-Za-z0-9]{32,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta(
                 "moonshot",
                 "https://platform.moonshot.cn/console/api-keys",
@@ -290,6 +312,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^xoxb-[0-9A-Za-z-]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("slack", "https://api.slack.com/apps")),
             rotation: None,
             liveness: None,
@@ -301,6 +324,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^xoxp-[0-9A-Za-z-]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("slack", "https://api.slack.com/apps")),
             rotation: None,
             liveness: None,
@@ -312,6 +336,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^xapp-[0-9A-Za-z-]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("slack", "https://api.slack.com/apps")),
             rotation: None,
             liveness: None,
@@ -323,6 +348,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^https://hooks\.slack\.com/services/T[A-Za-z0-9]{8,}/B[A-Za-z0-9]{8,}/[A-Za-z0-9]{20,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("slack", "https://api.slack.com/messaging/webhooks")),
             rotation: None,
             liveness: None,
@@ -335,6 +361,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^https://(discord(app)?\.com)/api/webhooks/[0-9]{17,20}/[A-Za-z0-9_-]{60,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta(
                 "discord",
                 "https://discord.com/developers/applications",
@@ -350,6 +377,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^sk_live_[A-Za-z0-9]{24,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("stripe", "https://dashboard.stripe.com/apikeys")),
             rotation: None,
             liveness: None,
@@ -361,6 +389,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^sk_test_[A-Za-z0-9]{24,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("stripe", "https://dashboard.stripe.com/test/apikeys")),
             rotation: None,
             liveness: None,
@@ -372,6 +401,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^pk_(live|test)_[A-Za-z0-9]{24,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("stripe", "https://dashboard.stripe.com/apikeys")),
             rotation: None,
             liveness: None,
@@ -384,6 +414,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^npm_[A-Za-z0-9]{36,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("npm", "https://www.npmjs.com/settings/<user>/tokens")),
             rotation: None,
             liveness: None,
@@ -395,6 +426,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta(
                 "sendgrid",
                 "https://app.sendgrid.com/settings/api_keys",
@@ -409,6 +441,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^AC[a-f0-9]{32}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta("twilio", "https://console.twilio.com")),
             rotation: None,
             liveness: None,
@@ -420,6 +453,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^dp\.ct\.[A-Za-z0-9]{40,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: Some(meta(
                 "doppler",
                 "https://dashboard.doppler.com/workplace/tokens",
@@ -435,6 +469,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: None,
             rotation: None,
             liveness: None,
@@ -446,6 +481,9 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"-----BEGIN RSA PRIVATE KEY-----",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: Some(
+                r"-----BEGIN RSA PRIVATE KEY-----[\s\S]*?(-----END RSA PRIVATE KEY-----|$)",
+            ),
             metadata: None,
             rotation: None,
             liveness: None,
@@ -457,6 +495,9 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"-----BEGIN OPENSSH PRIVATE KEY-----",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: Some(
+                r"-----BEGIN OPENSSH PRIVATE KEY-----[\s\S]*?(-----END OPENSSH PRIVATE KEY-----|$)",
+            ),
             metadata: None,
             rotation: None,
             liveness: None,
@@ -468,6 +509,9 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"-----BEGIN EC PRIVATE KEY-----",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: Some(
+                r"-----BEGIN EC PRIVATE KEY-----[\s\S]*?(-----END EC PRIVATE KEY-----|$)",
+            ),
             metadata: None,
             rotation: None,
             liveness: None,
@@ -479,6 +523,9 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"-----BEGIN PGP PRIVATE KEY BLOCK-----",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: Some(
+                r"-----BEGIN PGP PRIVATE KEY BLOCK-----[\s\S]*?(-----END PGP PRIVATE KEY BLOCK-----|$)",
+            ),
             metadata: None,
             rotation: None,
             liveness: None,
@@ -490,6 +537,9 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"-----BEGIN [A-Z ]+PRIVATE KEY( BLOCK)?-----",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: Some(
+                r"-----BEGIN [A-Z ]+PRIVATE KEY( BLOCK)?-----[\s\S]*?(-----END [A-Z ]+PRIVATE KEY( BLOCK)?-----|$)",
+            ),
             metadata: None,
             rotation: None,
             liveness: None,
@@ -502,6 +552,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^postgres(ql)?://[^:/?#\s@]+:[^@/?#\s]+@[^/?#\s:]+(:[0-9]+)?/.+$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: None,
             rotation: None,
             liveness: None,
@@ -513,6 +564,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^mongodb(\+srv)?://[^:/?#\s@]+:[^@/?#\s]+@[^/?#\s]+/.*$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: None,
             rotation: None,
             liveness: None,
@@ -524,6 +576,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^rediss?://[^:/?#\s@]*:[^@/?#\s]+@[^/?#\s:]+(:[0-9]+)?(/.*)?$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: None,
             rotation: None,
             liveness: None,
@@ -535,6 +588,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^mysql://[^:/?#\s@]+:[^@/?#\s]+@[^/?#\s:]+(:[0-9]+)?/.+$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: None,
             rotation: None,
             liveness: None,
@@ -547,6 +601,7 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
             regex_src: r"^[A-Za-z0-9._-]{40,}$",
             regex: OnceLock::new(),
             scan: OnceLock::new(),
+            scan_src: None,
             metadata: None,
             rotation: None,
             liveness: None,

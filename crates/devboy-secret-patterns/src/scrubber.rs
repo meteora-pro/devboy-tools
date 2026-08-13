@@ -486,6 +486,56 @@ mod tests {
         assert!(!out.text.contains("[REDACTED"), "{}", out.text);
     }
 
+    /// The defect this was written after: redaction that removes the
+    /// header line, leaves the entire key, and reports success. A
+    /// reader seeing `[REDACTED:private-key-rsa]` believes the secret
+    /// is gone — worse than no redaction, which at least does not
+    /// lie.
+    #[test]
+    fn a_private_key_is_redacted_body_and_all() {
+        let s = Scrubber::new(Vec::<(String, String)>::new()).with_patterns(crate::builtins());
+
+        let pem = "-----BEGIN RSA PRIVATE KEY-----\n\
+                   MIIEowIBAAKCAQEAy8Dbv8prpJ/0kKhlGeJYozo2t60EG8L0561g13R29LvMR5hy\n\
+                   vGZlGJpmn65+A4xHXInJYiPuKzrKUnApeLZ+vw1HocOAZtWK0z3r26uA8kQYOKX9\n\
+                   -----END RSA PRIVATE KEY-----";
+        let out = s.scrub(&format!("upstream said: {pem} (401)"));
+
+        assert!(
+            !out.text.contains("MIIEowIBAAKCAQEAy8Dbv8prpJ"),
+            "the key body survived: {}",
+            out.text
+        );
+        assert!(
+            !out.text.contains("-----END RSA PRIVATE KEY-----"),
+            "the whole block should go, not just the header: {}",
+            out.text
+        );
+        assert!(
+            out.text.contains("[REDACTED:private-key-rsa]"),
+            "{}",
+            out.text
+        );
+        assert!(
+            out.text.contains("upstream said:") && out.text.contains("(401)"),
+            "the surrounding text must survive: {}",
+            out.text
+        );
+    }
+
+    /// A key whose footer was cut off — a log rotated mid-write, a
+    /// truncated error body. The header-only detector still fires,
+    /// and everything after it must still go.
+    #[test]
+    fn a_private_key_without_its_footer_is_still_fully_redacted() {
+        let s = Scrubber::new(Vec::<(String, String)>::new()).with_patterns(crate::builtins());
+
+        let out =
+            s.scrub("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\nAAAA");
+
+        assert!(!out.text.contains("b3BlbnNzaC1rZXktdjEA"), "{}", out.text);
+    }
+
     /// Ordinary output must come through untouched. A scrubber that
     /// eats commit hashes and file paths gets switched off, and then
     /// it protects nothing at all.
