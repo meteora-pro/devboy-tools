@@ -129,11 +129,13 @@ Get a single issue by key with optional comments and relations.
 
 ### `get_issue_comments`
 
-Get comments for an issue.
+Get comments for an issue, optionally as a page.
 
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
 | `key` | string | ✅ | Issue key |
+| `limit` | integer | — | Maximum comments to return (default: 20 when paginating). Range: 1 – 100 |
+| `offset` | integer | — | Number of comments to skip (default: 0 when paginating). Min: 0 |
 
 ### `get_issue_relations`
 

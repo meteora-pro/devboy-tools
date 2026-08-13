@@ -17,7 +17,7 @@ use crate::types::{
     GetUsersOptions, Issue, IssueFilter, IssueRelations, IssueStatus, JobLogOptions, JobLogOutput,
     KbPage, KbPageContent, KbSpace, ListCustomFieldsParams, ListPagesParams,
     ListProjectVersionsParams, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
-    MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
+    MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination, PipelineInfo,
     ProjectVersion, ProviderResult, Release, SaveStructureViewInput, SearchKbParams,
     SearchMessagesParams, SendMessageParams, Sprint, SprintState, Structure, StructureForest,
     StructureGenerator, StructureValues, StructureView, SyncStructureGeneratorInput,
@@ -43,6 +43,43 @@ pub trait IssueProvider: Send + Sync {
     async fn update_issue(&self, key: &str, input: UpdateIssueInput) -> Result<Issue>;
 
     async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>>;
+
+    /// Get a page of comments for an issue.
+    ///
+    /// Providers with native pagination should override this method. The
+    /// default preserves the legacy unpaged behaviour when neither argument
+    /// is supplied, and slices an already-fetched result when pagination is
+    /// explicitly requested.
+    async fn get_comments_paginated(
+        &self,
+        issue_key: &str,
+        offset: Option<u32>,
+        limit: Option<u32>,
+    ) -> Result<ProviderResult<Comment>> {
+        let mut result = self.get_comments(issue_key).await?;
+        if offset.is_none() && limit.is_none() {
+            return Ok(result);
+        }
+
+        let offset = offset.unwrap_or(0);
+        let limit = limit.unwrap_or(20);
+        let total = result.items.len() as u32;
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(result.items.len());
+        let end = start
+            .saturating_add(usize::try_from(limit).unwrap_or(usize::MAX))
+            .min(result.items.len());
+        result.items = result.items.drain(start..end).collect();
+        result.pagination = Some(Pagination {
+            offset,
+            limit,
+            total: Some(total),
+            has_more: offset.saturating_add(limit) < total,
+            next_cursor: None,
+        });
+        Ok(result)
+    }
 
     async fn add_comment(&self, issue_key: &str, body: &str) -> Result<Comment>;
 
