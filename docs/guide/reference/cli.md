@@ -82,6 +82,8 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy trace begin`↴](#devboy-trace-begin)
 * [`devboy trace event`↴](#devboy-trace-event)
 * [`devboy trace end`↴](#devboy-trace-end)
+* [`devboy otel`↴](#devboy-otel)
+* [`devboy otel scan`↴](#devboy-otel-scan)
 * [`devboy login`↴](#devboy-login)
 * [`devboy doctor`↴](#devboy-doctor)
 * [`devboy upgrade`↴](#devboy-upgrade)
@@ -112,6 +114,7 @@ DevBoy - AI-powered development tools
 * `secrets` — Discover and inspect declared secrets (metadata only — values are never shown)
 * `hooks` — Manage git hooks installed by devboy (e.g. the secret-alias pre-commit lint, ADR-020 §5)
 * `trace` — Write to a skill's self-feedback session trace (ADR-015)
+* `otel` — Inspect OpenTelemetry artifacts for leaked secrets
 * `login` — Log in to an OAuth-2.1 proxy MCP upstream via the device flow (RFC 8628)
 * `doctor` — Run diagnostic checks for the local DevBoy setup
 * `upgrade` — Upgrade devboy to the latest version
@@ -1280,6 +1283,48 @@ Finalise a session — writes the closing event and updates `meta.json` with the
 * `--summary <SUMMARY>` — Human-readable summary
 
   Default value: ``
+
+
+
+## `devboy otel`
+
+Inspect OpenTelemetry artifacts for leaked secrets
+
+**Usage:** `devboy otel <COMMAND>`
+
+###### **Subcommands:**
+
+* `scan` — Scan a JSONL OpenTelemetry artifact for leaked secrets
+
+
+
+## `devboy otel scan`
+
+Scan a JSONL OpenTelemetry artifact for leaked secrets
+
+**Usage:** `devboy otel scan [OPTIONS] --input <INPUT>`
+
+###### **Options:**
+
+* `--input <INPUT>` — Artifact to scan. Supports JSONL files/directories, `sqlite:<path>`, and `-` for JSONL from standard input
+* `--format <FORMAT>` — Input format. `auto` detects `.jsonl`, `.db`, and `.sqlite` inputs
+
+  Default value: `auto`
+
+  Possible values: `auto`, `jsonl`, `sqlite`
+
+* `--output <OUTPUT>` — Report format
+
+  Default value: `text`
+
+  Possible values: `text`, `json`, `sarif`, `redacted-jsonl`
+
+* `--fail-on <FAIL_ON>` — Minimum severity that causes a non-zero exit. Defaults to `medium`
+
+  Default value: `medium`
+
+  Possible values: `none`, `low`, `medium`, `high`
+
 
 
 
