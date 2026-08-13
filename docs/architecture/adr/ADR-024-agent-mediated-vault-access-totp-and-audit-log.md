@@ -845,6 +845,44 @@ available regardless of `[secrets.keychain] enabled`; after migration,
 `[secrets] migration_complete = true` disables it. Existing users are not
 locked out by the default flip.
 
+#### The unattended path, and binding it to a machine (Ф7-2, Ф16)
+
+Without the keychain, nothing opened a vault without a human at a keyboard.
+`Envelope::Keyfile` restores that: 32 bytes on disk, outside the config tree,
+whose HKDF output wraps the vault key. Enrolment (`devboy secrets keyfile add`)
+requires unlocking the vault first — a keyfile is a second door opened from
+inside, not a way in — and records the path in configuration, because the daemon
+takes it from there and never from a request.
+
+The protection a keyfile offers is that the two halves live in different trees,
+so a backup or a sync captures one and not the other. That holds until someone
+syncs a whole home directory, copies a container image, or restores a machine
+wholesale, at which point both halves travel together and the vault opens
+anywhere.
+
+So the derivation also mixes in a machine identifier — `/etc/machine-id`,
+`IOPlatformUUID`, `MachineGuid` — and the same two files on a different host
+derive a different wrap key. Non-portability is the feature.
+
+What that is worth, stated plainly: nothing against an attacker who is trying,
+since every one of those identifiers is readable by any process on the box. It
+is worth a lot against the two things in this threat model — accidental
+disclosure (a synced directory, a shared backup, an image in a registry) and
+generic credential harvesters, which collect files by shape and do not
+reconstruct a per-host derivation.
+
+Three details keep it from becoming a support burden:
+
+- **The binding is recorded in the envelope, not inferred.** An environment with
+  no stable identifier gets an unbound envelope rather than a failure, and
+  envelopes written before this existed keep opening.
+- **A missing identifier is an error, never a silent fallback to unbound.**
+  Falling back would turn "this machine changed" into a decryption failure
+  indistinguishable from a wrong keyfile.
+- **The recovery is cheap and named in the error text**: enrol again on this
+  machine. Combined with short-lived tokens, losing a machine-bound vault costs
+  a re-onboarding, not a recovery operation.
+
 ### 7. Trusted path — the process model that makes §1–§6 mean anything
 
 #### The problem
