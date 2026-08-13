@@ -191,6 +191,50 @@ async fn a_credential_devboy_never_sent_is_redacted_by_shape() {
     );
 }
 
+/// The route that bypasses result-scrubbing entirely: a non-2xx
+/// response never becomes a `ToolCallResult` inside the client at
+/// all. It becomes a transport error carrying the body verbatim,
+/// which the proxy manager then formats into `Proxy error: HTTP 401:
+/// <body>` and hands to the agent.
+///
+/// A 401 body naming the token it rejected is the single likeliest
+/// place for a credential to appear, so the error path matters at
+/// least as much as the success path.
+#[tokio::test]
+async fn a_transport_error_carrying_the_body_is_scrubbed() {
+    let upstream = MockServer::start();
+    stub_handshake(&upstream);
+    upstream.mock(|when, then| {
+        when.method(POST)
+            .path("/mcp")
+            .body_includes(r#""method":"tools/call""#);
+        then.status(403)
+            .body(format!("{{\"error\":\"token {TOKEN} lacks scope\"}}"));
+    });
+
+    let url = format!("{}/mcp", upstream.base_url());
+    let client = connect(&url, Some(TOKEN)).await;
+
+    let err = client
+        .call_tool("get_issues", None)
+        .await
+        .expect_err("a 403 must surface as an error");
+    let rendered = err.to_string();
+
+    assert!(
+        !rendered.contains(TOKEN),
+        "the token reached the agent through the error path: {rendered}"
+    );
+    assert!(
+        rendered.contains("@secret:proxy/cloud/token"),
+        "the redaction should name which credential leaked: {rendered}"
+    );
+    assert!(
+        rendered.contains("403"),
+        "the status must survive or the agent cannot tell what failed: {rendered}"
+    );
+}
+
 /// The case that decides whether this feature survives contact with
 /// users. If ordinary responses came back altered, the redaction
 /// would be switched off and would then protect nothing.

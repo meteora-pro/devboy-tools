@@ -135,23 +135,27 @@ impl CredentialRegistry {
     }
 }
 
+/// Build the scrubber for one pass.
+///
+/// Rebuilt per call rather than cached. It is built over at most two
+/// needles and 31 already-compiled regexes, which is microseconds next
+/// to the HTTP round trip that produced the text — and a cached
+/// scrubber would need invalidating every time an OAuth token
+/// refreshed, which is exactly the kind of staleness that turns into a
+/// silent hole.
+fn scrubber_for(registry: &CredentialRegistry) -> Scrubber {
+    Scrubber::new(registry.snapshot()).with_patterns(devboy_secret_patterns::builtins())
+}
+
 /// Redact secrets from a tool result on its way to the agent.
 ///
 /// `upstream` names the proxied server, for the leak warning.
-///
-/// The scrubber is rebuilt per call rather than cached. It is built
-/// over at most two needles and 31 already-compiled regexes, which is
-/// microseconds next to the HTTP round trip that produced the result
-/// — and a cached scrubber would need invalidating every time an
-/// OAuth token refreshed, which is exactly the kind of staleness that
-/// turns into a silent hole.
 pub fn scrub_tool_result(
     upstream: &str,
     registry: &CredentialRegistry,
     result: ToolCallResult,
 ) -> ToolCallResult {
-    let scrubber =
-        Scrubber::new(registry.snapshot()).with_patterns(devboy_secret_patterns::builtins());
+    let scrubber = scrubber_for(registry);
 
     let mut replacements: Vec<Replacement> = Vec::new();
     let content = result
@@ -174,6 +178,18 @@ pub fn scrub_tool_result(
         content,
         is_error: result.is_error,
     }
+}
+
+/// Redact secrets from a bare string that came from an upstream.
+///
+/// Used for error messages, which carry response bodies verbatim and
+/// reach the agent by a different route than results do.
+pub fn scrub_text(upstream: &str, registry: &CredentialRegistry, text: &str) -> String {
+    let out = scrubber_for(registry).scrub(text);
+    if !out.replacements.is_empty() {
+        report_leak(upstream, &out.replacements);
+    }
+    out.text
 }
 
 /// Warn that an upstream returned something that had to be redacted.

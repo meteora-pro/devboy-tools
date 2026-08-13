@@ -297,15 +297,70 @@ impl McpProxyClient {
     }
 
     /// Send a JSON-RPC request and wait for response.
+    ///
+    /// Errors are scrubbed on the way out. A transport error quotes
+    /// the upstream's response body verbatim (`HTTP 401: <body>`), and
+    /// a 401 body naming the token it rejected is the single most
+    /// likely place for a credential to appear. That error is then
+    /// rendered into a `ToolCallResult` by the proxy manager and
+    /// handed to the agent, so it reaches the transcript by a route
+    /// that never touches the result-scrubbing path.
     async fn request(
         &self,
         method: &str,
         params: Option<Value>,
     ) -> devboy_core::Result<JsonRpcResponse> {
-        match self.transport {
+        let result = match self.transport {
             ProxyTransport::Sse => self.request_sse(method, params).await,
             ProxyTransport::StreamableHttp => self.request_http(method, params).await,
+        };
+
+        result.map_err(|e| self.scrub_error(e))
+    }
+
+    /// Redact upstream text out of an error.
+    ///
+    /// The variants that carry a message are rebuilt with a scrubbed
+    /// one. Anything else is scrubbed through its `Display` form and
+    /// kept **as-is when nothing changed** — which is every ordinary
+    /// error. Only when a redaction actually happened does the variant
+    /// collapse to `Http`, so an unanticipated variant degrades the
+    /// error's type rather than leaking its contents. Losing a variant
+    /// is recoverable; putting a token in the agent's transcript is
+    /// not.
+    fn scrub_error(&self, error: devboy_core::Error) -> devboy_core::Error {
+        use devboy_core::Error as E;
+
+        match error {
+            E::Http(m) => E::Http(self.scrub_text(&m)),
+            E::Network(m) => E::Network(self.scrub_text(&m)),
+            E::Unauthorized(m) => E::Unauthorized(self.scrub_text(&m)),
+            E::Forbidden(m) => E::Forbidden(self.scrub_text(&m)),
+            E::NotFound(m) => E::NotFound(self.scrub_text(&m)),
+            E::InvalidData(m) => E::InvalidData(self.scrub_text(&m)),
+            E::Api { status, message } => E::Api {
+                status,
+                message: self.scrub_text(&message),
+            },
+            E::ServerError { status, message } => E::ServerError {
+                status,
+                message: self.scrub_text(&message),
+            },
+            other => {
+                let rendered = other.to_string();
+                let scrubbed = self.scrub_text(&rendered);
+                if scrubbed == rendered {
+                    other
+                } else {
+                    E::Http(scrubbed)
+                }
+            }
         }
+    }
+
+    /// Redact upstream text out of a bare string.
+    fn scrub_text(&self, text: &str) -> String {
+        crate::response_scrub::scrub_text(&self.name, &self.credentials, text)
     }
 
     /// Send request via SSE transport (POST request, response via SSE stream).
