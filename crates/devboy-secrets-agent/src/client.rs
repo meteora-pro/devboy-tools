@@ -43,6 +43,33 @@ use crate::rpc::JsonRpcError;
 #[cfg(unix)]
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How long to wait when the daemon is waiting for a person.
+///
+/// Two methods block the daemon on a human typing a passphrase:
+/// `vault.request_unlock` and `secret.put_interactive`. Five seconds
+/// is not a passphrase — it is barely enough to notice the prompt.
+/// The client used to give up while the daemon was healthy and still
+/// holding the terminal, report "could not reach the secret daemon",
+/// and then, if the user typed anyway, the unlock landed after the
+/// CLI had already exited with an error.
+///
+/// Three minutes is the wrong number to be precise about; it is
+/// chosen to be longer than a person needs and short enough that a
+/// forgotten prompt does not hold a terminal all day.
+#[cfg(unix)]
+const HUMAN_RPC_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Whether this method blocks the daemon on a human.
+///
+/// A list rather than a flag on the call site, so that adding an
+/// interactive method and forgetting the timeout is a visible
+/// omission in one place instead of a five-second failure in the
+/// field.
+#[cfg(unix)]
+fn waits_for_a_human(method: &str) -> bool {
+    matches!(method, "vault.request_unlock" | "secret.put_interactive")
+}
+
 /// Why a call did not produce a result.
 ///
 /// The three cases are kept apart because callers treat them
@@ -126,8 +153,13 @@ impl AgentClient {
         use std::os::unix::net::UnixStream;
 
         let stream = UnixStream::connect(&self.socket_path).map_err(ClientError::Unreachable)?;
-        stream.set_read_timeout(Some(RPC_TIMEOUT)).ok();
-        stream.set_write_timeout(Some(RPC_TIMEOUT)).ok();
+        let timeout = if waits_for_a_human(method) {
+            HUMAN_RPC_TIMEOUT
+        } else {
+            RPC_TIMEOUT
+        };
+        stream.set_read_timeout(Some(timeout)).ok();
+        stream.set_write_timeout(Some(timeout)).ok();
 
         let request = json!({
             "jsonrpc": "2.0",
@@ -239,6 +271,41 @@ impl AgentClient {
 
 #[cfg(test)]
 mod tests {
+
+    /// The two methods that block the daemon on a human must get the
+    /// long timeout, and everything else the short one.
+    ///
+    /// Five seconds is not a passphrase. With the short timeout on
+    /// `vault.request_unlock`, the client gave up while the daemon
+    /// was healthy and still holding the user's terminal, reported
+    /// "could not reach the secret daemon", and — if the user typed
+    /// anyway — let the unlock land after the CLI had exited with an
+    /// error.
+    #[cfg(unix)]
+    #[test]
+    fn only_the_methods_that_wait_for_a_person_get_the_long_timeout() {
+        assert!(waits_for_a_human("vault.request_unlock"));
+        assert!(waits_for_a_human("secret.put_interactive"));
+
+        for quick in [
+            "vault.status",
+            "vault.unlock",
+            "vault.lock",
+            "secret.get",
+            "secret.put",
+            "totp.unlock",
+        ] {
+            assert!(
+                !waits_for_a_human(quick),
+                "`{quick}` does not wait for a person; a wedged daemon must not stall it"
+            );
+        }
+
+        assert!(
+            HUMAN_RPC_TIMEOUT > RPC_TIMEOUT,
+            "the interactive timeout has to actually be longer"
+        );
+    }
     use super::*;
 
     #[test]
