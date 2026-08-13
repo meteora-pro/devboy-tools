@@ -440,14 +440,7 @@ impl VaultServer {
         let trust = crate::provenance::startup_provenance().trust_level();
         match Vault::open(&self.vault_path, unlock) {
             Ok(vault) => {
-                self.vault = Some(vault);
-                self.idle.record_unlock();
-                // The TOTP path is established by this unlock and
-                // by nothing else: the secret lives in the vault,
-                // so it becomes resident exactly when the vault
-                // opens.
-                self.adopt_totp_secret();
-                self.open_audit();
+                self.adopt_unlocked_vault(vault);
                 // Which method opened the vault, and how much this
                 // daemon's own position is worth, are the two things
                 // someone reading the trail afterwards most wants to
@@ -546,6 +539,35 @@ impl VaultServer {
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
         }
+    }
+
+    /// Install a freshly-opened vault, with everything that has to
+    /// happen alongside it.
+    ///
+    /// # Why this is a method and not three lines at each call site
+    ///
+    /// Opening the vault is only part of unlocking it. The idle
+    /// window has to start, the TOTP secret has to become resident,
+    /// and the audit trail has to open — and each of those is
+    /// invisible by its absence.
+    ///
+    /// `secret.put_interactive` used to do `self.vault = Some(vault)`
+    /// and nothing else. The consequences were not subtle:
+    /// `IdleTracker` treats a `None` last-activity as "no window
+    /// running", so the vault stayed unlocked **forever** while
+    /// `vault.status` cheerfully reported `unlocked`; and with no
+    /// audit trail open, the write that followed recorded nothing,
+    /// though the identical write through `secret.put` was recorded.
+    ///
+    /// So there is one way in, and it is this one.
+    fn adopt_unlocked_vault(&mut self, vault: Vault) {
+        self.vault = Some(vault);
+        self.idle.record_unlock();
+        // The TOTP path is established by this unlock and by nothing
+        // else: the secret lives in the vault, so it becomes resident
+        // exactly when the vault opens.
+        self.adopt_totp_secret();
+        self.open_audit();
     }
 
     /// Find a screen to ask on, preferring the daemon's own.
@@ -869,7 +891,10 @@ impl VaultServer {
         // with the supplied passphrase, so a stale unlock cannot
         // authorise a write.
         match Vault::open(&self.vault_path, UnlockMethod::Passphrase(passphrase)) {
-            Ok(vault) => self.vault = Some(vault),
+            // A human just typed a passphrase on the daemon's own
+            // terminal — that is an unlock, and it starts a window
+            // like any other.
+            Ok(vault) => self.adopt_unlocked_vault(vault),
             Err(_) => {
                 return JsonRpcResponse::err(
                     id,
@@ -1275,7 +1300,12 @@ fn locked_response(id: Value) -> JsonRpcResponse {
 fn is_user_activity(method: &str) -> bool {
     matches!(
         method,
-        "secret.get" | "secret.list" | "secret.put" | "secret.rotate" | "metadata.update"
+        "secret.get"
+            | "secret.list"
+            | "secret.put"
+            | "secret.put_interactive"
+            | "secret.rotate"
+            | "metadata.update"
     )
 }
 
@@ -1992,7 +2022,36 @@ mod tests {
         assert!(err.contains("DEVBOY_VAULT_PASSPHRASE"), "{err}");
     }
 
-    /// `vault.request_unlock` must carry no passphrase field at all.
+    /// Every path that opens the vault must start a window, or the
+    /// vault stays unlocked forever while `status` says otherwise.
+    ///
+    /// `secret.put_interactive` used to set `self.vault` directly and
+    /// skip all of it: no window, no audit trail, no TOTP. This pins
+    /// the single door both paths now go through.
+    #[tokio::test]
+    async fn adopting_a_vault_starts_the_window_and_the_trail() {
+        let (_dir, mut server) = fresh_vault("p");
+
+        let vault = Vault::open(
+            &server.vault_path,
+            UnlockMethod::Passphrase(SecretString::from("p".to_owned())),
+        )
+        .expect("open");
+
+        server.adopt_unlocked_vault(vault);
+
+        assert!(server.is_unlocked());
+        assert!(
+            server.idle.expires_at().is_some(),
+            "an unlock with no expiry never re-locks — the whole window is void"
+        );
+        assert!(
+            server.audit.is_some(),
+            "without an open trail every later write records nothing"
+        );
+    }
+
+    /// `vault.request_unlock` must carry no passphrase field at all.    /// `vault.request_unlock` must carry no passphrase field at all.
     ///
     /// The whole point is that the secret never crosses the socket,
     /// so a caller supplying one must not be able to influence the
