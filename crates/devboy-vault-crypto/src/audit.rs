@@ -38,10 +38,24 @@
 //! - **Splicing.** AAD is `b"audit-v1" || seq`, so a record moved
 //!   to a different index no longer decrypts. Reordering, copying a
 //!   record over another, and re-using an old record all fail.
-//! - **Truncation.** `COUNT` is written in the header, so lopping
-//!   records off the end is visible even though the file is still
-//!   internally consistent. This is the attack a naive
-//!   append-only file misses entirely.
+//! - **Truncation without a header rewrite.** `COUNT` is written in
+//!   the header, so lopping records off the end and leaving the
+//!   header alone is visible. That covers a careless truncation — a
+//!   crash mid-write, a partial copy, a naive `head -c`.
+//!
+//!   It does **not** cover a deliberate one. `COUNT` is plaintext and
+//!   unauthenticated, and each record's AAD binds only its own `seq`.
+//!   An attacker who can write to this file — the same attacker the
+//!   splice protection is aimed at — can delete the last index entry
+//!   and the last ciphertext, decrement `COUNT`, and the result reads
+//!   back as a valid log with one fewer record. The incriminating
+//!   tail disappears without a trace.
+//!
+//!   Closing that needs the header itself authenticated under the
+//!   vault key, which is a format change and is tracked separately.
+//!   Until then, do not treat this log as evidence that *nothing
+//!   else happened* — only as evidence that what it does contain,
+//!   happened.
 //! - **Editing.** Any change to a ciphertext fails its Poly1305
 //!   tag.
 //!
