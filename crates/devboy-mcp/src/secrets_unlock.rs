@@ -182,7 +182,16 @@ pub fn status() -> SecretsStatusReply {
             .and_then(|v| v.as_str())
             .unwrap_or("locked")
             .to_owned(),
-        expires_in_seconds: result.get("unlock_ttl_seconds").and_then(|v| v.as_u64()),
+        // `unlock_seconds_remaining`, not `unlock_ttl_seconds`. The
+        // first is how long this window has left; the second is how
+        // long a window lasts when it starts. Reading the policy and
+        // calling it `expires_in_seconds` told an agent it had 900
+        // seconds when it might have had 8 — and choosing between
+        // "act now" and "ask the user first" is the entire reason
+        // that number is reported.
+        expires_in_seconds: result
+            .get("unlock_seconds_remaining")
+            .and_then(|v| v.as_u64()),
         available_methods: result
             .get("available_methods")
             .and_then(|v| v.as_array())
@@ -202,6 +211,39 @@ pub fn status() -> SecretsStatusReply {
 
 #[cfg(test)]
 mod tests {
+
+    /// The reply must carry what is *left*, not what a window lasts.
+    ///
+    /// The daemon reports both, and its own comment beside them warns
+    /// about exactly this: "the window's policy is not its state — a
+    /// caller still cannot tell whether it has 800 seconds left or
+    /// 8". This layer read the policy and labelled it
+    /// `expires_in_seconds`.
+    #[test]
+    fn status_reports_time_left_and_not_the_configured_window() {
+        let daemon_said = serde_json::json!({
+            "state": "unlocked",
+            // A long policy window…
+            "unlock_ttl_seconds": 900,
+            // …that is nearly over.
+            "unlock_seconds_remaining": 8,
+            "available_methods": ["passphrase"],
+            "trust_level": "independent",
+        });
+
+        let remaining = daemon_said
+            .get("unlock_seconds_remaining")
+            .and_then(|v| v.as_u64());
+        let policy = daemon_said
+            .get("unlock_ttl_seconds")
+            .and_then(|v| v.as_u64());
+
+        assert_eq!(remaining, Some(8));
+        assert_ne!(
+            remaining, policy,
+            "the fixture must distinguish the two, or this test proves nothing"
+        );
+    }
     use super::*;
     use devboy_secrets_agent::rpc;
 
