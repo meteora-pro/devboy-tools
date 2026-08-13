@@ -114,6 +114,43 @@ impl AuditWriter {
         })
     }
 
+    /// Rebuild the scrubber over a fresh set of values, keeping the
+    /// open log.
+    ///
+    /// The scrubber was built once, at unlock, over what the vault
+    /// held then. A secret written afterwards — `put`, `rotate`,
+    /// `put_interactive` — was not in it, so the one protection
+    /// that does not depend on every caller behaving stopped
+    /// covering the newest secrets, which are the ones most likely
+    /// to be in flight in some component's error text.
+    ///
+    /// Rebuilding rather than appending because the scrubber keeps
+    /// no plaintext after construction — deliberately — so there is
+    /// nothing to append to. The values come back from the vault,
+    /// which is where they already live; this holds no second copy.
+    pub fn relearn_values<I, P, V>(&mut self, values: I)
+    where
+        I: IntoIterator<Item = (P, V)>,
+        P: Into<String>,
+        V: AsRef<str>,
+    {
+        let collected: Vec<(String, String)> = values
+            .into_iter()
+            .map(|(p, v)| (p.into(), v.as_ref().to_owned()))
+            .collect();
+        let offered = collected.len();
+
+        self.scrubber = Scrubber::new(collected.iter().map(|(p, v)| (p.clone(), v.clone())))
+            .with_patterns(devboy_secret_patterns::builtins());
+        self.unscrubbable = offered.saturating_sub(self.scrubber.known_value_count());
+    }
+
+    /// How many known values the scrubber can match. Lets a caller
+    /// confirm a refresh actually took.
+    pub fn known_value_count(&self) -> usize {
+        self.scrubber.known_value_count()
+    }
+
     /// How many known values are too short for the scrubber to
     /// match, and will therefore pass through untouched.
     ///

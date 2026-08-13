@@ -264,6 +264,41 @@ impl VaultServer {
         }
     }
 
+    /// Everything the vault holds that the scrubber should know.
+    ///
+    /// Reserved slots are excluded: those must not be handed around
+    /// even for the purpose of being redacted.
+    fn scrubbable_values(vault: &Vault) -> Vec<(String, String)> {
+        vault
+            .paths()
+            .filter(|p| !crate::totp_session::is_reserved(p))
+            .filter_map(|p| {
+                vault
+                    .get(p)
+                    .ok()
+                    .flatten()
+                    .map(|v| (p.to_owned(), v.expose_secret().to_owned()))
+            })
+            .collect()
+    }
+
+    /// Teach the audit scrubber a secret that changed after unlock.
+    ///
+    /// Called after every successful write. Without it the scrubber
+    /// protects only the secrets that existed when the vault was
+    /// opened, and the freshly written one — the likeliest to be
+    /// quoted in some component's error text right now — passes
+    /// through the log untouched.
+    fn relearn_secrets_for_audit(&mut self) {
+        let Some(vault) = self.vault.as_ref() else {
+            return;
+        };
+        let values = Self::scrubbable_values(vault);
+        if let Some(writer) = self.audit.as_mut() {
+            writer.relearn_values(values);
+        }
+    }
+
     /// Open the audit trail for this unlock.
     ///
     /// The scrubber is built over the values the vault currently
@@ -277,20 +312,7 @@ impl VaultServer {
             return;
         };
 
-        // Values for the scrubber: everything the vault holds,
-        // except the reserved slots, which must not be handed
-        // around even to be redacted.
-        let values: Vec<(String, String)> = vault
-            .paths()
-            .filter(|p| !crate::totp_session::is_reserved(p))
-            .filter_map(|p| {
-                vault
-                    .get(p)
-                    .ok()
-                    .flatten()
-                    .map(|v| (p.to_owned(), v.expose_secret().to_owned()))
-            })
-            .collect();
+        let values = Self::scrubbable_values(vault);
 
         let path = self.vault_path.with_file_name("audit-log.dvb");
         match AuditWriter::open(&path, values) {
@@ -824,6 +846,7 @@ impl VaultServer {
         let metadata = params.meta.unwrap_or_default().into_entry_metadata();
         let outcome = vault.put(&params.path, &SecretString::from(params.value), metadata);
         if outcome.is_ok() {
+            self.relearn_secrets_for_audit();
             self.audit("write", &params.path, "agent");
         }
         match outcome {
@@ -913,6 +936,7 @@ impl VaultServer {
             EntryMetadata::default(),
         );
         if outcome.is_ok() {
+            self.relearn_secrets_for_audit();
             self.audit("write", &params.path, "user");
         }
         match outcome {
@@ -958,6 +982,7 @@ impl VaultServer {
                 // Recorded like every other write. A rotation that
                 // leaves no trace is the one an investigator most
                 // wants to see.
+                self.relearn_secrets_for_audit();
                 self.audit("rotate", &params.path, "user");
                 JsonRpcResponse::ok(id, json!({"ok": true, "last_rotated_at": last_rotated_at}))
             }
@@ -1408,6 +1433,103 @@ mod tests {
             method: method.to_owned(),
             params,
         }
+    }
+
+    /// A secret written after unlock must be scrubbed from the
+    /// audit log too.
+    ///
+    /// The scrubber was built once, in `open_audit`, over what the
+    /// vault held at that moment. Everything written afterwards was
+    /// invisible to it — and the newest secret is the one most
+    /// likely to be sitting in some component's error text right
+    /// now. The value below is deliberately not secret-shaped, so
+    /// the catalogue patterns cannot rescue the test; only knowing
+    /// the value works.
+    #[tokio::test]
+    async fn a_secret_written_after_unlock_is_still_scrubbed() {
+        const AFTER: &str = "written-after-the-vault-was-opened-9182736455";
+
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        let before = server
+            .audit
+            .as_ref()
+            .expect("unlock opens the audit trail")
+            .known_value_count();
+
+        let put = server
+            .handle_request(req(
+                2,
+                "secret.put",
+                json!({"path": "team/api/later", "value": AFTER, "fresh_unlock": {"kind": "passphrase", "secret": "p"}}),
+            ))
+            .await;
+        assert!(put.error.is_none(), "{:?}", put.error);
+
+        let writer = server.audit.as_ref().expect("still open");
+        assert_eq!(
+            writer.known_value_count(),
+            before + 1,
+            "the write must reach the scrubber"
+        );
+
+        let scrubbed = writer.scrub(&format!("upstream said: {AFTER} is invalid"));
+        assert!(
+            !scrubbed.as_str().contains(AFTER),
+            "a secret written after unlock reached the audit log in plaintext: {}",
+            scrubbed.as_str()
+        );
+    }
+
+    /// Same for a rotation: the new value replaces the old one the
+    /// scrubber was built with.
+    #[tokio::test]
+    async fn a_rotated_value_is_scrubbed_and_not_only_the_old_one() {
+        const OLD: &str = "the-original-value-172635444";
+        const NEW: &str = "the-rotated-value-998877665544";
+
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        server
+            .handle_request(req(
+                2,
+                "secret.put",
+                json!({"path": "team/api/rotating", "value": OLD, "fresh_unlock": {"kind": "passphrase", "secret": "p"}}),
+            ))
+            .await;
+
+        let rotate = server
+            .handle_request(req(
+                3,
+                "secret.rotate",
+                json!({"path": "team/api/rotating", "new_value": NEW, "fresh_unlock": {"kind": "passphrase", "secret": "p"}}),
+            ))
+            .await;
+        assert!(rotate.error.is_none(), "{:?}", rotate.error);
+
+        let scrubbed = server
+            .audit
+            .as_ref()
+            .expect("still open")
+            .scrub(&format!("upstream rejected {NEW}"));
+        assert!(
+            !scrubbed.as_str().contains(NEW),
+            "the rotated-in value was not scrubbed: {}",
+            scrubbed.as_str()
+        );
     }
 
     // -- vault.* -----------------------------------------------------------
