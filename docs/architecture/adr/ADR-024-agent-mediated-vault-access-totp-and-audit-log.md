@@ -555,6 +555,56 @@ set). When the scrub finds a value that matches no known provisioned secret but
 `[REDACTED:gitlab-pat]`) and a leak-audit entry — catching unknown-but-shaped
 tokens without inventing a path for them.
 
+#### The other direction: the agent's own transcript (Ф15)
+
+The scrub above protects what the agent *writes into* the vault. The larger
+exposure runs the other way — what devboy *hands back to* the agent.
+
+An agent session transcript is a JSONL file on disk. Every tool result is
+appended to it verbatim and kept indefinitely, and any process running as the
+user can read it. So the question is not whether devboy stores a value, but
+whether one can pass *through* devboy into that file.
+
+The routes were audited exhaustively:
+
+| Route | Verdict |
+|---|---|
+| devboy's own MCP tool replies | Clean. No tool returns a value; `AgentSafeReply` fences the reply structs. |
+| CLI output | Clean. One place prints a secret and it is masked. |
+| Error text built by devboy | Clean. Messages name the path, the pattern or the regex — never the value. |
+| **Proxied upstream tool results** | **Was open.** Returned to the agent verbatim. |
+| **Proxied upstream transport errors** | **Was open**, and by a different route: a non-2xx never becomes a result inside the proxy client at all — it becomes an error carrying the response body, which the proxy manager formats into a result further up. |
+
+Both proxied routes are now scrubbed at `McpProxyClient`, over two passes:
+credentials this process sent upstream (the connect-time bearer or API key, and
+the current OAuth access token, registered at the moment of sending so a
+post-401 refresh is covered), and the pattern catalogue for anything
+secret-shaped that devboy has never seen.
+
+Three properties are deliberate:
+
+- **Nothing new is loaded to do it.** The registry labels material already in
+  the MCP server's memory. Pulling every provisioned secret into that process so
+  it could recognise them would create a larger exposure than the one being
+  closed.
+- **No opt-out, no per-upstream allow-list.** A tool that genuinely means to
+  return a token will show `[REDACTED:jwt]`. That is consistent with ADR-020 —
+  agents work with aliases, not values — and the redaction is visible rather
+  than silent, so the rare user it inconveniences can see exactly what happened.
+- **It does not write to the audit log.** The log lives in the daemon and this
+  runs in the MCP server; routing every proxied response through an RPC would
+  put the daemon on the hot path of every tool call. Leaks are reported through
+  `tracing`, naming the secret and never the value.
+
+Note the dependency on the catalogue being able to match *inside* a string. The
+catalogue's regexes are anchored validators (`^glpat-…$`), which answer "is this
+whole string a token?" and can never find one mid-sentence. A pattern is
+therefore promoted to a scanning form only when it has a literal prefix and no
+unbounded wildcard; the generic `^[A-Za-z0-9._-]{40,}$` catch-all and the four
+connection-string patterns are refused, because unanchored they would match
+commit hashes, base64 blobs and the remainder of any JSON line. Those five keep
+whole-string validation.
+
 ### 5. Secret versioning — agent edits are always reversible
 
 A secret value is never destroyed by an agent-mediated write. Every
