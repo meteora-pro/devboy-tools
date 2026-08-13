@@ -15,6 +15,19 @@
 //! string to [`AuditWriter::record`] because the type does not exist
 //! until the scrubber has produced it.
 //!
+//! # Two passes, not one
+//!
+//! Values the vault holds are replaced by their path — the log says
+//! *which* secret leaked, which is what makes it debuggable. Values
+//! the vault never held are caught by shape instead, from the
+//! built-in pattern catalogue, and replaced by
+//! `[REDACTED:<pattern_id>]`.
+//!
+//! The second pass matters more than it looks. A daemon can only
+//! recognise what it provisioned, and the tokens most likely to end
+//! up quoted in an error detail are the ones it did not: an
+//! upstream's own credential, a key someone pasted into a message.
+//!
 //! # The gap this cannot close
 //!
 //! [`Scrubber`] skips values shorter than eight bytes — a
@@ -26,6 +39,12 @@
 //! skipped, so a caller can say so rather than leaving the user to
 //! assume the log is clean. A leak you cannot see is worse than one
 //! you can.
+//!
+//! The shape pass has its own limit: five catalogue patterns cannot
+//! scan free text safely (see [`devboy_secret_patterns::scanning`])
+//! and so only match a detail that is entirely one token. Neither
+//! gap is closable here; both are worth knowing about rather than
+//! assuming away.
 
 use std::path::Path;
 
@@ -79,7 +98,13 @@ impl AuditWriter {
             .collect();
         let offered = collected.len();
 
-        let scrubber = Scrubber::new(collected.iter().map(|(p, v)| (p.clone(), v.clone())));
+        // The catalogue is what catches a value the vault never held
+        // — an upstream's own token quoted back in an error, a key
+        // pasted into a message. Without it the log is protected only
+        // against secrets this daemon provisioned, which is the
+        // smaller half of the problem.
+        let scrubber = Scrubber::new(collected.iter().map(|(p, v)| (p.clone(), v.clone())))
+            .with_patterns(devboy_secret_patterns::builtins());
         let unscrubbable = offered.saturating_sub(scrubber.known_value_count());
 
         Ok(Self {
@@ -261,6 +286,43 @@ mod tests {
             text.contains("team/github/token"),
             "the redaction should name the path: {text}"
         );
+    }
+
+    /// The half the vault cannot see. This token was never
+    /// provisioned here, so the known-value pass has nothing to match
+    /// on — only the catalogue stops it, and until the catalogue was
+    /// wired in there was nothing to stop it at all.
+    #[test]
+    fn a_token_the_vault_never_held_is_redacted_by_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut w = writer(&dir, vec![("team/github/token", "ghp-supersecretvalue")]);
+
+        let detail = w.scrub("upstream rejected glpat-ABCDEFGHIJKLMNOPQRSTU with 401");
+        w.record(&KEY, "read", "team/gitlab/other", "agent", Some(detail))
+            .expect("record");
+
+        let records = w.read_all(&KEY).expect("read");
+        let text = records[0].detail.as_deref().unwrap();
+        assert!(
+            !text.contains("glpat-ABCDEFGHIJKLMNOPQRSTU"),
+            "an unprovisioned token survived into the log: {text}"
+        );
+        assert!(
+            text.contains("[REDACTED:gitlab-pat]"),
+            "the redaction should name the pattern: {text}"
+        );
+    }
+
+    /// A detail with nothing sensitive in it must survive intact.
+    /// An audit trail that mangles its own diagnostics is worse than
+    /// one that is merely incomplete.
+    #[test]
+    fn an_ordinary_detail_is_not_mangled_by_the_catalogue() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = writer(&dir, vec![("team/github/token", "ghp-supersecretvalue")]);
+
+        let text = "resolved from vault at crates/devboy-storage/src/source.rs after 12ms";
+        assert_eq!(w.scrub(text).as_str(), text);
     }
 
     /// The log is encrypted at rest, so no detail text is legible
