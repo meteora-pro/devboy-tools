@@ -2593,7 +2593,15 @@ impl IssueProvider for JiraClient {
     }
 
     async fn get_comments(&self, issue_key: &str) -> Result<ProviderResult<Comment>> {
-        self.get_comments_paginated(issue_key, None, None).await
+        let jira_key = parse_jira_key(issue_key);
+        let url = format!("{}/issue/{}/comment", self.base_url, jira_key);
+        let response: JiraCommentsResponse = self.get(&url).await?;
+        Ok(response
+            .comments
+            .iter()
+            .map(|c| map_comment(c, self.flavor))
+            .collect::<Vec<_>>()
+            .into())
     }
 
     async fn get_comments_paginated(
@@ -2602,6 +2610,10 @@ impl IssueProvider for JiraClient {
         offset: Option<u32>,
         limit: Option<u32>,
     ) -> Result<ProviderResult<Comment>> {
+        if offset.is_none() && limit.is_none() {
+            return self.get_comments(issue_key).await;
+        }
+
         let jira_key = parse_jira_key(issue_key);
         let offset = offset.unwrap_or(0);
         let limit = limit.unwrap_or(20);
@@ -7526,10 +7538,7 @@ mod tests {
             let server = MockServer::start();
 
             server.mock(|when, then| {
-                when.method(GET)
-                    .path("/issue/PROJ-1/comment")
-                    .query_param("startAt", "0")
-                    .query_param("maxResults", "20");
+                when.method(GET).path("/issue/PROJ-1/comment");
                 then.status(200).json_body(serde_json::json!({
                     "startAt": 0,
                     "maxResults": 20,
@@ -7548,7 +7557,9 @@ mod tests {
             });
 
             let client = create_self_hosted_client(&server);
-            let comments = client.get_comments("PROJ-1").await.unwrap().items;
+            let result = client.get_comments("PROJ-1").await.unwrap();
+            assert!(result.pagination.is_none());
+            let comments = result.items;
 
             assert_eq!(comments.len(), 1);
             assert_eq!(comments[0].id, "100");

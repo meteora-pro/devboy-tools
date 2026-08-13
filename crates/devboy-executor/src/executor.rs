@@ -912,7 +912,7 @@ async fn execute_get_issue_comments(
     args: &Value,
 ) -> Result<ToolOutput> {
     let params: GetIssueCommentsParams = serde_json::from_value(args.clone())
-        .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
+        .map_err(|e| Error::InvalidData(format!("invalid get_issue_comments params: {e}")))?;
     let result = provider
         .get_comments_paginated(&params.key, params.offset, params.limit)
         .await?;
@@ -3325,6 +3325,20 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(result, ToolOutput::Comments(v, _) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_get_issue_comments_reports_invalid_params() {
+        let provider = MockProvider;
+        let args = serde_json::json!({"key": "gh#1", "offset": "invalid"});
+        let err = dispatch_tool("get_issue_comments", &args, &provider, None)
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("invalid get_issue_comments params")
+        );
     }
 
     #[tokio::test]
