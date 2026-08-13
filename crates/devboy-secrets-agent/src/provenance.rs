@@ -227,39 +227,40 @@ mod imp {
             let _state = fields.next()?;
             fields.next()?.parse().ok()
         }
+        // No `/proc`. The kernel will still tell a process its own
+        // parent, and that one link is worth having: "the client is
+        // my direct parent" is the shape this check was written
+        // for, and answering it needs no platform-specific API. A
+        // full walk would need `sysctl(KERN_PROC_PID)` — unsafe FFI
+        // this workspace forbids — so anything deeper is honestly
+        // reported as undetermined rather than waved through.
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = pid;
-            None
+            if pid == std::process::id() {
+                Some(nix::unistd::getppid().as_raw() as u32)
+            } else {
+                None
+            }
         }
     }
 
     /// Walk the daemon's own parent chain looking for `client_pid`
     /// (check A).
     ///
+    /// Kept as a `bool` for callers that only care about the
+    /// definite answer. [`ancestry`] is what the connection path
+    /// uses, because "I could not tell" is a third outcome and it
+    /// used to be reported as "not an ancestor".
+    pub fn client_is_ancestor(client_pid: u32, current: u32) -> bool {
+        matches!(ancestry(client_pid, current), Ancestry::Ancestor)
+    }
+
+    /// Walk the chain, distinguishing "no" from "could not tell".
+    ///
     /// A bounded walk: process trees are shallow, and a cycle
     /// would otherwise hang the daemon on every connection.
-    pub fn client_is_ancestor(client_pid: u32, mut current: u32) -> bool {
-        const MAX_DEPTH: usize = 64;
-        for _ in 0..MAX_DEPTH {
-            if current <= 1 {
-                return false;
-            }
-            match parent_of(current) {
-                Some(parent) => {
-                    if parent == client_pid {
-                        return true;
-                    }
-                    current = parent;
-                }
-                // Without a readable parent chain the check cannot
-                // conclude. Returning `false` would silently claim
-                // safety, so callers treat `None` from
-                // `check_ancestry` as "unknown" instead.
-                None => return false,
-            }
-        }
-        false
+    pub fn ancestry(client_pid: u32, current: u32) -> Ancestry {
+        walk_ancestry(client_pid, current, parent_of)
     }
 
     /// Whether this process holds a controlling terminal (check C).
@@ -303,6 +304,13 @@ mod imp {
         false
     }
 
+    /// Same reasoning as [`client_is_ancestor`]: not a failure to
+    /// read the chain, a platform where the chain is not the
+    /// question.
+    pub fn ancestry(_client_pid: u32, _current: u32) -> Ancestry {
+        Ancestry::NotAncestor
+    }
+
     pub fn has_controlling_terminal() -> bool {
         false
     }
@@ -317,7 +325,56 @@ mod imp {
     }
 }
 
-pub use imp::{client_is_ancestor, has_controlling_terminal, parent_of, startup_provenance};
+pub use imp::{
+    ancestry, client_is_ancestor, has_controlling_terminal, parent_of, startup_provenance,
+};
+
+/// What the ancestry walk could establish.
+///
+/// Three outcomes, because the walk has three. Collapsing the
+/// third into "not an ancestor" is how a check that does not run
+/// comes to look like a check that passed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ancestry {
+    /// The client is in the daemon's parent chain.
+    Ancestor,
+    /// The chain was walked to the init system without finding it.
+    NotAncestor,
+    /// The chain became unreadable before reaching the top, so the
+    /// question was never answered either way.
+    Undetermined,
+}
+
+/// The walk itself, over any parent lookup.
+///
+/// Separated from the platform lookup so the traversal can be
+/// tested against a made-up process tree — including trees with
+/// unreadable links and cycles, which are the cases that matter
+/// and the ones a live-process test cannot arrange.
+pub fn walk_ancestry(
+    client_pid: u32,
+    mut current: u32,
+    parent_of: impl Fn(u32) -> Option<u32>,
+) -> Ancestry {
+    const MAX_DEPTH: usize = 64;
+    for _ in 0..MAX_DEPTH {
+        if current <= 1 {
+            return Ancestry::NotAncestor;
+        }
+        match parent_of(current) {
+            Some(parent) => {
+                if parent == client_pid {
+                    return Ancestry::Ancestor;
+                }
+                current = parent;
+            }
+            None => return Ancestry::Undetermined,
+        }
+    }
+    // Depth exhausted: a chain this long is a cycle or a hostile
+    // shape, and either way nothing was established.
+    Ancestry::Undetermined
+}
 
 /// Verdict for a single connection (check A).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -327,10 +384,39 @@ pub enum ConnectionVerdict {
     /// The caller can `ptrace` the daemon. Refuse unless the
     /// override is set.
     CallerIsAncestor,
+    /// The parent chain could not be read far enough to decide.
+    ///
+    /// Its own variant so that "we checked and it was fine" and
+    /// "we could not check" stop being the same answer. Before
+    /// this existed, a `None` from the parent lookup became
+    /// `false` became [`Trusted`], and on every non-Linux UNIX —
+    /// where there is no `/proc` to walk — that was *every*
+    /// connection.
+    ///
+    /// [`Trusted`]: ConnectionVerdict::Trusted
+    Undetermined,
 }
 
 impl ConnectionVerdict {
     /// Whether the connection should be refused.
+    ///
+    /// [`Undetermined`] is allowed through, deliberately. Check A
+    /// exists because Linux's `kernel.yama.ptrace_scope = 1` lets a
+    /// process trace its own descendants — ancestry *is* the
+    /// capability there. The platforms where the walk comes back
+    /// undetermined are the ones without that rule, where being an
+    /// ancestor grants nothing (macOS gates `task_for_pid` behind
+    /// root or a debugger entitlement regardless of kinship). And
+    /// check B, which is fatal and which `getppid` answers
+    /// everywhere, has already refused startup for the
+    /// configuration this would otherwise catch.
+    ///
+    /// So it fails open — but it says so, and [`Undetermined`]
+    /// reaches the log rather than being laundered into
+    /// [`Trusted`].
+    ///
+    /// [`Undetermined`]: ConnectionVerdict::Undetermined
+    /// [`Trusted`]: ConnectionVerdict::Trusted
     pub fn should_refuse(self, override_active: bool) -> bool {
         matches!(self, Self::CallerIsAncestor) && !override_active
     }
@@ -339,16 +425,80 @@ impl ConnectionVerdict {
 /// Check whether `client_pid` is an ancestor of this daemon.
 pub fn check_connection(client_pid: u32) -> ConnectionVerdict {
     let me = std::process::id();
-    if client_is_ancestor(client_pid, me) {
-        ConnectionVerdict::CallerIsAncestor
-    } else {
-        ConnectionVerdict::Trusted
+    match ancestry(client_pid, me) {
+        Ancestry::Ancestor => ConnectionVerdict::CallerIsAncestor,
+        Ancestry::NotAncestor => ConnectionVerdict::Trusted,
+        Ancestry::Undetermined => ConnectionVerdict::Undetermined,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The walk has three outcomes and must report three.
+    ///
+    /// Before this, the unreadable case returned `false` — the same
+    /// value as a completed walk that found nothing. On every
+    /// non-Linux UNIX the parent lookup returned `None` for every
+    /// PID, so the daemon reported *every* connection as `Trusted`
+    /// while check A had not run at all.
+    #[test]
+    fn an_unreadable_chain_is_not_the_same_answer_as_a_clean_walk() {
+        // 900 -> 800 -> 1: walked to the top, client absent.
+        let visible = |pid: u32| match pid {
+            900 => Some(800),
+            800 => Some(1),
+            _ => None,
+        };
+        assert_eq!(walk_ancestry(4242, 900, visible), Ancestry::NotAncestor);
+
+        // The same tree with the second link unreadable.
+        let opaque = |pid: u32| if pid == 900 { Some(800) } else { None };
+        assert_eq!(
+            walk_ancestry(4242, 900, opaque),
+            Ancestry::Undetermined,
+            "an unreadable link must not read as a completed walk"
+        );
+
+        // Nothing readable at all — the non-Linux case as it was.
+        assert_eq!(walk_ancestry(4242, 900, |_| None), Ancestry::Undetermined);
+    }
+
+    #[test]
+    fn a_client_in_the_chain_is_found_at_any_depth() {
+        let tree = |pid: u32| match pid {
+            900 => Some(800),
+            800 => Some(700),
+            700 => Some(1),
+            _ => None,
+        };
+        assert_eq!(walk_ancestry(800, 900, tree), Ancestry::Ancestor);
+        assert_eq!(walk_ancestry(700, 900, tree), Ancestry::Ancestor);
+        assert_eq!(walk_ancestry(999, 900, tree), Ancestry::NotAncestor);
+    }
+
+    /// A cycle must neither hang the daemon nor claim an answer.
+    #[test]
+    fn a_cycle_is_undetermined_rather_than_a_hang() {
+        let cycle = |pid: u32| Some(if pid == 900 { 800 } else { 900 });
+        assert_eq!(walk_ancestry(4242, 900, cycle), Ancestry::Undetermined);
+    }
+
+    /// Undetermined must be visible to the caller, not folded into
+    /// either real answer.
+    #[test]
+    fn undetermined_is_its_own_verdict_and_does_not_refuse() {
+        let v = ConnectionVerdict::Undetermined;
+        assert_ne!(v, ConnectionVerdict::Trusted);
+        assert_ne!(v, ConnectionVerdict::CallerIsAncestor);
+        assert!(
+            !v.should_refuse(false),
+            "ancestry is a Linux ptrace question; refusing everywhere it cannot be read would \
+             take the daemon down on platforms where it grants nothing"
+        );
+        assert!(ConnectionVerdict::CallerIsAncestor.should_refuse(false));
+    }
 
     #[test]
     fn trust_level_wire_names_are_stable() {

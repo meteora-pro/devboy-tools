@@ -256,6 +256,18 @@ impl AgentListener {
         // user.
         if let Some(client_pid) = cred.pid() {
             let verdict = crate::provenance::check_connection(client_pid as u32);
+            if verdict == crate::provenance::ConnectionVerdict::Undetermined {
+                // Allowed through — see `should_refuse` for why the
+                // platforms that land here are the ones where
+                // ancestry grants nothing. Logged because a check
+                // that silently does not run is worse than one that
+                // is honestly absent.
+                tracing::warn!(
+                    peer_pid = client_pid,
+                    "could not read this daemon's parent chain far enough to tell whether the \
+                     caller is an ancestor; check A did not run for this connection"
+                );
+            }
             if verdict.should_refuse(crate::provenance::insecure_override_active()) {
                 return Err(AgentError::CallerIsAncestor {
                     peer_pid: client_pid as u32,
