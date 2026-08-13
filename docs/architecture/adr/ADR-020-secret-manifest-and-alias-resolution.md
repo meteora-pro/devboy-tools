@@ -337,13 +337,25 @@ Four substitution points are supported:
   Direct argv substitution is the fallback for tools that accept
   secrets only in argv, and is documented as such.
 
-- **HTTP through the local proxy.** The MCP proxy already mediates
-  outgoing HTTP for some flows. When it sees an outgoing
-  `Authorization: Bearer @secret:<path>` (or another whitelisted
-  header pattern), it rewrites the value to the resolved secret
-  before forwarding. The agent that constructed the request never
-  saw the value; the request as logged through transcript shows the
-  alias.
+- **HTTP through the local proxy.** *(Specified and implemented as a
+  primitive; not reachable today — see the note below.)* The MCP
+  proxy already mediates outgoing HTTP for some flows. When it sees an
+  outgoing `Authorization: Bearer @secret:<path>` (or another
+  whitelisted header pattern), it rewrites the value to the resolved
+  secret before forwarding. The agent that constructed the request
+  never saw the value; the request as logged through transcript shows
+  the alias.
+
+  **Status.** `devboy_mcp::proxy_secrets::rewrite_outgoing_headers`
+  implements exactly this and is fully tested, but nothing calls it,
+  and nothing can: no shipped tool lets an agent supply HTTP headers.
+  The proxy builds its own `Authorization` from a token the CLI
+  resolved before connecting, so there is no alias for the rewriter to
+  find. This bullet therefore describes a *prepared* channel, not a
+  live protection — do not count it when reasoning about what an agent
+  can currently reach. It becomes live the day a tool accepts
+  caller-supplied headers, and that tool must route through the
+  rewriter rather than around it.
 
 - **MCP tool requests from agents.** An agent that needs a value to
   perform a high-level operation calls a typed MCP tool. Per

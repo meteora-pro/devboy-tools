@@ -34,14 +34,32 @@
 //! they contain a valid-looking alias. This is by design: the
 //! whitelist is the security boundary, not the alias syntax.
 //!
-//! ## What this module does **not** do
+//! ## Nothing calls this yet, and nothing can
 //!
-//! - Wire into [`proxy::McpProxyClient::connect`](crate::proxy::McpProxyClient::connect)
-//!   or [`call_tool`](crate::proxy::McpProxyClient::call_tool). The
-//!   builder there constructs its `Authorization` header from a
-//!   pre-resolved `SecretString`; once a resolver is plumbed
-//!   through the connect path, this module's helper drops in.
-//! - Resolve aliases against a router. The
+//! Stated at the top rather than buried, because a security helper
+//! that looks live and is not is worse than one that is absent.
+//!
+//! No shipped tool accepts HTTP headers from an agent. The proxy
+//! builds its own `Authorization` from a token the CLI resolved
+//! before connecting, so no `@secret:` alias ever reaches a header
+//! for this code to rewrite. There is no missing wire here — there is
+//! a missing *consumer*, and inventing one (a tool that forwards
+//! caller-supplied headers) is a feature decision with its own risks,
+//! not a loose end to tidy.
+//!
+//! What that means in practice:
+//!
+//! - Do not count this bullet of [ADR-020] §5 when reasoning about
+//!   what an agent can currently reach. The ADR says so too.
+//! - The day a tool does accept caller-supplied headers, it must
+//!   route through [`rewrite_outgoing_headers`] rather than around
+//!   it. That is the whole reason this is kept rather than deleted:
+//!   the rule is written down and tested, so the future tool inherits
+//!   it instead of re-deciding it.
+//!
+//! ## Also not done here
+//!
+//! - Resolving aliases against a router. The
 //!   [`SecretResolver`] trait is the boundary; tests pass a
 //!   `HashMap`-backed mock.
 //!
