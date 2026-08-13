@@ -619,6 +619,68 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_jsonl_reports_ten_known_leaks_with_expected_severities() {
+        let dir = TempDir::new().expect("temp directory");
+        let path = dir.path().join("known-leaks.jsonl");
+        let records = [
+            serde_json::json!({"aws_key": "AKIAIOSFODNN7EXAMPLE"}),
+            serde_json::json!({"openai_key": "sk-proj-abcdefghijklmnopqrstuvwx"}),
+            serde_json::json!({"gitlab_pat": "glpat-abcdefghij_KLMNOPQRSTU"}),
+            serde_json::json!({"gitlab_deploy": "gldt-abcdefghij_KLMNOPQRSTU"}),
+            serde_json::json!({"private_key": "-----BEGIN DSA PRIVATE KEY-----"}),
+            serde_json::json!({"stripe_key": concat!("sk_li", "ve_abcdefghijklmnopqrstuvwx")}),
+            serde_json::json!({"email": "person@example.test"}),
+            serde_json::json!({"phone": "+352 621 123 456"}),
+            serde_json::json!({"path": "C:\\Users\\person\\project\\trace.jsonl"}),
+            serde_json::json!({"unknown": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+        ];
+        let jsonl = records
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("JSON fixture")
+            .join("\n");
+        fs::write(&path, format!("{jsonl}\n")).expect("write JSONL fixture");
+
+        let catalogue = Catalogue::builtins_only();
+        let scanner = Scanner::new(&catalogue);
+        let result = scan_input(&scanner, &path.display().to_string(), ScanFormat::Auto)
+            .expect("scan synthetic JSONL");
+
+        assert_eq!(result.files, 1);
+        assert_eq!(result.report.summary.records, 10);
+        assert_eq!(result.report.summary.findings_total, 10);
+        assert_eq!(result.report.summary.high, 6);
+        assert_eq!(result.report.summary.medium, 3);
+        assert_eq!(result.report.summary.low, 1);
+
+        let categories = result
+            .report
+            .findings
+            .iter()
+            .map(|finding| finding.category.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            categories,
+            std::collections::BTreeSet::from([
+                "aws-access-key",
+                "openai-key",
+                "gitlab-pat",
+                "gitlab-deploy-token",
+                "private-key-generic",
+                "stripe-live-secret",
+                "pii-email",
+                "pii-phone",
+                "file-path",
+                "generic-bearer",
+            ])
+        );
+        let rendered = serde_json::to_string(&result.report).expect("serialize report");
+        assert!(!rendered.contains("person@example.test"));
+        assert!(!rendered.contains("abcdefghij_KLMNOPQRSTU"));
+    }
+
+    #[test]
     fn sqlite_input_scans_json_columns_with_a_row_identifier() {
         let dir = TempDir::new().expect("temp directory");
         let path = dir.path().join("otel.db");

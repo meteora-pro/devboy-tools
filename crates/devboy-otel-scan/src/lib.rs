@@ -317,27 +317,40 @@ fn scan_text(
 ) {
     // Catalogue regexes validate a full secret. Feed the complete scalar first
     // (private keys and URLs), then shell/JSON-shaped tokens within it.
-    let mut candidates = vec![text];
-    candidates.extend(text.split(|c: char| {
+    let whole_candidate = text.trim_matches(|c: char| matches!(c, '=' | ':' | '`' | '.'));
+    scan_candidate(patterns, context, path, whole_candidate, report);
+
+    for candidate in text.split(|c: char| {
         c.is_whitespace()
             || matches!(
                 c,
                 ',' | ';' | '\'' | '"' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
             )
-    }));
-
-    for candidate in candidates {
+    }) {
         let candidate = candidate.trim_matches(|c: char| matches!(c, '=' | ':' | '`' | '.'));
-        if candidate.is_empty() {
+        if candidate.is_empty() || candidate == whole_candidate {
             continue;
         }
-        for pattern in patterns {
-            if pattern.format_regex().is_match(candidate) {
-                push_finding(report, context, path, candidate, *pattern);
-            }
-        }
+        scan_candidate(patterns, context, path, candidate, report);
     }
     scan_heuristics(context, path, text, report);
+}
+
+fn scan_candidate(
+    patterns: &[&dyn SecretPattern],
+    context: &ScanContext,
+    path: &str,
+    candidate: &str,
+    report: &mut ScanReport,
+) {
+    if candidate.is_empty() {
+        return;
+    }
+    for pattern in patterns {
+        if pattern.format_regex().is_match(candidate) {
+            push_finding(report, context, path, candidate, *pattern);
+        }
+    }
 }
 
 fn scan_heuristics(context: &ScanContext, path: &str, text: &str, report: &mut ScanReport) {
