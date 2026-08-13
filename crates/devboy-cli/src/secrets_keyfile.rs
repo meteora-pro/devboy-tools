@@ -126,7 +126,36 @@ fn run_add(args: AddArgs) -> Result<()> {
 
     let bound = binding_of(&vault_path).unwrap_or(None);
     println!("{}", enrolment_message(&target, bound.as_deref()));
+
+    if let Some(warning) = fingerprint_source_warning(
+        devboy_vault_crypto::fingerprint::machine_fingerprint().map(|f| f.source()),
+    ) {
+        eprintln!("\n{warning}");
+    }
     Ok(())
+}
+
+/// Warn when the binding followed an environment variable rather
+/// than the machine.
+///
+/// `DEVBOY_MACHINE_ID` exists so the cross-machine behaviour can be
+/// tested. If it happens to be set in the shell that runs `keyfile
+/// add`, the envelope is bound to a value that lives in *that
+/// shell's environment* — and the daemon, started by systemd or
+/// launchd without it, will not reproduce it. The unlock then fails
+/// with "the machine has changed" on a machine that has not changed.
+///
+/// Silently correct-looking and broken at the worst moment is the
+/// exact failure this whole epic keeps finding, so it is said out
+/// loud at the one moment someone can act on it.
+pub fn fingerprint_source_warning(source: Option<&str>) -> Option<String> {
+    (source == Some("environment override")).then(|| {
+        "warning: DEVBOY_MACHINE_ID is set, so this keyfile is bound to that variable's value \
+         rather than to this machine. A daemon started without the same variable — which is what \
+         systemd and launchd do — will refuse to unlock, reporting that the machine changed. \
+         Unset it and re-run `devboy secrets keyfile add` unless you meant this."
+            .to_string()
+    })
 }
 
 fn run_status() -> Result<()> {
@@ -366,6 +395,27 @@ mod tests {
     fn the_enrolment_message_names_the_file() {
         let msg = enrolment_message(Path::new("/tmp/x/vault.key"), Some("machine-v1"));
         assert!(msg.contains("/tmp/x/vault.key"), "{msg}");
+    }
+
+    /// A binding that follows an environment variable is not a
+    /// machine binding, and the daemon will not have that variable.
+    #[test]
+    fn an_environment_override_is_warned_about() {
+        let w = fingerprint_source_warning(Some("environment override")).expect("must warn");
+        assert!(w.contains("DEVBOY_MACHINE_ID"), "{w}");
+        assert!(
+            w.contains("systemd"),
+            "the warning has to name where it breaks: {w}"
+        );
+    }
+
+    /// The ordinary case must stay quiet, or the warning becomes
+    /// noise and stops being read.
+    #[test]
+    fn a_real_machine_id_produces_no_warning() {
+        assert!(fingerprint_source_warning(Some("/etc/machine-id")).is_none());
+        assert!(fingerprint_source_warning(Some("IOPlatformUUID")).is_none());
+        assert!(fingerprint_source_warning(None).is_none());
     }
 
     #[test]

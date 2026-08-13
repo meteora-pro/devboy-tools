@@ -225,3 +225,29 @@ fn removing_un_enrols_the_keyfile() {
         "the un-enrolled keyfile still opens the vault"
     );
 }
+
+/// A binding that follows `DEVBOY_MACHINE_ID` is not a machine
+/// binding: the daemon, started by systemd without that variable,
+/// will refuse to unlock and report that the machine changed. The
+/// one moment anyone can act on that is here.
+#[test]
+fn enrolling_under_a_machine_id_override_warns() {
+    let env = Env::new();
+    let out = Command::new(devboy_bin())
+        .args(["secrets", "keyfile", "add"])
+        .env("HOME", env.home.path())
+        .env("XDG_CONFIG_HOME", env.home.path().join("config"))
+        .env("XDG_STATE_HOME", env.home.path().join("state"))
+        .env("DEVBOY_VAULT_PATH", &env.vault)
+        .env("DEVBOY_VAULT_PASSPHRASE", PASSPHRASE)
+        .env("DEVBOY_MACHINE_ID", "a-value-from-this-shell-only")
+        .output()
+        .expect("run devboy");
+
+    assert!(out.status.success(), "{}", stdout(&out));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("DEVBOY_MACHINE_ID"),
+        "the trap must be named where someone can act on it: {stderr}"
+    );
+}
