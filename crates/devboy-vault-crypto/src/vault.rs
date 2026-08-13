@@ -228,6 +228,23 @@ pub enum VaultError {
     #[error("could not derive the audit-log key")]
     AuditKeyDerivation,
 
+    /// The file changed since this handle opened it.
+    ///
+    /// Refused rather than reconciled. A mutation rewrites the whole
+    /// file from memory, so continuing would delete the other
+    /// writer's change with no trace that it ever existed — and the
+    /// other writer is usually the person at the keyboard running
+    /// `devboy secrets restore` against a vault the daemon holds
+    /// open.
+    #[error(
+        "{path} changed on disk since it was opened, and writing now would erase that change. \
+         If a secrets daemon is running, lock and unlock it to pick up the new file, then retry"
+    )]
+    ChangedOnDisk {
+        /// The vault file whose contents moved.
+        path: PathBuf,
+    },
+
     /// `Vault::open` could not find an envelope of the requested kind
     /// in the file. The caller asked for a passphrase unlock but the
     /// vault has only a recovery envelope, for example.
@@ -286,6 +303,17 @@ pub struct Vault {
     /// in-flight operations coalesce naturally even though current
     /// call sites only touch one entry at a time.
     pending_ciphertexts_for_persist: BTreeMap<(String, u64), Vec<u8>>,
+    /// Digest of the file's bytes as they were when this handle last
+    /// agreed with the disk.
+    ///
+    /// Every mutation rewrites the whole file from this handle's own
+    /// memory, so a second writer's work is erased by whatever this
+    /// one does next. That second writer is not hypothetical: the
+    /// daemon holds a vault open for the whole unlock window while
+    /// `devboy secrets restore`, `purge`, `keyfile add` and `totp
+    /// enrol` open the same file themselves. Comparing this before
+    /// overwriting turns a silent revert into a refusal.
+    disk_fingerprint: [u8; 32],
 }
 
 impl std::fmt::Debug for Vault {
@@ -356,6 +384,7 @@ impl Vault {
             file,
             vault_key: SecretBox::new(Box::new(vault_key_bytes)),
             pending_ciphertexts_for_persist: BTreeMap::new(),
+            disk_fingerprint: Self::fingerprint_on_disk(path),
         };
         Ok(CreateOutcome {
             vault,
@@ -413,6 +442,7 @@ impl Vault {
             file,
             vault_key: SecretBox::new(Box::new(key_array)),
             pending_ciphertexts_for_persist: BTreeMap::new(),
+            disk_fingerprint: Self::fingerprint_on_disk(path),
         })
     }
 
@@ -428,7 +458,7 @@ impl Vault {
         getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
         let env = create_recovery_envelope(self.vault_key.expose_secret(), &phrase, salt)?;
         self.file.envelopes.push(env);
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(phrase)
     }
 
@@ -446,7 +476,7 @@ impl Vault {
         getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
         let env = create_totp_envelope(self.vault_key.expose_secret(), totp_secret, salt)?;
         self.file.envelopes.push(env);
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(())
     }
 
@@ -470,7 +500,7 @@ impl Vault {
             .envelopes
             .retain(|e| !matches!(e, Envelope::Keyfile { .. }));
         self.file.envelopes.push(env);
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(())
     }
 
@@ -502,7 +532,7 @@ impl Vault {
         self.file
             .envelopes
             .retain(|e| !matches!(e, Envelope::Keyfile { .. }));
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(true)
     }
 
@@ -967,7 +997,48 @@ impl Vault {
     /// Building from a single in-memory map of pending ciphertexts
     /// plus the existing blob region keeps deletes from leaving
     /// stale bytes on disk.
+    /// Digest of whatever is at `path` right now.
+    ///
+    /// A missing file hashes as empty rather than erroring: the
+    /// interesting comparison is "is this still what I loaded", and
+    /// a vault that vanished is emphatically not.
+    fn fingerprint_on_disk(path: &Path) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(path).unwrap_or_default();
+        Sha256::digest(&bytes).into()
+    }
+
+    /// Write this handle's image out, refusing if the disk moved.
+    ///
+    /// Every path that touches the file goes through here — the
+    /// envelope-adding methods write directly rather than via
+    /// `persist`, and a guard on `persist` alone would leave
+    /// `keyfile add` and `totp enrol` able to erase a concurrent
+    /// change.
+    fn write_through(&mut self) -> Result<(), VaultError> {
+        self.ensure_disk_unchanged()?;
+        self.file.write_file_atomic(&self.path)?;
+        self.disk_fingerprint = Self::fingerprint_on_disk(&self.path);
+        Ok(())
+    }
+
+    /// Refuse to overwrite work this handle never saw.
+    fn ensure_disk_unchanged(&self) -> Result<(), VaultError> {
+        if Self::fingerprint_on_disk(&self.path) != self.disk_fingerprint {
+            return Err(VaultError::ChangedOnDisk {
+                path: self.path.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn persist(&mut self) -> Result<(), VaultError> {
+        // Checked here as well as in `write_through`, so the refusal
+        // lands before the new image is built rather than after. The
+        // cost is one extra read of a small file on a path that
+        // already writes one.
+        self.ensure_disk_unchanged()?;
+
         let mut new_blobs: Vec<u8> = Vec::with_capacity(self.file.ciphertext_blobs.len());
         let mut new_entries: Vec<EntryMeta> = Vec::with_capacity(self.file.entries.len());
 
@@ -1004,7 +1075,7 @@ impl Vault {
 
         self.file.entries = new_entries;
         self.file.ciphertext_blobs = new_blobs;
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(())
     }
 }
@@ -1153,6 +1224,82 @@ mod tests {
     }
 
     // -- put / get / list / delete -----------------------------------------
+
+    /// A second writer's change must not be silently erased.
+    ///
+    /// Every mutation rewrites the whole file from the handle's own
+    /// memory. The daemon keeps a vault open for the length of an
+    /// unlock window, while `devboy secrets restore`, `purge`,
+    /// `keyfile add` and `totp enrol` open the same file themselves.
+    /// Whichever wrote first used to lose, without an error and
+    /// without a trace.
+    #[test]
+    fn a_write_refuses_once_someone_else_has_changed_the_file() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut long_lived = Vault::create(&path, fast_init("p")).unwrap().vault;
+        long_lived
+            .put("team/api/one", &val("first"), meta())
+            .unwrap();
+
+        // Someone else opens the same file and writes to it — the
+        // CLI, while the daemon holds the vault above.
+        {
+            let mut other = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
+            other.put("team/api/two", &val("second"), meta()).unwrap();
+        }
+
+        let err = long_lived
+            .put("team/api/three", &val("third"), meta())
+            .expect_err("the file moved under this handle");
+        assert!(matches!(err, VaultError::ChangedOnDisk { .. }), "{err:?}");
+
+        // And the other writer's work is still there.
+        let reopened = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
+        assert!(
+            reopened.get("team/api/two").unwrap().is_some(),
+            "the concurrent write survived"
+        );
+    }
+
+    /// The guard must cover the envelope-adding methods too: those
+    /// write the file directly rather than through `persist`.
+    #[test]
+    fn adding_an_envelope_refuses_on_a_changed_file_as_well() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut long_lived = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        {
+            let mut other = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
+            other.put("team/api/two", &val("second"), meta()).unwrap();
+        }
+
+        let err = long_lived
+            .add_totp_envelope(&[7u8; 32])
+            .expect_err("this writes the file too");
+        assert!(matches!(err, VaultError::ChangedOnDisk { .. }), "{err:?}");
+    }
+
+    /// A handle that is the only writer must keep working — the
+    /// guard has to notice its own writes.
+    #[test]
+    fn repeated_writes_from_one_handle_are_fine() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        for n in 0..4 {
+            vault
+                .put(
+                    &format!("team/api/{n}"),
+                    &val("value"),
+                    EntryMetadata::default(),
+                )
+                .expect("a handle must not trip over its own writes");
+        }
+        assert_eq!(vault.paths().count(), 4);
+    }
 
     #[test]
     fn put_then_get_roundtrips() {
