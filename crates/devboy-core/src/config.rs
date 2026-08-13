@@ -324,12 +324,36 @@ impl SecretsProfile {
         }
     }
 
-    /// Whether this profile forces every path to `per-call`
-    /// approval regardless of its manifest setting. This is the
-    /// part of `strict` that is not merely "smaller numbers" —
-    /// it is the only mitigation for an agent waiting out a
-    /// legitimate unlock.
-    pub fn forces_per_call_approval(self) -> bool {
+    /// Whether this profile *intends* every path to require per-use
+    /// approval, regardless of its manifest setting.
+    ///
+    /// # Not enforced in this build, and deliberately so
+    ///
+    /// Nothing consults this when deciding whether a resolve needs
+    /// approval — [`crate::secret_approval::SessionApprovalCache::evaluate`]
+    /// takes the per-path policy and only that. Reported here rather
+    /// than quietly wired up, because wiring it would be wrong twice
+    /// over:
+    ///
+    /// - There is no mechanism in this build for collecting a per-use
+    ///   approval. A path carrying `session` or `per-call` cannot be
+    ///   resolved at all — `doctor` reports exactly that as an error.
+    ///   Forcing the policy onto every path would therefore make
+    ///   every secret unresolvable, not more carefully guarded.
+    /// - The model was decided against. A human unlocks the vault
+    ///   once and the agent works within that window; where a second
+    ///   factor is wanted, TOTP re-unlock provides it. Prompting per
+    ///   secret is not the shape of this system.
+    ///
+    /// What `strict` actually does is real and enforced: a shorter
+    /// unlock window, a lower ceiling on any single unlock, and idle
+    /// re-locking. Those are "smaller numbers", and smaller numbers
+    /// are the mitigation.
+    ///
+    /// Kept as a predicate rather than deleted so the intent stays
+    /// visible if per-use approval is ever built — but callers must
+    /// not present it as a live control.
+    pub fn intends_per_call_approval(self) -> bool {
         matches!(self, Self::Strict)
     }
 
@@ -2352,13 +2376,35 @@ mod secrets_config_tests {
         assert_eq!(config.unlock_ttl_seconds(), 15 * 60);
         assert_eq!(config.max_unlock_ttl_seconds(), 60 * 60);
         assert_eq!(config.idle_relock_seconds(), Some(5 * 60));
-        assert!(SecretsProfile::Strict.forces_per_call_approval());
+        assert!(SecretsProfile::Strict.intends_per_call_approval());
         assert!(SecretsProfile::Strict.requires_prompt_surface());
+    }
+
+    /// The predicate states an intent, not an enforced control, and
+    /// the difference matters: nothing consults it when deciding
+    /// whether a resolve needs approval. A test that asserted it
+    /// "forces" anything was describing a guarantee the code does
+    /// not make.
+    #[test]
+    fn the_strict_profile_does_not_actually_gate_a_resolve() {
+        use crate::secret_approval::{ApprovalGate, ApproveOnUsePolicy, SessionApprovalCache};
+
+        assert!(SecretsProfile::Strict.intends_per_call_approval());
+
+        // A path whose own policy is `never` resolves without a
+        // prompt no matter which profile is selected.
+        let cache = SessionApprovalCache::new();
+        assert_eq!(
+            cache.evaluate("team/prod/db-password", ApproveOnUsePolicy::Never),
+            ApprovalGate::NotRequired,
+            "if this ever changes, the profile has become a live control and the docs on \
+             `intends_per_call_approval` must be rewritten"
+        );
     }
 
     #[test]
     fn convenient_profile_does_not_force_approval_or_prompt_surface() {
-        assert!(!SecretsProfile::Convenient.forces_per_call_approval());
+        assert!(!SecretsProfile::Convenient.intends_per_call_approval());
         assert!(!SecretsProfile::Convenient.requires_prompt_surface());
     }
 

@@ -176,7 +176,11 @@ impl DiagnosticCheck for SecretsModeCheck {
                     "unlock_ttl_seconds": config.unlock_ttl_seconds(),
                     "max_unlock_ttl_seconds": config.max_unlock_ttl_seconds(),
                     "idle_relock_seconds": config.idle_relock_seconds(),
-                    "forces_per_call_approval": profile.forces_per_call_approval(),
+                    // Named for what it is: an intent this build does
+                    // not enforce. Reporting it as `forces_…` told
+                    // users the strict profile was gating every
+                    // access when nothing consulted it.
+                    "intends_per_call_approval_not_enforced": profile.intends_per_call_approval(),
                 },
                 "notes": notes,
                 "config_warnings": config_warnings,

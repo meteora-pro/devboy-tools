@@ -569,7 +569,7 @@ impl devboy_core::config::SecretsProfile
 pub fn devboy_core::config::SecretsProfile::default_idle_relock_seconds(self) -> core::option::Option<u64>
 pub fn devboy_core::config::SecretsProfile::default_max_unlock_ttl_seconds(self) -> u64
 pub fn devboy_core::config::SecretsProfile::default_unlock_ttl_seconds(self) -> u64
-pub fn devboy_core::config::SecretsProfile::forces_per_call_approval(self) -> bool
+pub fn devboy_core::config::SecretsProfile::intends_per_call_approval(self) -> bool
 pub fn devboy_core::config::SecretsProfile::requires_prompt_surface(self) -> bool
 impl core::clone::Clone for devboy_core::config::SecretsProfile
 pub fn devboy_core::config::SecretsProfile::clone(&self) -> devboy_core::config::SecretsProfile
