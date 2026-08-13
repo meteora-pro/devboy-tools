@@ -481,10 +481,11 @@ same `vault_key`.
 #### File layout
 
 `~/.devboy/secrets/audit-log.dvb` (separate file, same key). Format mirrors
-the vault's AEAD approach: a plaintext header (`AUDIT1`, version, entry count
-for truncation detection), a plaintext per-entry index (`seq → { nonce,
-ct_offset }`, so each entry's sequence number and nonce are available without
-decrypting the body), followed by contiguous per-entry ciphertexts, each
+the vault's AEAD approach: a plaintext header (`AUDIT1`, version, entry count,
+and a nonce + tag committing to that count and the whole index), a plaintext
+per-entry index (`seq → { nonce, ct_offset }`, so each entry's sequence number
+and nonce are available without decrypting the body), followed by contiguous
+per-entry ciphertexts, each
 
 ```
 XChaCha20-Poly1305(
@@ -501,10 +502,34 @@ XChaCha20-Poly1305(
 available verbatim at decrypt time). Per-entry AEAD with the plaintext
 sequence number in AAD gives tamper evidence: a splice of one entry's
 ciphertext under another's index fails decryption, because the AAD `seq` no
-longer matches. There is no
-whole-file Merkle tree; truncation is detected by the entry-count header, and
-the threat model already grants single-writer (the daemon) and filesystem
-permissions.
+longer matches.
+
+Truncation needs more than the entry-count header, which was the original
+plan here. The count is plaintext, so an attacker who can write to the file
+can drop the last index entry and its ciphertext, decrement the count, and
+leave a log that reads back as valid with the incriminating tail gone. Format
+version 2 therefore commits to the count **and the whole index** with an AEAD
+tag under `vault_key`:
+
+```
+XChaCha20-Poly1305(
+  plaintext       = <empty>,
+  key             = vault_key,
+  nonce           = header.c_nonce,
+  associated_data = "audit-index-v2:" || count || ":" || hex(SHA-256(index))
+)
+```
+
+Appending verifies the existing commitment before writing a new one, so an
+ordinary later write cannot re-sign a doctored file into one that verifies.
+There is still no whole-file Merkle tree, and none is needed: the index is
+rewritten on every append anyway, so committing to all of it costs one tag.
+
+What remains outside the format: deletion of the file, rollback to an older
+copy, and truncation all the way back to empty (an empty log has no
+commitment — there is nothing to commit to, and the file is created before a
+key exists). All three are the same shape — a file cannot testify to its own
+absence — and closing them needs an anchor the attacker cannot reach.
 
 #### `vault_log_append` MCP tool and the enforced scrub
 

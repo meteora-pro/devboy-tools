@@ -20,6 +20,8 @@
 //!   MAGIC        [6]   = b"AUDIT1"
 //!   VERSION      [2]   = u16 LE
 //!   COUNT        [8]   = u64 LE — records written so far
+//!   C_NONCE      [24]  = nonce of the header+index commitment
+//!   C_TAG        [16]  = its Poly1305 tag
 //!   INDEX        [COUNT × 36]
 //!       seq      [8]   = u64 LE
 //!       nonce    [24]
@@ -38,31 +40,32 @@
 //! - **Splicing.** AAD is `b"audit-v1" || seq`, so a record moved
 //!   to a different index no longer decrypts. Reordering, copying a
 //!   record over another, and re-using an old record all fail.
-//! - **Truncation without a header rewrite.** `COUNT` is written in
-//!   the header, so lopping records off the end and leaving the
-//!   header alone is visible. That covers a careless truncation — a
-//!   crash mid-write, a partial copy, a naive `head -c`.
+//! - **Truncation, careless or deliberate.** `COUNT` and the whole
+//!   index are covered by an AEAD tag in the header, computed under
+//!   the same key the records use. Dropping the last index entry and
+//!   its ciphertext no longer helps: adjusting `COUNT` to match is
+//!   what the tag is over. Removing one from the middle fails the
+//!   same way.
 //!
-//!   It does **not** cover a deliberate one. `COUNT` is plaintext and
-//!   unauthenticated, and each record's AAD binds only its own `seq`.
-//!   An attacker who can write to this file — the same attacker the
-//!   splice protection is aimed at — can delete the last index entry
-//!   and the last ciphertext, decrement `COUNT`, and the result reads
-//!   back as a valid log with one fewer record. The incriminating
-//!   tail disappears without a trace.
+//!   In v1 this was open, and the docs here said so: `COUNT` was
+//!   plaintext, each record's AAD bound only its own `seq`, and an
+//!   attacker who could write to the file could make the
+//!   incriminating tail disappear leaving a log that read back
+//!   clean. That is what the version bump is for.
 //!
-//!   Closing that needs the header itself authenticated under the
-//!   vault key, which is a format change and is tracked separately.
-//!   Until then, do not treat this log as evidence that *nothing
-//!   else happened* — only as evidence that what it does contain,
-//!   happened.
+//!   Appending verifies before it writes, so an ordinary later write
+//!   cannot re-sign a doctored file into one that verifies.
 //! - **Editing.** Any change to a ciphertext fails its Poly1305
 //!   tag.
 //!
-//! What it does **not** catch is deletion of the whole file, or a
-//! rollback to an older copy of it. Detecting that needs state kept
-//! somewhere the attacker cannot reach, which is a different
-//! problem from this one.
+//! What it does **not** catch is deletion of the whole file, a
+//! rollback to an older copy of it, or truncation all the way back
+//! to empty — an empty log carries no commitment, because there is
+//! nothing to commit to and the file is created before any key
+//! exists. All three are the same shape: the file cannot testify to
+//! its own absence. Detecting them needs state kept somewhere the
+//! attacker cannot reach, which is a different problem from this
+//! one.
 
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -70,13 +73,18 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::aead::{self, AeadError, KEY_LEN, NONCE_LEN};
+use crate::aead::{self, AeadError, KEY_LEN, NONCE_LEN, TAG_LEN};
 
 /// File magic.
 pub const MAGIC: &[u8; 6] = b"AUDIT1";
 
 /// Format version.
-pub const VERSION: u16 = 1;
+///
+/// Bumped to 2 when the header and index gained an
+/// authentication tag. A v1 file is refused rather than read: its
+/// `COUNT` was unauthenticated, so reading one would mean trusting
+/// the number this version exists to stop trusting.
+pub const VERSION: u16 = 2;
 
 /// AAD prefix. Combined with the record's sequence number so a
 /// record cannot be moved to another position.
@@ -85,8 +93,32 @@ const AAD_PREFIX: &[u8] = b"audit-v1";
 /// Bytes per index entry: seq(8) + nonce(24) + length(4).
 const INDEX_ENTRY_LEN: usize = 8 + NONCE_LEN + 4;
 
-/// Header length: magic(6) + version(2) + count(8).
-const HEADER_LEN: usize = 6 + 2 + 8;
+/// Header length: magic(6) + version(2) + count(8) + nonce(24) +
+/// tag(16).
+const HEADER_LEN: usize = 6 + 2 + 8 + NONCE_LEN + TAG_LEN;
+
+/// AAD prefix for the header+index commitment.
+///
+/// Distinct from [`AAD_PREFIX`] so a record's tag can never be
+/// mistaken for the commitment's, or the reverse.
+const COMMITMENT_PREFIX: &str = "audit-index-v2";
+
+/// The AAD the commitment tag is computed over.
+///
+/// A digest of the index rather than the index itself, because the
+/// AEAD helpers take AAD as a `&str` and the index is arbitrary
+/// bytes. SHA-256 is second-preimage resistant, so committing to
+/// the digest commits to the bytes.
+fn commitment_aad(count: u64, index: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(index);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{byte:02x}");
+    }
+    format!("{COMMITMENT_PREFIX}:{count}:{hex}")
+}
 
 /// Things that can go wrong reading or writing the log.
 #[derive(Debug, Error)]
@@ -132,6 +164,36 @@ pub enum AuditError {
         seq: u64,
     },
 
+    /// The header + index commitment did not verify.
+    ///
+    /// Mainly the deliberate-truncation case: someone dropped
+    /// records and adjusted `COUNT` to match. The tag covers both,
+    /// so a consistent-looking pair is no longer enough.
+    ///
+    /// A wrong key looks the same from here, exactly as it does for
+    /// [`AuditError::RecordCorrupt`] — an unverified tag says the
+    /// key and the bytes disagree, not which of them moved.
+    #[error(
+        "audit log header does not verify: records have been removed, the index edited, or the \
+         log was written under a different key. It is not evidence of anything in this state"
+    )]
+    IndexTampered,
+
+    /// Sequence numbers are not 0, 1, 2, … in order.
+    ///
+    /// Not an attacker's doing: rearranging the index breaks the
+    /// header commitment first, and forging that needs the key. This
+    /// catches *our own* writer — each record's AAD binds only its
+    /// own `seq`, so a numbering bug would produce a log that
+    /// decrypts perfectly and reads back in the wrong order.
+    #[error("audit log is missing record {expected}: the index jumps to {found}")]
+    SequenceGap {
+        /// The sequence number this position should hold.
+        expected: u64,
+        /// What the index says instead.
+        found: u64,
+    },
+
     /// Crypto layer failure.
     #[error("audit crypto error: {0}")]
     Aead(#[from] AeadError),
@@ -174,6 +236,12 @@ pub struct AuditRecord {
 pub struct AuditLog {
     path: PathBuf,
     count: u64,
+    /// Nonce and tag committing to `count` and the index region.
+    ///
+    /// Read without a key — verifying it needs one, which arrives
+    /// with each [`AuditLog::append`] / [`AuditLog::read_all`].
+    commitment_nonce: [u8; NONCE_LEN],
+    commitment_tag: Vec<u8>,
 }
 
 impl AuditLog {
@@ -187,29 +255,51 @@ impl AuditLog {
             file.write_all(MAGIC)?;
             file.write_all(&VERSION.to_le_bytes())?;
             file.write_all(&0u64.to_le_bytes())?;
+            // An empty log has nothing to commit to, and creation
+            // has no key to commit with. Zeroes hold the space; the
+            // first append writes a real tag.
+            file.write_all(&[0u8; NONCE_LEN])?;
+            file.write_all(&[0u8; TAG_LEN])?;
             file.sync_all()?;
             restrict_permissions(path)?;
             return Ok(Self {
                 path: path.to_path_buf(),
                 count: 0,
+                commitment_nonce: [0u8; NONCE_LEN],
+                commitment_tag: vec![0u8; TAG_LEN],
             });
         }
 
         let mut file = std::fs::File::open(path)?;
-        let mut header = [0u8; HEADER_LEN];
-        file.read_exact(&mut header)?;
-        if &header[..6] != MAGIC {
+
+        // Magic and version first, from their own short read. The
+        // rest of the header is only meaningful once the version is
+        // known, and a file too small to hold a v2 header should say
+        // "not an audit log" rather than "unexpected end of file".
+        let mut prelude = [0u8; 16];
+        file.read_exact(&mut prelude).map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => AuditError::BadMagic,
+            _ => AuditError::Io(e),
+        })?;
+        if &prelude[..6] != MAGIC {
             return Err(AuditError::BadMagic);
         }
-        let found = u16::from_le_bytes([header[6], header[7]]);
+        let found = u16::from_le_bytes([prelude[6], prelude[7]]);
         if found != VERSION {
             return Err(AuditError::UnsupportedVersion { found });
         }
-        let count = u64::from_le_bytes(header[8..16].try_into().expect("8 bytes"));
+        let count = u64::from_le_bytes(prelude[8..16].try_into().expect("8 bytes"));
+
+        let mut commitment_nonce = [0u8; NONCE_LEN];
+        let mut commitment_tag = vec![0u8; TAG_LEN];
+        file.read_exact(&mut commitment_nonce)?;
+        file.read_exact(&mut commitment_tag)?;
 
         Ok(Self {
             path: path.to_path_buf(),
             count,
+            commitment_nonce,
+            commitment_tag,
         })
     }
 
@@ -235,10 +325,16 @@ impl AuditLog {
         // contiguous at this size; the log rotates long before that
         // costs anything.
         let (mut index, mut records) = self.read_regions()?;
+        // Verify before extending. Appending to a file whose tail
+        // was already removed would sign the tampered state as
+        // genuine — the append would launder it.
+        self.verify_commitment(key, &index)?;
         index.extend_from_slice(&seq.to_le_bytes());
         index.extend_from_slice(&encrypted.nonce);
         index.extend_from_slice(&(encrypted.ciphertext.len() as u32).to_le_bytes());
         records.extend_from_slice(&encrypted.ciphertext);
+
+        let commitment = aead::encrypt_entry(key, &commitment_aad(seq + 1, &index), &[])?;
 
         let temp = self.path.with_extension("dvb.tmp");
         {
@@ -246,6 +342,8 @@ impl AuditLog {
             out.write_all(MAGIC)?;
             out.write_all(&VERSION.to_le_bytes())?;
             out.write_all(&(seq + 1).to_le_bytes())?;
+            out.write_all(&commitment.nonce)?;
+            out.write_all(&commitment.ciphertext)?;
             out.write_all(&index)?;
             out.write_all(&records)?;
             out.sync_all()?;
@@ -254,6 +352,8 @@ impl AuditLog {
         std::fs::rename(&temp, &self.path)?;
 
         self.count = seq + 1;
+        self.commitment_nonce = commitment.nonce;
+        self.commitment_tag = commitment.ciphertext;
         Ok(seq)
     }
 
@@ -274,6 +374,8 @@ impl AuditLog {
             });
         }
 
+        self.verify_commitment(key, &index[..self.count as usize * INDEX_ENTRY_LEN])?;
+
         let mut out = Vec::with_capacity(self.count as usize);
         let mut offset = 0usize;
         for i in 0..self.count as usize {
@@ -283,6 +385,18 @@ impl AuditLog {
             nonce.copy_from_slice(&entry[8..8 + NONCE_LEN]);
             let length =
                 u32::from_le_bytes(entry[8 + NONCE_LEN..].try_into().expect("4 bytes")) as usize;
+
+            // Records are numbered from zero with no gaps. An
+            // attacker cannot get here — the commitment above
+            // already refused — but a bug in `append` could, and a
+            // log that silently renumbers itself is not evidence of
+            // anything.
+            if seq != i as u64 {
+                return Err(AuditError::SequenceGap {
+                    expected: i as u64,
+                    found: seq,
+                });
+            }
 
             if offset + length > records.len() {
                 return Err(AuditError::Truncated {
@@ -300,6 +414,27 @@ impl AuditLog {
             out.push(record);
         }
         Ok(out)
+    }
+
+    /// Check the header + index against the tag in the header.
+    ///
+    /// An empty log is exempt: there is nothing to commit to, and
+    /// the file is created before any key exists. That leaves
+    /// "truncate the whole thing to zero" undetectable here — which
+    /// is the same class as deleting the file outright, already
+    /// documented as out of this format's reach.
+    fn verify_commitment(&self, key: &[u8; KEY_LEN], index: &[u8]) -> Result<(), AuditError> {
+        if self.count == 0 {
+            return Ok(());
+        }
+        aead::decrypt_entry(
+            key,
+            &commitment_aad(self.count, index),
+            &self.commitment_nonce,
+            &self.commitment_tag,
+        )
+        .map(|_| ())
+        .map_err(|_| AuditError::IndexTampered)
     }
 
     /// Split the file into its index and record regions.
@@ -492,7 +627,182 @@ mod tests {
         let err = reopened
             .read_all(&KEY)
             .expect_err("a spliced record must not verify");
-        assert!(matches!(err, AuditError::RecordCorrupt { .. }), "{err}");
+        // The splice moves index bytes, so the header commitment
+        // now catches it before any record is decrypted. Either
+        // verdict means the splice failed; pinning one would pin
+        // the order of the checks rather than the property.
+        assert!(
+            matches!(
+                err,
+                AuditError::RecordCorrupt { .. } | AuditError::IndexTampered
+            ),
+            "{err}"
+        );
+    }
+
+    /// The attack the format version exists for.
+    ///
+    /// Drop the last record — its index entry and its ciphertext —
+    /// and decrement `COUNT` to match. Under v1 the result read back
+    /// as a perfectly valid two-record log and the third access was
+    /// gone without a trace. The commitment covers `COUNT` and the
+    /// whole index together, so a consistent-looking pair is no
+    /// longer enough.
+    #[test]
+    fn deleting_the_tail_and_fixing_the_count_is_caught() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit-log.dvb");
+        let mut l = AuditLog::open_or_create(&path).unwrap();
+        for p in ["team/a/one", "team/a/two", "team/a/three"] {
+            l.append(&KEY, &record(p)).unwrap();
+        }
+
+        let bytes = std::fs::read(&path).unwrap();
+        let last_len = u32::from_le_bytes(
+            bytes[HEADER_LEN + 2 * INDEX_ENTRY_LEN + 8 + NONCE_LEN
+                ..HEADER_LEN + 3 * INDEX_ENTRY_LEN]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+
+        // Header, then the first two index entries, then the
+        // records minus the last ciphertext.
+        let mut forged = bytes[..HEADER_LEN + 2 * INDEX_ENTRY_LEN].to_vec();
+        let records_at = HEADER_LEN + 3 * INDEX_ENTRY_LEN;
+        forged.extend_from_slice(&bytes[records_at..bytes.len() - last_len]);
+        // And the count adjusted so nothing looks out of place.
+        forged[8..16].copy_from_slice(&2u64.to_le_bytes());
+        std::fs::write(&path, &forged).unwrap();
+
+        let reopened = AuditLog::open_or_create(&path).unwrap();
+        let err = reopened
+            .read_all(&KEY)
+            .expect_err("a doctored count must not read as a clean log");
+        assert!(matches!(err, AuditError::IndexTampered), "{err}");
+    }
+
+    /// The same attack aimed at the middle instead of the tail.
+    ///
+    /// Each record's AAD binds only its own `seq`, so removing one
+    /// from the middle leaves every survivor decrypting perfectly.
+    /// Only the gap in the numbering gives it away — and `read_all`
+    /// did not look at the numbering at all.
+    #[test]
+    fn removing_a_record_from_the_middle_is_caught() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit-log.dvb");
+        let mut l = AuditLog::open_or_create(&path).unwrap();
+        for p in ["team/a/one", "team/a/two", "team/a/three"] {
+            l.append(&KEY, &record(p)).unwrap();
+        }
+
+        let bytes = std::fs::read(&path).unwrap();
+        let lens: Vec<usize> = (0..3)
+            .map(|n| {
+                u32::from_le_bytes(
+                    bytes[HEADER_LEN + n * INDEX_ENTRY_LEN + 8 + NONCE_LEN
+                        ..HEADER_LEN + (n + 1) * INDEX_ENTRY_LEN]
+                        .try_into()
+                        .unwrap(),
+                ) as usize
+            })
+            .collect();
+        let records_at = HEADER_LEN + 3 * INDEX_ENTRY_LEN;
+
+        // Keep entries 0 and 2, drop 1.
+        let mut forged = bytes[..HEADER_LEN + INDEX_ENTRY_LEN].to_vec();
+        forged.extend_from_slice(
+            &bytes[HEADER_LEN + 2 * INDEX_ENTRY_LEN..HEADER_LEN + 3 * INDEX_ENTRY_LEN],
+        );
+        forged.extend_from_slice(&bytes[records_at..records_at + lens[0]]);
+        forged.extend_from_slice(
+            &bytes[records_at + lens[0] + lens[1]..records_at + lens[0] + lens[1] + lens[2]],
+        );
+        forged[8..16].copy_from_slice(&2u64.to_le_bytes());
+        std::fs::write(&path, &forged).unwrap();
+
+        let reopened = AuditLog::open_or_create(&path).unwrap();
+        let err = reopened
+            .read_all(&KEY)
+            .expect_err("a hole in the middle must not read as a clean log");
+        assert!(matches!(err, AuditError::IndexTampered), "{err}");
+    }
+
+    /// The numbering check, reached the only way it can be.
+    ///
+    /// The commitment stops an outsider before the sequence is ever
+    /// examined, so this forges a log *and re-signs it with the real
+    /// key* — which is what a bug in our own `append` would amount
+    /// to. Without a test that holds the key, the check below would
+    /// be unreachable, and an unreachable check is the thing this
+    /// branch keeps finding.
+    #[test]
+    fn a_gap_in_the_numbering_is_caught_even_when_the_header_verifies() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit-log.dvb");
+        let mut l = AuditLog::open_or_create(&path).unwrap();
+        for p in ["team/a/one", "team/a/two"] {
+            l.append(&KEY, &record(p)).unwrap();
+        }
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        // Renumber the first record 0 -> 7.
+        bytes[HEADER_LEN..HEADER_LEN + 8].copy_from_slice(&7u64.to_le_bytes());
+
+        // Re-sign, as only something holding the key could.
+        let index_end = HEADER_LEN + 2 * INDEX_ENTRY_LEN;
+        let index = bytes[HEADER_LEN..index_end].to_vec();
+        let fresh = crate::aead::encrypt_entry(&KEY, &commitment_aad(2, &index), &[]).unwrap();
+        bytes[16..16 + NONCE_LEN].copy_from_slice(&fresh.nonce);
+        bytes[16 + NONCE_LEN..HEADER_LEN].copy_from_slice(&fresh.ciphertext);
+        std::fs::write(&path, &bytes).unwrap();
+
+        let reopened = AuditLog::open_or_create(&path).unwrap();
+        let err = reopened
+            .read_all(&KEY)
+            .expect_err("a renumbered record must not pass");
+        assert!(
+            matches!(
+                err,
+                AuditError::SequenceGap {
+                    expected: 0,
+                    found: 7
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    /// Appending must not sign a file that was already doctored.
+    ///
+    /// Without a check on the way in, the next ordinary write would
+    /// compute a fresh, valid commitment over the tampered state and
+    /// launder it into something that verifies for good.
+    #[test]
+    fn appending_to_a_doctored_log_refuses_rather_than_blessing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit-log.dvb");
+        let mut l = AuditLog::open_or_create(&path).unwrap();
+        for p in ["team/a/one", "team/a/two"] {
+            l.append(&KEY, &record(p)).unwrap();
+        }
+
+        let bytes = std::fs::read(&path).unwrap();
+        let last_len = u32::from_le_bytes(
+            bytes[HEADER_LEN + INDEX_ENTRY_LEN + 8 + NONCE_LEN..HEADER_LEN + 2 * INDEX_ENTRY_LEN]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let mut forged = bytes[..HEADER_LEN + INDEX_ENTRY_LEN].to_vec();
+        forged.extend_from_slice(&bytes[HEADER_LEN + 2 * INDEX_ENTRY_LEN..bytes.len() - last_len]);
+        forged[8..16].copy_from_slice(&1u64.to_le_bytes());
+        std::fs::write(&path, &forged).unwrap();
+
+        let mut reopened = AuditLog::open_or_create(&path).unwrap();
+        let err = reopened
+            .append(&KEY, &record("team/a/three"))
+            .expect_err("appending must not bless a doctored log");
+        assert!(matches!(err, AuditError::IndexTampered), "{err}");
     }
 
     /// Editing a byte of a record fails its tag.
@@ -544,16 +854,29 @@ mod tests {
 
     /// A different key must not read the log — it is encrypted for
     /// a reason.
+    ///
+    /// Which error it is depends on what verifies first, and since
+    /// the header commitment moved ahead of the records that is now
+    /// `IndexTampered`. Both mean the same thing: the key and the
+    /// bytes disagree. The test accepts either so it keeps testing
+    /// "a wrong key gets nothing" rather than the order of the
+    /// checks.
     #[test]
     fn the_wrong_key_cannot_read_the_log() {
         let dir = tempfile::tempdir().unwrap();
         let mut l = log(&dir);
         l.append(&KEY, &record("team/a/one")).unwrap();
 
-        assert!(matches!(
-            l.read_all(&[9u8; KEY_LEN]),
-            Err(AuditError::RecordCorrupt { .. })
-        ));
+        let err = l
+            .read_all(&[9u8; KEY_LEN])
+            .expect_err("a different key must not read this");
+        assert!(
+            matches!(
+                err,
+                AuditError::RecordCorrupt { .. } | AuditError::IndexTampered
+            ),
+            "{err}"
+        );
     }
 
     /// The index is plaintext, so it must not carry anything worth
