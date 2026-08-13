@@ -1,3 +1,4 @@
+pub mod approve_on_use;
 pub mod config;
 pub mod context_secrets;
 pub mod credentials;

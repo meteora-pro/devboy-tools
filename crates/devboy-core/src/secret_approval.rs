@@ -262,14 +262,38 @@ where
                 };
                 Err(AliasResolverError::Backend {
                     path: path.to_owned(),
-                    message: format!(
-                        "approve-on-use policy `{label}` requires user approval; \
-                         surface secrets_request_use_approval and retry"
-                    ),
+                    message: approval_unavailable_message(label),
                 })
             }
         }
     }
+}
+
+/// What to say when a path asks for per-use approval.
+///
+/// It used to say "surface secrets_request_use_approval and
+/// retry". That tool exists, and in a shipped build it always
+/// fails: the only launcher compiled in is `NoopUiLauncher`, and
+/// a working one is installed solely by tests. So the agent was
+/// sent for permission to a door that cannot open, and the path
+/// stayed unresolvable with no way out.
+///
+/// The per-use approval flow is also not the product model: the
+/// user unlocks the vault once and the agent works, with TOTP as
+/// the re-authentication step where it is configured. So the
+/// honest answer is not "ask harder", it is "this gate does not
+/// exist here — take it off the path".
+///
+/// Deliberately not downgraded to `never` behind the user's
+/// back: a security setting that silently stops applying is the
+/// exact failure this whole change set has been removing.
+pub fn approval_unavailable_message(policy_label: &str) -> String {
+    format!(
+        "this path is marked `approve_on_use = {policy_label}`, and per-use approval is not \
+         available in this build — there is no dialog to answer, so the value cannot be \
+         resolved. Set `approve_on_use = never` on the path (the vault is unlocked once and \
+         re-authenticated with TOTP where that is configured), or remove the override."
+    )
 }
 
 #[cfg(test)]
@@ -282,6 +306,40 @@ mod tests {
     }
 
     // -- evaluate ---------------------------------------------------
+
+    /// The message an agent receives when a path asks for
+    /// approval this build cannot collect. It has one job: stop
+    /// the agent looping and tell the human what to change.
+    #[test]
+    fn the_refusal_names_the_setting_and_the_way_out() {
+        let m = approval_unavailable_message("per-call");
+
+        assert!(m.contains("approve_on_use = per-call"), "{m}");
+        assert!(
+            m.contains("approve_on_use = never"),
+            "a refusal without a way out is just a wall: {m}"
+        );
+        assert!(
+            !m.contains("secrets_request_use_approval"),
+            "pointing at a tool that always fails is what made this a dead end: {m}"
+        );
+        assert!(
+            m.contains("not available in this build"),
+            "the reason has to be stated, or it reads as a permissions problem: {m}"
+        );
+    }
+
+    /// The gate still refuses — the point is the wording, not
+    /// letting the value through. Silently downgrading a
+    /// security setting is the failure this replaces.
+    #[test]
+    fn a_gated_path_is_still_refused_not_quietly_allowed() {
+        let cache = SessionApprovalCache::new();
+        assert_eq!(
+            cache.evaluate("team/prod/db-password", ApproveOnUsePolicy::PerCall),
+            ApprovalGate::PromptRequired
+        );
+    }
 
     #[test]
     fn evaluate_never_policy_returns_not_required() {
@@ -451,8 +509,12 @@ mod tests {
             AliasResolverError::Backend { path, message } => {
                 assert_eq!(path, "team/x/y");
                 assert!(
-                    message.contains("session") && message.contains("user approval"),
-                    "unexpected message: {message}"
+                    message.contains("approve_on_use = session"),
+                    "the refusal must name the setting that caused it: {message}"
+                );
+                assert!(
+                    message.contains("approve_on_use = never"),
+                    "and the way out of it: {message}"
                 );
             }
             other => panic!("expected Backend gate-required error, got {other:?}"),

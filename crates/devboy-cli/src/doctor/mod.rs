@@ -6,6 +6,7 @@
 pub(crate) mod checks;
 mod output;
 
+use self::checks::approve_on_use::ApproveOnUseCheck;
 use self::checks::config::{ActiveContextCheck, ConfigExistsCheck, ConfigValidTomlCheck};
 use self::checks::context_secrets::ContextSecretsCheck;
 use self::checks::credentials::{
@@ -178,6 +179,7 @@ impl CheckRegistry {
         registry.register(Box::new(ContextSecretsCheck));
         registry.register(Box::new(RotationRemindersCheck));
         registry.register(Box::new(LegacyKeysCheck));
+        registry.register(Box::new(ApproveOnUseCheck));
         registry
     }
 

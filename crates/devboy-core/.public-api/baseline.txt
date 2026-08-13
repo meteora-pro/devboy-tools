@@ -1781,6 +1781,7 @@ impl core::marker::Unpin for devboy_core::secret_approval::SessionApprovalCache
 impl core::marker::UnsafeUnpin for devboy_core::secret_approval::SessionApprovalCache
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::SessionApprovalCache
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::SessionApprovalCache
+pub fn devboy_core::secret_approval::approval_unavailable_message(policy_label: &str) -> alloc::string::String
 pub mod devboy_core::tool_category
 pub enum devboy_core::tool_category::ToolCategory
 pub devboy_core::tool_category::ToolCategory::Epics
