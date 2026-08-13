@@ -750,6 +750,29 @@ impl core::marker::UnsafeUnpin for devboy_mcp::remediation::RemediationContext
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::remediation::RemediationContext
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::remediation::RemediationContext
 pub const devboy_mcp::remediation::ALL_ERROR_KINDS: &[devboy_mcp::remediation::SecretsErrorKind]
+pub mod devboy_mcp::response_scrub
+pub struct devboy_mcp::response_scrub::CredentialRegistry
+impl devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::CredentialRegistry::is_empty(&self) -> bool
+pub fn devboy_mcp::response_scrub::CredentialRegistry::len(&self) -> usize
+pub fn devboy_mcp::response_scrub::CredentialRegistry::new() -> Self
+pub fn devboy_mcp::response_scrub::CredentialRegistry::remember(&self, label: impl core::convert::Into<alloc::string::String>, value: &str)
+impl core::default::Default for devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::CredentialRegistry::default() -> devboy_mcp::response_scrub::CredentialRegistry
+impl core::fmt::Debug for devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::CredentialRegistry::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::Send for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::Sync for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::Unpin for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::UnsafeUnpin for devboy_mcp::response_scrub::CredentialRegistry
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::response_scrub::CredentialRegistry
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::leak_summary(replacements: &[devboy_secret_patterns::scrubber::Replacement]) -> alloc::string::String
+pub fn devboy_mcp::response_scrub::oauth_token_label(upstream: &str) -> alloc::string::String
+pub fn devboy_mcp::response_scrub::scrub_text(upstream: &str, registry: &devboy_mcp::response_scrub::CredentialRegistry, text: &str) -> alloc::string::String
+pub fn devboy_mcp::response_scrub::scrub_tool_result(upstream: &str, registry: &devboy_mcp::response_scrub::CredentialRegistry, result: devboy_mcp::protocol::ToolCallResult) -> devboy_mcp::protocol::ToolCallResult
+pub fn devboy_mcp::response_scrub::static_token_label(upstream: &str) -> alloc::string::String
 pub mod devboy_mcp::routing
 pub enum devboy_mcp::routing::RoutingReason
 pub devboy_mcp::routing::RoutingReason::ExplicitPrefix
