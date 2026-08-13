@@ -12,8 +12,10 @@
 
 use std::fmt;
 use std::io::{self, BufRead};
+use std::sync::OnceLock;
 
 use devboy_secret_patterns::{Catalogue, SecretPattern, Severity};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -335,6 +337,185 @@ fn scan_text(
             }
         }
     }
+    scan_heuristics(context, path, text, report);
+}
+
+fn scan_heuristics(context: &ScanContext, path: &str, text: &str, report: &mut ScanReport) {
+    if email_regex().is_match(text) {
+        push_heuristic(
+            report,
+            context,
+            path,
+            text,
+            Heuristic::new(
+                Severity::Medium,
+                "pii-email",
+                "Email address",
+                SuggestedStrategy::Hash,
+            ),
+        );
+    }
+    if phone_regex().is_match(text) {
+        push_heuristic(
+            report,
+            context,
+            path,
+            text,
+            Heuristic::new(
+                Severity::Medium,
+                "pii-phone",
+                "Phone number",
+                SuggestedStrategy::Hash,
+            ),
+        );
+    }
+    if absolute_path_regex().is_match(text) {
+        push_heuristic(
+            report,
+            context,
+            path,
+            text,
+            Heuristic::new(
+                Severity::Medium,
+                "file-path",
+                "Absolute file path",
+                SuggestedStrategy::Hash,
+            ),
+        );
+    }
+    if is_raw_body_field(path) && text.len() >= 256 {
+        push_heuristic(
+            report,
+            context,
+            path,
+            text,
+            Heuristic::new(
+                Severity::Medium,
+                "raw-api-body",
+                "Raw API body",
+                SuggestedStrategy::Hash,
+            ),
+        );
+    }
+    if has_high_entropy_token(text) {
+        push_heuristic(
+            report,
+            context,
+            path,
+            text,
+            Heuristic::new(
+                Severity::Low,
+                "high-entropy-string",
+                "High-entropy unknown string",
+                SuggestedStrategy::Review,
+            ),
+        );
+    }
+}
+
+fn push_heuristic(
+    report: &mut ScanReport,
+    context: &ScanContext,
+    attribute_path: &str,
+    candidate: &str,
+    heuristic: Heuristic,
+) {
+    report.findings.push(Finding {
+        severity: heuristic.severity,
+        category: heuristic.category.to_owned(),
+        display_name: heuristic.display_name.to_owned(),
+        source: context.source.clone(),
+        line: context.line,
+        record_id: context.record_id.clone(),
+        attribute_path: attribute_path.to_owned(),
+        match_redacted: redact_preview(candidate),
+        suggested_strategy: heuristic.suggested_strategy,
+    });
+    report.summary.findings_total += 1;
+    match heuristic.severity {
+        Severity::High => report.summary.high += 1,
+        Severity::Medium => report.summary.medium += 1,
+        Severity::Low => report.summary.low += 1,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Heuristic {
+    severity: Severity,
+    category: &'static str,
+    display_name: &'static str,
+    suggested_strategy: SuggestedStrategy,
+}
+
+impl Heuristic {
+    const fn new(
+        severity: Severity,
+        category: &'static str,
+        display_name: &'static str,
+        suggested_strategy: SuggestedStrategy,
+    ) -> Self {
+        Self {
+            severity,
+            category,
+            display_name,
+            suggested_strategy,
+        }
+    }
+}
+
+fn email_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b").expect("valid email regex")
+    })
+}
+
+fn phone_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"(?:\+?[1-9][0-9 .()-]{7,}[0-9])").expect("valid phone regex"))
+}
+
+fn absolute_path_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r#"(?:[A-Za-z]:\\[^\r\n]+|/(?:Users|home|var|srv|opt)/[^\s]+)"#)
+            .expect("valid path regex")
+    })
+}
+
+fn is_raw_body_field(path: &str) -> bool {
+    let field = path
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        field.as_str(),
+        "body" | "request_body" | "response_body" | "payload"
+    )
+}
+
+fn has_high_entropy_token(text: &str) -> bool {
+    text.split(|character: char| {
+        !character.is_ascii_alphanumeric() && character != '_' && character != '-'
+    })
+    .any(|token| token.len() >= 64 && shannon_entropy(token) >= 4.0)
+}
+
+fn shannon_entropy(value: &str) -> f64 {
+    let mut frequencies = [0_u64; 256];
+    for byte in value.bytes() {
+        frequencies[usize::from(byte)] += 1;
+    }
+    let length = value.len() as f64;
+    frequencies
+        .into_iter()
+        .filter(|count| *count > 0)
+        .map(|count| {
+            let probability = count as f64 / length;
+            -probability * probability.log2()
+        })
+        .sum()
 }
 
 fn push_finding(
@@ -461,5 +642,39 @@ mod tests {
                 .unwrap()
                 .contains("[REDACTED:github-pat]")
         );
+    }
+
+    #[test]
+    fn reports_pii_paths_raw_bodies_and_entropy_without_exposing_values() {
+        let entropy = "aB3dE5fG7hI9jK1mN2oP4qR6sT8uV0wXyZ1aB3dE5fG7hI9jK1mN2oP4qR6sT8uV0";
+        let raw_body = "x".repeat(300);
+        let report = scanner().scan_value(
+            &ScanContext::default(),
+            &json!({
+                "email": "person@example.test",
+                "phone": "+352 621 123 456",
+                "path": "C:\\Users\\person\\project\\trace.jsonl",
+                "body": raw_body,
+                "unknown": entropy,
+            }),
+        );
+        for category in [
+            "pii-email",
+            "pii-phone",
+            "file-path",
+            "raw-api-body",
+            "high-entropy-string",
+        ] {
+            assert!(
+                report
+                    .findings
+                    .iter()
+                    .any(|finding| finding.category == category),
+                "missing {category}"
+            );
+        }
+        let serialized = serde_json::to_string(&report).expect("JSON");
+        assert!(!serialized.contains("person@example.test"));
+        assert!(!serialized.contains(entropy));
     }
 }
