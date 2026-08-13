@@ -930,6 +930,21 @@ impl VaultServer {
         if let Err(e) = self.verify_fresh_unlock(&params.fresh_unlock) {
             return JsonRpcResponse::err(id, e);
         }
+        // Same guard as every other write path. Without it, rotate
+        // was a way to overwrite `__totp/secret` with a value of the
+        // caller's choosing: the next unlock adopts it, and whoever
+        // chose it can mint valid codes from then on. The reserved
+        // slot is unreadable, unlistable and unwritable — and rotate
+        // is a write.
+        if crate::totp_session::is_reserved(&params.path) {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    INVALID_PARAMS,
+                    format!("'{}' is a reserved path and cannot be written", params.path),
+                ),
+            );
+        }
         let vault = match self.vault.as_mut() {
             Some(v) => v,
             None => return locked_response(id),
@@ -940,6 +955,10 @@ impl VaultServer {
                     .list()
                     .find_map(|m| m.last_rotated_at)
                     .unwrap_or_default();
+                // Recorded like every other write. A rotation that
+                // leaves no trace is the one an investigator most
+                // wants to see.
+                self.audit("rotate", &params.path, "user");
                 JsonRpcResponse::ok(id, json!({"ok": true, "last_rotated_at": last_rotated_at}))
             }
             Err(VaultError::EntryNotFound { path }) => JsonRpcResponse::err(
@@ -2051,7 +2070,45 @@ mod tests {
         );
     }
 
-    /// `vault.request_unlock` must carry no passphrase field at all.    /// `vault.request_unlock` must carry no passphrase field at all.
+    /// Rotate is a write, and the reserved slot is unwritable.
+    ///
+    /// It was the one write path without the guard. Overwriting
+    /// `__totp/secret` there hands the next unlock an attacker-chosen
+    /// shared secret, after which they can produce valid codes — the
+    /// exact thing "unwritable even on a fully unlocked vault" is
+    /// supposed to prevent.
+    #[tokio::test]
+    async fn rotate_refuses_the_reserved_totp_slot() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        let r = server
+            .handle_request(req(
+                2,
+                "secret.rotate",
+                json!({
+                    "path": crate::totp_session::TOTP_SECRET_PATH,
+                    "new_value": "attacker-chosen",
+                    "fresh_unlock": {"kind": "passphrase", "secret": "p"},
+                }),
+            ))
+            .await;
+
+        let err = r.error.expect("a reserved path must not be rotatable");
+        assert!(
+            err.message.contains("reserved"),
+            "the refusal should say why: {}",
+            err.message
+        );
+    }
+
+    /// `vault.request_unlock` must carry no passphrase field at all.    /// `vault.request_unlock` must carry no passphrase field at all.    /// `vault.request_unlock` must carry no passphrase field at all.
     ///
     /// The whole point is that the secret never crosses the socket,
     /// so a caller supplying one must not be able to influence the
