@@ -7,6 +7,7 @@ mod onboard_cmd;
 mod secrets_agent;
 mod secrets_agent_service;
 mod secrets_cmd;
+mod secrets_keyfile;
 mod secrets_migrate;
 mod secrets_rotate;
 mod secrets_selftest;

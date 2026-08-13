@@ -88,6 +88,18 @@ pub enum SecretsCommands {
     /// which is precisely what makes a code from it evidence that a
     /// human was present.
     AddTotp(crate::secrets_totp::AddTotpArgs),
+
+    /// Manage the keyfile that lets the vault open with no human
+    /// present (ADR-024 §6).
+    ///
+    /// The keyfile is a second door opened from inside: enrolling one
+    /// requires unlocking the vault first, so it records a new way to
+    /// reach access you already had rather than granting any.
+    ///
+    /// Where a stable machine identifier exists, the enrolment is
+    /// bound to this host — the same two files will not open the
+    /// vault anywhere else.
+    Keyfile(crate::secrets_keyfile::KeyfileArgs),
     /// Work with KDBX 4 (KeePass) files as a SecretSource. The
     /// passphrase is prompted from stdin with no echo; the
     /// decrypted body lives only inside this process and is
@@ -541,6 +553,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
         SecretsCommands::Selftest(args) => crate::secrets_selftest::handle(args),
         SecretsCommands::AddTotp(args) => crate::secrets_totp::handle(args),
+        SecretsCommands::Keyfile(args) => crate::secrets_keyfile::run(args),
         SecretsCommands::Kdbx { command } => match command {
             KdbxCommands::Peek(args) => kdbx_peek(args),
             KdbxCommands::DescribeMetadata(args) => kdbx_describe_metadata(args),

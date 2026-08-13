@@ -73,6 +73,10 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets setup`↴](#devboy-secrets-setup)
 * [`devboy secrets selftest`↴](#devboy-secrets-selftest)
 * [`devboy secrets add-totp`↴](#devboy-secrets-add-totp)
+* [`devboy secrets keyfile`↴](#devboy-secrets-keyfile)
+* [`devboy secrets keyfile add`↴](#devboy-secrets-keyfile-add)
+* [`devboy secrets keyfile status`↴](#devboy-secrets-keyfile-status)
+* [`devboy secrets keyfile remove`↴](#devboy-secrets-keyfile-remove)
 * [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
 * [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
 * [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
@@ -801,6 +805,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `setup` — Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
 * `selftest` — Report which security posture is actually in force, and where it is weaker than it looks (ADR-024). `doctor` asks "is anything broken"; this asks "what am I actually getting"
 * `add-totp` — Enrol an authenticator app so the vault can be re-unlocked with a six-digit code instead of the passphrase (ADR-024 §1)
+* `keyfile` — Manage the keyfile that lets the vault open with no human present (ADR-024 §6)
 * `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
 
 
@@ -1149,6 +1154,53 @@ The shared secret is displayed once and never again — it is stored in a reserv
   Default value: `devboy`
 * `--account <ACCOUNT>` — Account name shown in the authenticator app. Defaults to the current user
 * `--no-qr` — Print the `otpauth://` URI and secret without drawing a QR code. Useful over SSH, in a pipe, or when the terminal mangles block characters
+
+
+
+## `devboy secrets keyfile`
+
+Manage the keyfile that lets the vault open with no human present (ADR-024 §6).
+
+The keyfile is a second door opened from inside: enrolling one requires unlocking the vault first, so it records a new way to reach access you already had rather than granting any.
+
+Where a stable machine identifier exists, the enrolment is bound to this host — the same two files will not open the vault anywhere else.
+
+**Usage:** `devboy secrets keyfile <COMMAND>`
+
+###### **Subcommands:**
+
+* `add` — Generate a keyfile and enrol it, so the vault can open with no human present
+* `status` — Report whether a keyfile is enrolled and usable
+* `remove` — Un-enrol the keyfile. The file on disk is left alone
+
+
+
+## `devboy secrets keyfile add`
+
+Generate a keyfile and enrol it, so the vault can open with no human present
+
+**Usage:** `devboy secrets keyfile add [OPTIONS]`
+
+###### **Options:**
+
+* `--path <PATH>` — Where to write the keyfile. Defaults to the platform state directory, deliberately outside the config tree that holds the vault
+* `--use-existing` — Enrol an existing file instead of generating one. Use this when the key comes from somewhere else — a secrets mount, a hardware-backed file, an orchestrator
+
+
+
+## `devboy secrets keyfile status`
+
+Report whether a keyfile is enrolled and usable
+
+**Usage:** `devboy secrets keyfile status`
+
+
+
+## `devboy secrets keyfile remove`
+
+Un-enrol the keyfile. The file on disk is left alone
+
+**Usage:** `devboy secrets keyfile remove`
 
 
 

@@ -231,6 +231,14 @@ pub enum VaultError {
     /// `Vault::open` could not find an envelope of the requested kind
     /// in the file. The caller asked for a passphrase unlock but the
     /// vault has only a recovery envelope, for example.
+    /// Refused: removing this envelope would leave no way to open
+    /// the vault at all.
+    #[error(
+        "this is the vault's only unlock envelope; removing it would destroy the vault. Add \
+         another way in first — a passphrase, a recovery phrase, or an authenticator"
+    )]
+    LastEnvelope,
+
     #[error("vault has no '{kind}' envelope to unlock with")]
     NoMatchingEnvelope {
         /// Which envelope kind the caller asked for.
@@ -464,6 +472,38 @@ impl Vault {
         self.file.envelopes.push(env);
         self.file.write_file_atomic(&self.path)?;
         Ok(())
+    }
+
+    /// Drop the keyfile envelope, so the file on disk no longer
+    /// opens this vault.
+    ///
+    /// Refuses to remove the last remaining envelope. A vault with
+    /// no way in is not "more secure", it is destroyed, and the
+    /// operation that destroys it should not be a one-word
+    /// subcommand.
+    ///
+    /// Returns whether an envelope was actually removed, so a caller
+    /// can tell "unenrolled" from "there was nothing to unenrol"
+    /// instead of reporting success either way.
+    pub fn remove_keyfile_envelope(&mut self) -> Result<bool, VaultError> {
+        let present = self
+            .file
+            .envelopes
+            .iter()
+            .any(|e| matches!(e, Envelope::Keyfile { .. }));
+        if !present {
+            return Ok(false);
+        }
+
+        if self.file.envelopes.len() == 1 {
+            return Err(VaultError::LastEnvelope);
+        }
+
+        self.file
+            .envelopes
+            .retain(|e| !matches!(e, Envelope::Keyfile { .. }));
+        self.file.write_file_atomic(&self.path)?;
+        Ok(true)
     }
 
     /// Encrypt and store a value at `path`, appending a new version
