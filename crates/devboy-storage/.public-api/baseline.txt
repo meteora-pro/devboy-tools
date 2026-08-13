@@ -669,6 +669,9 @@ pub devboy_storage::plugin_client::PluginClientError::Spawn::source: core::io::e
 pub devboy_storage::plugin_client::PluginClientError::UnexpectedPayload
 pub devboy_storage::plugin_client::PluginClientError::UnexpectedPayload::method: alloc::string::String
 pub devboy_storage::plugin_client::PluginClientError::UnexpectedPayload::plugin: alloc::string::String
+pub devboy_storage::plugin_client::PluginClientError::UnsupportedCapability
+pub devboy_storage::plugin_client::PluginClientError::UnsupportedCapability::capability: alloc::string::String
+pub devboy_storage::plugin_client::PluginClientError::UnsupportedCapability::plugin: alloc::string::String
 impl core::error::Error for devboy_storage::plugin_client::PluginClientError
 pub fn devboy_storage::plugin_client::PluginClientError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for devboy_storage::plugin_client::PluginClientError
@@ -767,6 +770,7 @@ impl core::marker::Unpin for devboy_storage::plugin_client::PluginHealth
 impl core::marker::UnsafeUnpin for devboy_storage::plugin_client::PluginHealth
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_client::PluginHealth
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_client::PluginHealth
+pub fn devboy_storage::plugin_client::required_capability(call: &devboy_storage::plugin_protocol::PluginRequest) -> core::option::Option<devboy_storage::source::Capabilities>
 pub mod devboy_storage::plugin_manifest
 pub enum devboy_storage::plugin_manifest::DiscoveryOutcome
 pub devboy_storage::plugin_manifest::DiscoveryOutcome::Err
@@ -932,10 +936,13 @@ impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::PluginError
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::PluginError
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::PluginError
 pub enum devboy_storage::plugin_protocol::PluginRequest
+pub devboy_storage::plugin_protocol::PluginRequest::Delete(devboy_storage::plugin_protocol::DeleteParams)
 pub devboy_storage::plugin_protocol::PluginRequest::Get(devboy_storage::plugin_protocol::GetParams)
 pub devboy_storage::plugin_protocol::PluginRequest::Init(devboy_storage::plugin_protocol::InitParams)
 pub devboy_storage::plugin_protocol::PluginRequest::IsAvailable
+pub devboy_storage::plugin_protocol::PluginRequest::KeyMaterial(devboy_storage::plugin_protocol::KeyMaterialParams)
 pub devboy_storage::plugin_protocol::PluginRequest::List
+pub devboy_storage::plugin_protocol::PluginRequest::Put(devboy_storage::plugin_protocol::PutParams)
 pub devboy_storage::plugin_protocol::PluginRequest::Validate(devboy_storage::plugin_protocol::ValidateParams)
 impl core::clone::Clone for devboy_storage::plugin_protocol::PluginRequest
 pub fn devboy_storage::plugin_protocol::PluginRequest::clone(&self) -> devboy_storage::plugin_protocol::PluginRequest
@@ -957,10 +964,13 @@ impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::PluginReques
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::PluginRequest
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::PluginRequest
 pub enum devboy_storage::plugin_protocol::PluginResponse
+pub devboy_storage::plugin_protocol::PluginResponse::Delete(devboy_storage::plugin_protocol::DeleteResult)
 pub devboy_storage::plugin_protocol::PluginResponse::Get(devboy_storage::plugin_protocol::GetResult)
 pub devboy_storage::plugin_protocol::PluginResponse::Init(devboy_storage::plugin_protocol::InitResult)
 pub devboy_storage::plugin_protocol::PluginResponse::IsAvailable(devboy_storage::plugin_protocol::IsAvailableResult)
+pub devboy_storage::plugin_protocol::PluginResponse::KeyMaterial(devboy_storage::plugin_protocol::KeyMaterialResult)
 pub devboy_storage::plugin_protocol::PluginResponse::List(devboy_storage::plugin_protocol::ListResult)
+pub devboy_storage::plugin_protocol::PluginResponse::Put(devboy_storage::plugin_protocol::PutResult)
 pub devboy_storage::plugin_protocol::PluginResponse::Validate(devboy_storage::plugin_protocol::ValidateResult)
 impl core::clone::Clone for devboy_storage::plugin_protocol::PluginResponse
 pub fn devboy_storage::plugin_protocol::PluginResponse::clone(&self) -> devboy_storage::plugin_protocol::PluginResponse
@@ -1003,6 +1013,48 @@ impl core::marker::Unpin for devboy_storage::plugin_protocol::RpcOutcome
 impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::RpcOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::RpcOutcome
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::RpcOutcome
+pub struct devboy_storage::plugin_protocol::DeleteParams
+pub devboy_storage::plugin_protocol::DeleteParams::reference: alloc::string::String
+impl core::clone::Clone for devboy_storage::plugin_protocol::DeleteParams
+pub fn devboy_storage::plugin_protocol::DeleteParams::clone(&self) -> devboy_storage::plugin_protocol::DeleteParams
+impl core::cmp::Eq for devboy_storage::plugin_protocol::DeleteParams
+impl core::cmp::PartialEq for devboy_storage::plugin_protocol::DeleteParams
+pub fn devboy_storage::plugin_protocol::DeleteParams::eq(&self, other: &devboy_storage::plugin_protocol::DeleteParams) -> bool
+impl core::fmt::Debug for devboy_storage::plugin_protocol::DeleteParams
+pub fn devboy_storage::plugin_protocol::DeleteParams::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_storage::plugin_protocol::DeleteParams
+impl serde_core::ser::Serialize for devboy_storage::plugin_protocol::DeleteParams
+pub fn devboy_storage::plugin_protocol::DeleteParams::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::plugin_protocol::DeleteParams
+pub fn devboy_storage::plugin_protocol::DeleteParams::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::plugin_protocol::DeleteParams
+impl core::marker::Send for devboy_storage::plugin_protocol::DeleteParams
+impl core::marker::Sync for devboy_storage::plugin_protocol::DeleteParams
+impl core::marker::Unpin for devboy_storage::plugin_protocol::DeleteParams
+impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::DeleteParams
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::DeleteParams
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::DeleteParams
+pub struct devboy_storage::plugin_protocol::DeleteResult
+pub devboy_storage::plugin_protocol::DeleteResult::existed: bool
+impl core::clone::Clone for devboy_storage::plugin_protocol::DeleteResult
+pub fn devboy_storage::plugin_protocol::DeleteResult::clone(&self) -> devboy_storage::plugin_protocol::DeleteResult
+impl core::cmp::Eq for devboy_storage::plugin_protocol::DeleteResult
+impl core::cmp::PartialEq for devboy_storage::plugin_protocol::DeleteResult
+pub fn devboy_storage::plugin_protocol::DeleteResult::eq(&self, other: &devboy_storage::plugin_protocol::DeleteResult) -> bool
+impl core::fmt::Debug for devboy_storage::plugin_protocol::DeleteResult
+pub fn devboy_storage::plugin_protocol::DeleteResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_storage::plugin_protocol::DeleteResult
+impl serde_core::ser::Serialize for devboy_storage::plugin_protocol::DeleteResult
+pub fn devboy_storage::plugin_protocol::DeleteResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::plugin_protocol::DeleteResult
+pub fn devboy_storage::plugin_protocol::DeleteResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::plugin_protocol::DeleteResult
+impl core::marker::Send for devboy_storage::plugin_protocol::DeleteResult
+impl core::marker::Sync for devboy_storage::plugin_protocol::DeleteResult
+impl core::marker::Unpin for devboy_storage::plugin_protocol::DeleteResult
+impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::DeleteResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::DeleteResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::DeleteResult
 pub struct devboy_storage::plugin_protocol::GetParams
 pub devboy_storage::plugin_protocol::GetParams::reference: alloc::string::String
 impl core::clone::Clone for devboy_storage::plugin_protocol::GetParams
@@ -1140,6 +1192,48 @@ impl core::marker::Unpin for devboy_storage::plugin_protocol::JsonRpcVersion
 impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::JsonRpcVersion
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::JsonRpcVersion
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::JsonRpcVersion
+pub struct devboy_storage::plugin_protocol::KeyMaterialParams
+pub devboy_storage::plugin_protocol::KeyMaterialParams::purpose: alloc::string::String
+impl core::clone::Clone for devboy_storage::plugin_protocol::KeyMaterialParams
+pub fn devboy_storage::plugin_protocol::KeyMaterialParams::clone(&self) -> devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::cmp::Eq for devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::cmp::PartialEq for devboy_storage::plugin_protocol::KeyMaterialParams
+pub fn devboy_storage::plugin_protocol::KeyMaterialParams::eq(&self, other: &devboy_storage::plugin_protocol::KeyMaterialParams) -> bool
+impl core::fmt::Debug for devboy_storage::plugin_protocol::KeyMaterialParams
+pub fn devboy_storage::plugin_protocol::KeyMaterialParams::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_storage::plugin_protocol::KeyMaterialParams
+impl serde_core::ser::Serialize for devboy_storage::plugin_protocol::KeyMaterialParams
+pub fn devboy_storage::plugin_protocol::KeyMaterialParams::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::plugin_protocol::KeyMaterialParams
+pub fn devboy_storage::plugin_protocol::KeyMaterialParams::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::marker::Send for devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::marker::Sync for devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::marker::Unpin for devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::KeyMaterialParams
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::KeyMaterialParams
+pub struct devboy_storage::plugin_protocol::KeyMaterialResult
+pub devboy_storage::plugin_protocol::KeyMaterialResult::material_b64: alloc::string::String
+impl core::clone::Clone for devboy_storage::plugin_protocol::KeyMaterialResult
+pub fn devboy_storage::plugin_protocol::KeyMaterialResult::clone(&self) -> devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::cmp::Eq for devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::cmp::PartialEq for devboy_storage::plugin_protocol::KeyMaterialResult
+pub fn devboy_storage::plugin_protocol::KeyMaterialResult::eq(&self, other: &devboy_storage::plugin_protocol::KeyMaterialResult) -> bool
+impl core::fmt::Debug for devboy_storage::plugin_protocol::KeyMaterialResult
+pub fn devboy_storage::plugin_protocol::KeyMaterialResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_storage::plugin_protocol::KeyMaterialResult
+impl serde_core::ser::Serialize for devboy_storage::plugin_protocol::KeyMaterialResult
+pub fn devboy_storage::plugin_protocol::KeyMaterialResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::plugin_protocol::KeyMaterialResult
+pub fn devboy_storage::plugin_protocol::KeyMaterialResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::marker::Send for devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::marker::Sync for devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::marker::Unpin for devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::KeyMaterialResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::KeyMaterialResult
 pub struct devboy_storage::plugin_protocol::ListResult
 pub devboy_storage::plugin_protocol::ListResult::entries: alloc::vec::Vec<devboy_storage::plugin_protocol::RemoteRefDto>
 impl core::clone::Clone for devboy_storage::plugin_protocol::ListResult
@@ -1207,6 +1301,49 @@ impl core::marker::Unpin for devboy_storage::plugin_protocol::PluginRpcResponse
 impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::PluginRpcResponse
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::PluginRpcResponse
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::PluginRpcResponse
+pub struct devboy_storage::plugin_protocol::PutParams
+pub devboy_storage::plugin_protocol::PutParams::reference: alloc::string::String
+pub devboy_storage::plugin_protocol::PutParams::value: alloc::string::String
+impl core::clone::Clone for devboy_storage::plugin_protocol::PutParams
+pub fn devboy_storage::plugin_protocol::PutParams::clone(&self) -> devboy_storage::plugin_protocol::PutParams
+impl core::cmp::Eq for devboy_storage::plugin_protocol::PutParams
+impl core::cmp::PartialEq for devboy_storage::plugin_protocol::PutParams
+pub fn devboy_storage::plugin_protocol::PutParams::eq(&self, other: &devboy_storage::plugin_protocol::PutParams) -> bool
+impl core::fmt::Debug for devboy_storage::plugin_protocol::PutParams
+pub fn devboy_storage::plugin_protocol::PutParams::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_storage::plugin_protocol::PutParams
+impl serde_core::ser::Serialize for devboy_storage::plugin_protocol::PutParams
+pub fn devboy_storage::plugin_protocol::PutParams::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::plugin_protocol::PutParams
+pub fn devboy_storage::plugin_protocol::PutParams::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::plugin_protocol::PutParams
+impl core::marker::Send for devboy_storage::plugin_protocol::PutParams
+impl core::marker::Sync for devboy_storage::plugin_protocol::PutParams
+impl core::marker::Unpin for devboy_storage::plugin_protocol::PutParams
+impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::PutParams
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::PutParams
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::PutParams
+pub struct devboy_storage::plugin_protocol::PutResult
+pub devboy_storage::plugin_protocol::PutResult::replaced: bool
+impl core::clone::Clone for devboy_storage::plugin_protocol::PutResult
+pub fn devboy_storage::plugin_protocol::PutResult::clone(&self) -> devboy_storage::plugin_protocol::PutResult
+impl core::cmp::Eq for devboy_storage::plugin_protocol::PutResult
+impl core::cmp::PartialEq for devboy_storage::plugin_protocol::PutResult
+pub fn devboy_storage::plugin_protocol::PutResult::eq(&self, other: &devboy_storage::plugin_protocol::PutResult) -> bool
+impl core::fmt::Debug for devboy_storage::plugin_protocol::PutResult
+pub fn devboy_storage::plugin_protocol::PutResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_storage::plugin_protocol::PutResult
+impl serde_core::ser::Serialize for devboy_storage::plugin_protocol::PutResult
+pub fn devboy_storage::plugin_protocol::PutResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_storage::plugin_protocol::PutResult
+pub fn devboy_storage::plugin_protocol::PutResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_storage::plugin_protocol::PutResult
+impl core::marker::Send for devboy_storage::plugin_protocol::PutResult
+impl core::marker::Sync for devboy_storage::plugin_protocol::PutResult
+impl core::marker::Unpin for devboy_storage::plugin_protocol::PutResult
+impl core::marker::UnsafeUnpin for devboy_storage::plugin_protocol::PutResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::plugin_protocol::PutResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::plugin_protocol::PutResult
 pub struct devboy_storage::plugin_protocol::RemoteRefDto
 pub devboy_storage::plugin_protocol::RemoteRefDto::display: core::option::Option<alloc::string::String>
 pub devboy_storage::plugin_protocol::RemoteRefDto::reference: alloc::string::String
@@ -1756,6 +1893,8 @@ pub struct devboy_storage::source::Capabilities(_)
 impl devboy_storage::source::Capabilities
 pub const devboy_storage::source::Capabilities::AUDIT_LOGGED: Self
 pub const devboy_storage::source::Capabilities::BIOMETRIC_PROMPT: Self
+pub const devboy_storage::source::Capabilities::DELETE: Self
+pub const devboy_storage::source::Capabilities::KEY_SOURCE: Self
 pub const devboy_storage::source::Capabilities::LIST: Self
 pub const devboy_storage::source::Capabilities::READ: Self
 pub const devboy_storage::source::Capabilities::ROTATE: Self
@@ -1865,6 +2004,21 @@ impl core::marker::Unpin for devboy_storage::source::GetOutcome
 impl core::marker::UnsafeUnpin for devboy_storage::source::GetOutcome
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::source::GetOutcome
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::source::GetOutcome
+pub struct devboy_storage::source::KeyMaterial(_)
+impl devboy_storage::source::KeyMaterial
+pub fn devboy_storage::source::KeyMaterial::expose(&self) -> &[u8]
+pub fn devboy_storage::source::KeyMaterial::is_empty(&self) -> bool
+pub fn devboy_storage::source::KeyMaterial::len(&self) -> usize
+pub fn devboy_storage::source::KeyMaterial::new(bytes: alloc::vec::Vec<u8>) -> Self
+impl core::fmt::Debug for devboy_storage::source::KeyMaterial
+pub fn devboy_storage::source::KeyMaterial::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_storage::source::KeyMaterial
+impl core::marker::Send for devboy_storage::source::KeyMaterial
+impl core::marker::Sync for devboy_storage::source::KeyMaterial
+impl core::marker::Unpin for devboy_storage::source::KeyMaterial
+impl core::marker::UnsafeUnpin for devboy_storage::source::KeyMaterial
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::source::KeyMaterial
+impl core::panic::unwind_safe::UnwindSafe for devboy_storage::source::KeyMaterial
 pub struct devboy_storage::source::RemoteRef
 pub devboy_storage::source::RemoteRef::display: core::option::Option<alloc::string::String>
 pub devboy_storage::source::RemoteRef::reference: alloc::string::String
@@ -1885,10 +2039,13 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_storage::source::RemoteR
 impl core::panic::unwind_safe::UnwindSafe for devboy_storage::source::RemoteRef
 pub trait devboy_storage::source::SecretSource: core::marker::Send + core::marker::Sync
 pub fn devboy_storage::source::SecretSource::capabilities(&self) -> devboy_storage::source::Capabilities
+pub fn devboy_storage::source::SecretSource::delete<'life0, 'life1, 'async_trait>(&'life0 self, reference: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_storage::source::SecretSource::get<'life0, 'life1, 'async_trait>(&'life0 self, reference: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<devboy_storage::source::GetOutcome>, devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_storage::source::SecretSource::is_available<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_storage::source::SourceStatus> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_storage::source::SecretSource::key_material<'life0, 'life1, 'async_trait>(&'life0 self, purpose: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<devboy_storage::source::KeyMaterial, devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_storage::source::SecretSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<devboy_storage::source::RemoteRef>, devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_storage::source::SecretSource::name(&self) -> &str
+pub fn devboy_storage::source::SecretSource::put<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, reference: &'life1 str, value: &'life2 secrecy::SecretString) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn devboy_storage::source::SecretSource::requires_credential(&self) -> core::option::Option<devboy_storage::source::CredentialRef>
 pub fn devboy_storage::source::SecretSource::validate<'life0, 'life1, 'async_trait>(&'life0 self, reference: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub mod devboy_storage::validation
@@ -2583,6 +2740,8 @@ pub struct devboy_storage::Capabilities(_)
 impl devboy_storage::source::Capabilities
 pub const devboy_storage::source::Capabilities::AUDIT_LOGGED: Self
 pub const devboy_storage::source::Capabilities::BIOMETRIC_PROMPT: Self
+pub const devboy_storage::source::Capabilities::DELETE: Self
+pub const devboy_storage::source::Capabilities::KEY_SOURCE: Self
 pub const devboy_storage::source::Capabilities::LIST: Self
 pub const devboy_storage::source::Capabilities::READ: Self
 pub const devboy_storage::source::Capabilities::ROTATE: Self
@@ -3327,10 +3486,13 @@ pub fn devboy_storage::cache::CachedStore<S>::is_writable(&self) -> bool
 pub fn devboy_storage::cache::CachedStore<S>::store(&self, key: &str, value: &secrecy::SecretString) -> devboy_core::error::Result<()>
 pub trait devboy_storage::SecretSource: core::marker::Send + core::marker::Sync
 pub fn devboy_storage::SecretSource::capabilities(&self) -> devboy_storage::source::Capabilities
+pub fn devboy_storage::SecretSource::delete<'life0, 'life1, 'async_trait>(&'life0 self, reference: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_storage::SecretSource::get<'life0, 'life1, 'async_trait>(&'life0 self, reference: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<core::option::Option<devboy_storage::source::GetOutcome>, devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_storage::SecretSource::is_available<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_storage::source::SourceStatus> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
+pub fn devboy_storage::SecretSource::key_material<'life0, 'life1, 'async_trait>(&'life0 self, purpose: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<devboy_storage::source::KeyMaterial, devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_storage::SecretSource::list<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<alloc::vec::Vec<devboy_storage::source::RemoteRef>, devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_storage::SecretSource::name(&self) -> &str
+pub fn devboy_storage::SecretSource::put<'life0, 'life1, 'life2, 'async_trait>(&'life0 self, reference: &'life1 str, value: &'life2 secrecy::SecretString) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait, 'life2: 'async_trait
 pub fn devboy_storage::SecretSource::requires_credential(&self) -> core::option::Option<devboy_storage::source::CredentialRef>
 pub fn devboy_storage::SecretSource::validate<'life0, 'life1, 'async_trait>(&'life0 self, reference: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = core::result::Result<(), devboy_storage::source::SourceError>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_storage::apply_pattern_inheritance(entry: &devboy_storage::index::IndexEntry, catalogue: &devboy_secret_patterns::user::Catalogue) -> (devboy_storage::index::IndexEntry, core::option::Option<devboy_storage::pattern_resolution::InheritanceWarning>)

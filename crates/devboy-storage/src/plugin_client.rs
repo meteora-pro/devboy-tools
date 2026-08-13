@@ -52,6 +52,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
+use crate::source::Capabilities;
+
 use crate::plugin_manifest::PluginManifest;
 use crate::plugin_protocol::{
     InitParams, JsonRpcVersion, PROTOCOL_VERSION, PluginRequest, PluginResponse, PluginRpcRequest,
@@ -117,6 +119,38 @@ pub enum PluginState {
 // Errors
 // =============================================================================
 
+/// Which capability a call needs, or `None` for the two that are
+/// part of the session rather than of the backend.
+///
+/// A free function so the mapping is testable on its own: it is
+/// the rule the host enforces before spending a round trip, and a
+/// wrong entry here would either block a working call or let an
+/// unsupported one through.
+pub fn required_capability(call: &PluginRequest) -> Option<Capabilities> {
+    match call {
+        PluginRequest::Init(_) | PluginRequest::IsAvailable => None,
+        PluginRequest::Get(_) => Some(Capabilities::READ),
+        PluginRequest::List => Some(Capabilities::LIST),
+        PluginRequest::Validate(_) => Some(Capabilities::VALIDATE),
+        PluginRequest::Put(_) => Some(Capabilities::WRITE),
+        PluginRequest::Delete(_) => Some(Capabilities::DELETE),
+        PluginRequest::KeyMaterial(_) => Some(Capabilities::KEY_SOURCE),
+    }
+}
+
+/// Human name for the capability, for the refusal message.
+fn capability_label(cap: Capabilities) -> &'static str {
+    match cap {
+        Capabilities::READ => "read",
+        Capabilities::LIST => "list",
+        Capabilities::VALIDATE => "validate",
+        Capabilities::WRITE => "write",
+        Capabilities::DELETE => "delete",
+        Capabilities::KEY_SOURCE => "key_source",
+        _ => "unknown",
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum PluginClientError {
     #[error("failed to spawn plugin `{plugin}` at {path}: {source}")]
@@ -126,6 +160,11 @@ pub enum PluginClientError {
         #[source]
         source: std::io::Error,
     },
+    #[error(
+        "plugin `{plugin}` did not declare the `{capability}` capability at handshake, so this \
+         call was not attempted"
+    )]
+    UnsupportedCapability { plugin: String, capability: String },
     #[error("plugin `{plugin}` failed to initialise: {detail}")]
     InitFailed { plugin: String, detail: String },
     #[error(
@@ -183,6 +222,13 @@ struct ClientState {
     last_used: Option<Instant>,
     last_crash: Option<Instant>,
     next_id: u64,
+    /// What the plugin said it could do at handshake.
+    ///
+    /// Was thrown away before: `init` negotiated a capability
+    /// bitset that nothing kept, so the host could not tell a
+    /// backend that refuses writes from one that never claimed to
+    /// support them until a call came back with an error.
+    negotiated: Option<Capabilities>,
 }
 
 struct RunningProcess {
@@ -203,6 +249,7 @@ impl PluginClient {
                 last_used: None,
                 last_crash: None,
                 next_id: 0,
+                negotiated: None,
             })),
             manifest: Arc::new(manifest),
             executable,
@@ -271,9 +318,25 @@ impl PluginClient {
             self.shutdown_locked(&mut state).await;
         }
 
-        // Spawn if needed.
+        // Spawn if needed. The handshake happens inside, so the
+        // negotiated capabilities are known from here on.
         if state.process.is_none() {
             self.spawn_locked(&mut state).await?;
+        }
+
+        // Refuse before spending a round trip on a call the
+        // plugin already said it cannot serve. The check lives
+        // here rather than in per-method wrappers so a caller
+        // that builds a `PluginRequest` by hand cannot slip past
+        // it.
+        if let Some(required) = required_capability(&call) {
+            let declared = state.negotiated.unwrap_or_else(Capabilities::empty);
+            if !declared.contains(required) {
+                return Err(PluginClientError::UnsupportedCapability {
+                    plugin: self.manifest.name.clone(),
+                    capability: capability_label(required).to_owned(),
+                });
+            }
         }
 
         let id = state.next_id.wrapping_add(1);
@@ -467,7 +530,19 @@ impl PluginClient {
             });
         }
         match resp.outcome {
-            RpcOutcome::Result(_) => {}
+            RpcOutcome::Result(PluginResponse::Init(result)) => {
+                state.negotiated = Some(Capabilities::from_bits_truncate(result.capabilities_bits));
+            }
+            RpcOutcome::Result(other) => {
+                // A handshake that answers with something else is
+                // not a working session, and pretending otherwise
+                // only moves the failure to the first real call.
+                self.record_crash_locked_msg(state, "init returned a non-init reply");
+                return Err(PluginClientError::InitFailed {
+                    plugin: self.manifest.name.clone(),
+                    detail: format!("expected an init result, got {other:?}"),
+                });
+            }
             RpcOutcome::Error(e) => {
                 self.record_crash_locked_msg(state, &format!("init returned error: {e}"));
                 return Err(PluginClientError::InitFailed {
@@ -583,6 +658,76 @@ impl Drop for PluginClient {
 // filesystems. macOS runs the same exec without the quirk, so gate
 // the whole module to macOS — mirrors the same fix already in
 // `crates/plugins/secrets/1password/src/lib.rs`.
+/// Pure capability-mapping tests.
+///
+/// Deliberately outside the module below: that one is gated to
+/// macOS because spawning a shell script out of a temp dir trips
+/// a noexec quirk on the Linux runners. Nothing here spawns
+/// anything, and a rule that decides whether a call is even
+/// attempted should not be checked on one platform out of three.
+#[cfg(test)]
+mod capability_gate_tests {
+    use super::*;
+    use crate::plugin_protocol::PROTOCOL_VERSION;
+
+    /// Every method maps to exactly one capability, and the two
+    /// session-level ones map to none. A wrong entry here either
+    /// blocks a working call or lets an unsupported one through,
+    /// and neither shows up until a plugin is in front of it.
+    #[test]
+    fn each_method_declares_the_capability_it_needs() {
+        use crate::plugin_protocol::{
+            DeleteParams, GetParams, InitParams, KeyMaterialParams, PutParams, ValidateParams,
+        };
+
+        let init = PluginRequest::Init(InitParams {
+            source_name: "s".into(),
+            config: Default::default(),
+            protocol_version: PROTOCOL_VERSION.into(),
+        });
+        assert_eq!(required_capability(&init), None);
+        assert_eq!(required_capability(&PluginRequest::IsAvailable), None);
+
+        let cases = [
+            (
+                PluginRequest::Get(GetParams {
+                    reference: "r".into(),
+                }),
+                Capabilities::READ,
+            ),
+            (PluginRequest::List, Capabilities::LIST),
+            (
+                PluginRequest::Validate(ValidateParams {
+                    reference: "r".into(),
+                }),
+                Capabilities::VALIDATE,
+            ),
+            (
+                PluginRequest::Put(PutParams {
+                    reference: "r".into(),
+                    value: "v".into(),
+                }),
+                Capabilities::WRITE,
+            ),
+            (
+                PluginRequest::Delete(DeleteParams {
+                    reference: "r".into(),
+                }),
+                Capabilities::DELETE,
+            ),
+            (
+                PluginRequest::KeyMaterial(KeyMaterialParams {
+                    purpose: "p".into(),
+                }),
+                Capabilities::KEY_SOURCE,
+            ),
+        ];
+        for (call, want) in cases {
+            assert_eq!(required_capability(&call), Some(want), "{call:?}");
+        }
+    }
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
@@ -602,6 +747,50 @@ mod tests {
     /// reads but never writes (for grace-timeout tests);
     /// `"env-dump"` writes the env to a sidecar file then echoes
     /// Init.
+    /// The point of keeping the handshake result: a plugin that
+    /// never claimed `write` must be refused **before** the host
+    /// spends a round trip, and the refusal has to name the
+    /// capability rather than surface as a generic backend error.
+    #[tokio::test]
+    async fn a_call_the_plugin_never_claimed_is_refused_without_reaching_it() {
+        use crate::plugin_protocol::PutParams;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (manifest, path) = write_fake_plugin(dir.path(), "logger", "log-calls");
+        let client = PluginClient::new(manifest, path, LifetimePolicy::default());
+
+        // A read is declared (bits = 1) and goes through.
+        client
+            .request(PluginRequest::IsAvailable)
+            .await
+            .expect("is_available is session-level");
+
+        let err = client
+            .request(PluginRequest::Put(PutParams {
+                reference: "personal/github/token".into(),
+                value: "ghp_never_sent".into(),
+            }))
+            .await
+            .expect_err("write was never declared");
+
+        match &err {
+            PluginClientError::UnsupportedCapability { capability, .. } => {
+                assert_eq!(capability, "write");
+            }
+            other => panic!("expected a capability refusal, got {other:?}"),
+        }
+
+        let calls = std::fs::read_to_string(dir.path().join("calls.txt")).unwrap_or_default();
+        assert!(
+            !calls.contains("ghp_never_sent"),
+            "the value reached the plugin despite the refusal: {calls}"
+        );
+        assert!(
+            !calls.contains("secret_source.put"),
+            "the call reached the plugin despite the refusal: {calls}"
+        );
+    }
+
     fn write_fake_plugin(dir: &Path, name: &str, behaviour: &str) -> (PluginManifest, PathBuf) {
         let exec_path = dir.join(format!("devboy-source-{name}"));
         let script = match behaviour {
@@ -612,6 +801,19 @@ while IFS= read -r line; do
   printf '{{"jsonrpc":"2.0","id":%s,"result":{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}\n' "$id"
 done
 "#
+            ),
+            // Records every request line it is handed, so a test
+            // can assert that a refused call never reached the
+            // plugin at all.
+            "log-calls" => format!(
+                r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "{}/calls.txt"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '{{{{"jsonrpc":"2.0","id":%s,"result":{{{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}}}}}\n' "$id"
+done
+"#,
+                dir.display()
             ),
             "crash" => "#!/bin/sh\nexit 7\n".to_string(),
             "hang" => "#!/bin/sh\nwhile read line; do :; done\nsleep 30\n".to_string(),
