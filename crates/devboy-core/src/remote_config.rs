@@ -299,6 +299,46 @@ pub async fn fetch_secrets_defaults(
     read_secrets_defaults(&remote)
 }
 
+/// Everything an install reads from the config server at `init`
+/// time, from a single fetch.
+///
+/// One request rather than two: the second would carry the same
+/// bootstrap token, and a bootstrap token that a server treats as
+/// single-use would already be spent by the time it arrived.
+#[derive(Debug, Clone, Default)]
+pub struct RemoteOnboarding {
+    /// Starting posture for `[secrets]`, if the server states one.
+    pub secrets: RemoteSecretsDefaults,
+    /// Where to trade the bootstrap token for a durable one, if the
+    /// server offers that.
+    pub token_exchange_url: Option<String>,
+}
+
+/// Read the token-exchange endpoint a server declared.
+///
+/// Only the presence and non-emptiness are decided here. Whether it
+/// may actually be used is [`crate::token_exchange::check_same_origin`]'s
+/// call, and it is deliberately a separate step: this function
+/// answers "did the server ask for an exchange", not "is the request
+/// safe to make".
+pub fn read_token_exchange_url(remote: &Config) -> Option<String> {
+    remote
+        .remote_config
+        .as_ref()
+        .and_then(|rc| rc.token_exchange_url.as_ref())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Fetch the config server's onboarding instructions.
+pub async fn fetch_onboarding(url: &str, token: Option<&str>) -> Result<RemoteOnboarding, String> {
+    let remote = fetch_remote_toml(url, token).await?;
+    Ok(RemoteOnboarding {
+        secrets: read_secrets_defaults(&remote)?,
+        token_exchange_url: read_token_exchange_url(&remote),
+    })
+}
+
 async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -650,6 +690,7 @@ mod tests {
             remote_config: Some(RemoteConfigSettings {
                 url: Some("https://from-config.example/".to_string()),
                 token_key: None,
+                token_exchange_url: None,
             }),
             ..Default::default()
         };
@@ -737,6 +778,7 @@ mod tests {
             remote_config: Some(RemoteConfigSettings {
                 url: Some("https://local.com/config".to_string()),
                 token_key: None,
+                token_exchange_url: None,
             }),
             ..Default::default()
         };
@@ -744,6 +786,7 @@ mod tests {
             remote_config: Some(RemoteConfigSettings {
                 url: Some("https://should-not-be-copied.com".to_string()),
                 token_key: None,
+                token_exchange_url: None,
             }),
             ..Default::default()
         };

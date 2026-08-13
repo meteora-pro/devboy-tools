@@ -1099,6 +1099,7 @@ impl core::marker::UnsafeUnpin for devboy_core::config::ProxyToolRule
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::ProxyToolRule
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::ProxyToolRule
 pub struct devboy_core::config::RemoteConfigSettings
+pub devboy_core::config::RemoteConfigSettings::token_exchange_url: core::option::Option<alloc::string::String>
 pub devboy_core::config::RemoteConfigSettings::token_key: core::option::Option<alloc::string::String>
 pub devboy_core::config::RemoteConfigSettings::url: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::config::RemoteConfigSettings
@@ -1672,6 +1673,22 @@ pub fn devboy_core::provider::UserProvider::get_user_profile<'life0, 'life1, 'as
 pub fn devboy_core::provider::UserProvider::lookup_user_by_email<'life0, 'life1, 'async_trait>(&'life0 self, _email: &'life1 str) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<core::option::Option<devboy_core::types::User>>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_core::provider::UserProvider::provider_name(&self) -> &'static str
 pub mod devboy_core::remote_config
+pub struct devboy_core::remote_config::RemoteOnboarding
+pub devboy_core::remote_config::RemoteOnboarding::secrets: devboy_core::remote_config::RemoteSecretsDefaults
+pub devboy_core::remote_config::RemoteOnboarding::token_exchange_url: core::option::Option<alloc::string::String>
+impl core::clone::Clone for devboy_core::remote_config::RemoteOnboarding
+pub fn devboy_core::remote_config::RemoteOnboarding::clone(&self) -> devboy_core::remote_config::RemoteOnboarding
+impl core::default::Default for devboy_core::remote_config::RemoteOnboarding
+pub fn devboy_core::remote_config::RemoteOnboarding::default() -> devboy_core::remote_config::RemoteOnboarding
+impl core::fmt::Debug for devboy_core::remote_config::RemoteOnboarding
+pub fn devboy_core::remote_config::RemoteOnboarding::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::remote_config::RemoteOnboarding
+impl core::marker::Send for devboy_core::remote_config::RemoteOnboarding
+impl core::marker::Sync for devboy_core::remote_config::RemoteOnboarding
+impl core::marker::Unpin for devboy_core::remote_config::RemoteOnboarding
+impl core::marker::UnsafeUnpin for devboy_core::remote_config::RemoteOnboarding
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::remote_config::RemoteOnboarding
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::remote_config::RemoteOnboarding
 pub struct devboy_core::remote_config::RemoteSecretsDefaults
 pub devboy_core::remote_config::RemoteSecretsDefaults::idle_relock_seconds: core::option::Option<u64>
 pub devboy_core::remote_config::RemoteSecretsDefaults::keychain_enabled: core::option::Option<bool>
@@ -1699,8 +1716,10 @@ impl core::marker::UnsafeUnpin for devboy_core::remote_config::RemoteSecretsDefa
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::remote_config::RemoteSecretsDefaults
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::remote_config::RemoteSecretsDefaults
 pub async fn devboy_core::remote_config::fetch_and_merge(local_config: devboy_core::config::Config, token_from_keychain: core::option::Option<&str>) -> devboy_core::config::Config
+pub async fn devboy_core::remote_config::fetch_onboarding(url: &str, token: core::option::Option<&str>) -> core::result::Result<devboy_core::remote_config::RemoteOnboarding, alloc::string::String>
 pub async fn devboy_core::remote_config::fetch_secrets_defaults(url: &str, token: core::option::Option<&str>) -> core::result::Result<devboy_core::remote_config::RemoteSecretsDefaults, alloc::string::String>
 pub fn devboy_core::remote_config::read_secrets_defaults(remote: &devboy_core::config::Config) -> core::result::Result<devboy_core::remote_config::RemoteSecretsDefaults, alloc::string::String>
+pub fn devboy_core::remote_config::read_token_exchange_url(remote: &devboy_core::config::Config) -> core::option::Option<alloc::string::String>
 pub fn devboy_core::remote_config::redact_url_for_display(raw: &str) -> alloc::string::String
 pub fn devboy_core::remote_config::resolve_url(local_config: &devboy_core::config::Config) -> core::option::Option<alloc::string::String>
 pub mod devboy_core::secret_approval
@@ -1782,6 +1801,50 @@ impl core::marker::UnsafeUnpin for devboy_core::secret_approval::SessionApproval
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::secret_approval::SessionApprovalCache
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::secret_approval::SessionApprovalCache
 pub fn devboy_core::secret_approval::approval_unavailable_message(policy_label: &str) -> alloc::string::String
+pub mod devboy_core::token_exchange
+pub enum devboy_core::token_exchange::ExchangeError
+pub devboy_core::token_exchange::ExchangeError::BadResponse(alloc::string::String)
+pub devboy_core::token_exchange::ExchangeError::ForeignOrigin
+pub devboy_core::token_exchange::ExchangeError::ForeignOrigin::config_origin: alloc::string::String
+pub devboy_core::token_exchange::ExchangeError::ForeignOrigin::declared: alloc::string::String
+pub devboy_core::token_exchange::ExchangeError::Status
+pub devboy_core::token_exchange::ExchangeError::Status::status: u16
+pub devboy_core::token_exchange::ExchangeError::Transport(alloc::string::String)
+pub devboy_core::token_exchange::ExchangeError::Unparseable(alloc::string::String)
+impl core::error::Error for devboy_core::token_exchange::ExchangeError
+impl core::fmt::Debug for devboy_core::token_exchange::ExchangeError
+pub fn devboy_core::token_exchange::ExchangeError::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for devboy_core::token_exchange::ExchangeError
+pub fn devboy_core::token_exchange::ExchangeError::fmt(&self, __formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::token_exchange::ExchangeError
+impl core::marker::Send for devboy_core::token_exchange::ExchangeError
+impl core::marker::Sync for devboy_core::token_exchange::ExchangeError
+impl core::marker::Unpin for devboy_core::token_exchange::ExchangeError
+impl core::marker::UnsafeUnpin for devboy_core::token_exchange::ExchangeError
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::token_exchange::ExchangeError
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::token_exchange::ExchangeError
+pub struct devboy_core::token_exchange::ExchangedToken
+pub devboy_core::token_exchange::ExchangedToken::expires_at: core::option::Option<alloc::string::String>
+pub devboy_core::token_exchange::ExchangedToken::token: alloc::string::String
+impl devboy_core::token_exchange::ExchangedToken
+pub fn devboy_core::token_exchange::ExchangedToken::describe(&self) -> alloc::string::String
+impl core::clone::Clone for devboy_core::token_exchange::ExchangedToken
+pub fn devboy_core::token_exchange::ExchangedToken::clone(&self) -> devboy_core::token_exchange::ExchangedToken
+impl core::fmt::Debug for devboy_core::token_exchange::ExchangedToken
+pub fn devboy_core::token_exchange::ExchangedToken::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::token_exchange::ExchangedToken
+pub fn devboy_core::token_exchange::ExchangedToken::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::token_exchange::ExchangedToken
+impl core::marker::Send for devboy_core::token_exchange::ExchangedToken
+impl core::marker::Sync for devboy_core::token_exchange::ExchangedToken
+impl core::marker::Unpin for devboy_core::token_exchange::ExchangedToken
+impl core::marker::UnsafeUnpin for devboy_core::token_exchange::ExchangedToken
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::token_exchange::ExchangedToken
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::token_exchange::ExchangedToken
+pub fn devboy_core::token_exchange::check_same_origin(config_url: &str, exchange_url: &str) -> core::result::Result<(), devboy_core::token_exchange::ExchangeError>
+pub async fn devboy_core::token_exchange::exchange(config_url: &str, exchange_url: &str, bootstrap: &str) -> core::result::Result<devboy_core::token_exchange::ExchangedToken, devboy_core::token_exchange::ExchangeError>
+pub fn devboy_core::token_exchange::origin_of(raw: &str) -> core::option::Option<alloc::string::String>
+pub fn devboy_core::token_exchange::parse_response(body: &str) -> core::result::Result<devboy_core::token_exchange::ExchangedToken, devboy_core::token_exchange::ExchangeError>
 pub mod devboy_core::tool_category
 pub enum devboy_core::tool_category::ToolCategory
 pub devboy_core::tool_category::ToolCategory::Epics
@@ -6594,6 +6657,7 @@ impl core::marker::UnsafeUnpin for devboy_core::types::ReleaseAsset
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::ReleaseAsset
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::ReleaseAsset
 pub struct devboy_core::RemoteConfigSettings
+pub devboy_core::RemoteConfigSettings::token_exchange_url: core::option::Option<alloc::string::String>
 pub devboy_core::RemoteConfigSettings::token_key: core::option::Option<alloc::string::String>
 pub devboy_core::RemoteConfigSettings::url: core::option::Option<alloc::string::String>
 impl core::clone::Clone for devboy_core::config::RemoteConfigSettings

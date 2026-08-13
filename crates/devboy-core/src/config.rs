@@ -949,6 +949,22 @@ pub struct RemoteConfigSettings {
     /// Keychain key for the Bearer token (e.g., "remote_config.token").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_key: Option<String>,
+
+    /// Where to trade a short-lived onboarding token for a durable
+    /// one, when the config server offers that.
+    ///
+    /// Read from the server's *response*, not written by the user:
+    /// declaring it is how a server opts into
+    /// [`crate::token_exchange`]. A server that declares nothing
+    /// keeps the old behaviour, where the token supplied on the
+    /// command line is stored as-is.
+    ///
+    /// Only honoured when it shares an origin with the config URL —
+    /// acting on it means posting a live credential to wherever it
+    /// points, and that decision belongs to the person who chose the
+    /// config server, not to the response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_exchange_url: Option<String>,
 }
 
 fn default_gitlab_url() -> String {

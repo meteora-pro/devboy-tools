@@ -15,6 +15,41 @@ First-run setup of the secret framework on a new machine or in a new repository.
 
 ---
 
+## For operators: short-lived setup commands
+
+*Skip this section unless you run a config server that hands people a `devboy init` command to paste.*
+
+A setup command carries a token, and every copy of it — shell history, chat, a screen share, a support ticket — is a live credential for as long as that token is valid. Devboy can trade the pasted token for a durable one at install time, so what got copied is worthless within minutes.
+
+Opt in by adding one field to the TOML your config endpoint already serves:
+
+```toml
+[remote_config]
+token_exchange_url = "https://config.example.com/api/config/exchange"
+```
+
+`devboy init` then makes one request:
+
+```text
+POST <token_exchange_url>
+Authorization: Bearer <the pasted token>
+Accept: application/json
+
+→ 200 {"token": "<durable token>", "expires_at": "2027-01-01T00:00:00Z"}
+```
+
+`expires_at` is optional and advisory — it is shown to the user, not enforced.
+
+Three rules the client applies, so you can design the server around them:
+
+- **The exchange URL must share an origin with the config URL.** Acting on a URL that arrived in a response means posting a live credential to wherever it points; devboy will only do that against the host the user already chose to trust. Host your exchange endpoint on the same origin, or do not declare one.
+- **The client exchanges once and does not retry.** A bootstrap token is expected to be consumed by the first successful exchange. Whether it is truly single-use, and what a replay is recorded as, is yours to decide — the client will not paper over a failure by trying again.
+- **A failed exchange fails `init`.** Storing a token that dies in minutes would produce an install that looks finished and stops working. The user is told to ask for a fresh setup command while the old one is still on screen.
+
+Declaring nothing keeps the old behaviour exactly: the token supplied on the command line is stored as-is. Nothing here is required to use devboy.
+
+---
+
 ## Step 1. Install and verify the CLI
 
 If `devboy` is already on `PATH`, skip this step.

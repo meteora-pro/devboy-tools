@@ -1513,14 +1513,31 @@ async fn handle_init_command(
 
     // Add remote config settings if provided
     if let Some(url) = remote_config_url {
-        // Ask the config server what posture it wants this
-        // install to start from, before the token is moved into
-        // `options`.
-        if let Some((secrets, applied)) =
-            fetch_operator_secrets_defaults(&url, remote_config_token.as_deref()).await
+        // One fetch, carrying both of the things a config server can
+        // tell a fresh install: the posture to start from, and
+        // whether the token it was given should be traded in.
+        let onboarding = fetch_onboarding_hints(&url, remote_config_token.as_deref()).await;
+
+        if let Some((secrets, applied)) = onboarding
+            .as_ref()
+            .and_then(|o| operator_secrets_posture(&o.secrets))
         {
             apply_operator_secrets_posture(secrets, &applied, dry_run)?;
         }
+
+        // Trade a short-lived onboarding token for a durable one,
+        // where the server offers that.
+        let remote_config_token = match (
+            remote_config_token,
+            onboarding
+                .as_ref()
+                .and_then(|o| o.token_exchange_url.clone()),
+        ) {
+            (Some(bootstrap), Some(exchange_url)) => {
+                Some(exchange_onboarding_token(&url, &exchange_url, bootstrap, dry_run).await?)
+            }
+            (token, _) => token,
+        };
 
         let token_key = if let Some(token_value) = remote_config_token {
             let key = "remote_config.token".to_string();
@@ -1532,6 +1549,11 @@ async fn handle_init_command(
         options.remote_config = Some(devboy_core::RemoteConfigSettings {
             url: Some(url),
             token_key,
+            // Not written into the local config: the exchange
+            // endpoint is something the server declares in its
+            // response, per install, and a stale copy on disk would
+            // be a place for the two to disagree.
+            token_exchange_url: None,
         });
     }
 
@@ -2135,27 +2157,74 @@ fn minimal_devboy_toml_template() -> String {
 /// init. It is deliberately not re-fetched: a value that changed
 /// under the user on every invocation would be a security setting
 /// they cannot see in any file they own.
-async fn fetch_operator_secrets_defaults(
+async fn fetch_onboarding_hints(
     url: &str,
     token: Option<&str>,
-) -> Option<(devboy_core::config::SecretsConfig, Vec<String>)> {
-    let defaults = match devboy_core::remote_config::fetch_secrets_defaults(url, token).await {
-        Ok(d) => d,
+) -> Option<devboy_core::remote_config::RemoteOnboarding> {
+    match devboy_core::remote_config::fetch_onboarding(url, token).await {
+        Ok(o) => Some(o),
         Err(e) => {
             eprintln!(
-                "warning: could not read secrets defaults from the remote config: {e}\n  \
-                 continuing with the built-in defaults — change them later with `devboy config \
-                 set secrets.<field> <value>`"
+                "warning: could not read the remote config: {e}\n  continuing with the built-in \
+                 defaults — change them later with `devboy config set secrets.<field> <value>`"
             );
-            return None;
+            None
         }
-    };
+    }
+}
 
+/// Turn declared defaults into a posture, or `None` when the server
+/// stated nothing.
+fn operator_secrets_posture(
+    defaults: &devboy_core::remote_config::RemoteSecretsDefaults,
+) -> Option<(devboy_core::config::SecretsConfig, Vec<String>)> {
     if defaults.is_empty() {
         return None;
     }
+    Some((secrets_config_from_defaults(defaults), defaults.describe()))
+}
 
-    Some((secrets_config_from_defaults(&defaults), defaults.describe()))
+/// Trade the onboarding token for a durable one.
+///
+/// # Why a failure here stops `init`
+///
+/// A bootstrap token is expected to be consumed by the first
+/// successful exchange, and to expire in minutes either way. Storing
+/// it after a failed exchange would produce an install that looks
+/// finished and stops working before the user has finished reading
+/// the output, with nothing pointing back at this moment. Better to
+/// say what went wrong while the command they pasted is still on
+/// screen.
+///
+/// The exception is a server that never offered an exchange: that is
+/// not a failure and never reaches this function.
+async fn exchange_onboarding_token(
+    config_url: &str,
+    exchange_url: &str,
+    bootstrap: String,
+    dry_run: bool,
+) -> Result<String> {
+    use devboy_core::token_exchange;
+
+    if dry_run {
+        // Never spend a single-use token to preview an install.
+        println!(
+            "[dry-run] Would exchange the onboarding token at {} for a durable one",
+            devboy_core::remote_config::redact_url_for_display(exchange_url)
+        );
+        return Ok(bootstrap);
+    }
+
+    match token_exchange::exchange(config_url, exchange_url, &bootstrap).await {
+        Ok(exchanged) => {
+            println!("Exchanged the onboarding token: {}", exchanged.describe());
+            Ok(exchanged.token)
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "{e}\n\nThe token you pasted is short-lived and is now of no further use. Ask for a \
+             fresh setup command and run `devboy init` again."
+        )),
+    }
 }
 
 /// Write an operator-supplied posture into the config that the
