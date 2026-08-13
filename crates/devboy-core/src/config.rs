@@ -36,6 +36,19 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 /// Config directory name.
 const CONFIG_DIR_NAME: &str = "devboy-tools";
 
+/// Environment variable that replaces the platform's config
+/// directory outright.
+///
+/// The value is used as-is — `CONFIG_DIR_NAME` is *not* appended,
+/// because a caller pointing this at a scratch directory wants that
+/// directory, not a subdirectory of it.
+///
+/// Primarily for tests that spawn the real binary: see
+/// [`Config::config_dir`] for why `HOME` and `XDG_CONFIG_HOME` are
+/// not enough. Also usable for running two configurations side by
+/// side, which is why it is documented rather than hidden.
+pub const CONFIG_DIR_ENV: &str = "DEVBOY_CONFIG_DIR";
+
 // =============================================================================
 // Configuration structures
 // =============================================================================
@@ -1288,7 +1301,27 @@ impl Config {
     pub const DEFAULT_CONTEXT_NAME: &'static str = "default";
 
     /// Get the configuration directory path.
+    ///
+    /// [`CONFIG_DIR_ENV`] overrides the platform default, and exists
+    /// for one reason: without it, nothing that runs the real binary
+    /// can be isolated from the developer's own configuration on
+    /// Windows.
+    ///
+    /// `dirs::config_dir()` reads `XDG_CONFIG_HOME` on Linux and
+    /// `$HOME/Library/Application Support` on macOS, both of which a
+    /// test can redirect. On Windows it goes through the Known Folder
+    /// API, which no environment variable reaches — so a test that
+    /// spawns `devboy` there writes to the config of whoever ran
+    /// `cargo test`. That is not a hypothetical: it is why the
+    /// keyfile-enrolment tests had to be gated to UNIX.
     pub fn config_dir() -> Result<PathBuf> {
+        if let Ok(overridden) = std::env::var(CONFIG_DIR_ENV) {
+            let trimmed = overridden.trim();
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(trimmed));
+            }
+        }
+
         dirs::config_dir()
             .map(|p| p.join(CONFIG_DIR_NAME))
             .ok_or_else(|| Error::Config("Could not determine config directory".to_string()))
@@ -4281,5 +4314,52 @@ endpoint = "https://app.example.com/api/telemetry/tool-invocations"
         let config = BuiltinToolsConfig::default();
         // Empty config — nothing to check
         config.warn_unknown_tools(known);
+    }
+}
+
+#[cfg(test)]
+mod config_dir_override_tests {
+    use super::*;
+
+    /// The override replaces the directory outright. Appending
+    /// `devboy-tools` to it would surprise a caller who pointed it at
+    /// a scratch directory and then looked for their file there.
+    #[test]
+    fn the_override_is_used_verbatim() {
+        temp_env::with_var(CONFIG_DIR_ENV, Some("/tmp/devboy-scratch"), || {
+            assert_eq!(
+                Config::config_dir().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch")
+            );
+            assert_eq!(
+                Config::config_path().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch").join(CONFIG_FILE_NAME)
+            );
+        });
+    }
+
+    /// An empty value is a variable someone meant to unset, not a
+    /// request to use the current directory.
+    #[test]
+    fn an_empty_override_falls_through_to_the_platform_default() {
+        let platform = temp_env::with_var_unset(CONFIG_DIR_ENV, || Config::config_dir().unwrap());
+
+        for blank in ["", "   "] {
+            temp_env::with_var(CONFIG_DIR_ENV, Some(blank), || {
+                assert_eq!(
+                    Config::config_dir().unwrap(),
+                    platform,
+                    "a blank override must not change where the config lives"
+                );
+            });
+        }
+    }
+
+    /// Without the variable, nothing about the existing behaviour
+    /// changes — the override is an addition, not a redirection.
+    #[test]
+    fn the_platform_default_still_ends_in_the_product_directory() {
+        let path = temp_env::with_var_unset(CONFIG_DIR_ENV, || Config::config_dir().unwrap());
+        assert!(path.ends_with(CONFIG_DIR_NAME), "{}", path.display());
     }
 }

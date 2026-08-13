@@ -13,21 +13,15 @@
 //! throughout. So these tests spawn the actual `devboy` binary and
 //! then check the vault file it left behind.
 //!
-//! # Why UNIX only
+//! # Isolation
 //!
-//! `keyfile add` writes `secrets.keyfile_path` into the global
-//! config, and the global config's location comes from
-//! `dirs::config_dir()`. On Windows that resolves through the Known
-//! Folder API, which no environment variable can redirect — so on
-//! Windows these tests would not be hermetic: they would rewrite the
-//! real config of whoever ran `cargo test`. Refusing to run is better
-//! than running and modifying a developer's machine.
-//!
-//! The command itself is not UNIX-only; only this harness is. Making
-//! it testable on Windows needs a config-directory override, which is
-//! a change to `devboy-core` rather than to a test.
-
-#![cfg(unix)]
+//! Two paths have to be pinned or these tests are not hermetic.
+//! `HOME` and `XDG_CONFIG_HOME` are not enough: `dirs` ignores the
+//! former on Windows entirely and the latter on macOS state
+//! directories. So the keyfile location is passed with `--path`, and
+//! the config directory with `DEVBOY_CONFIG_DIR`. Without the second
+//! one, running these on Windows would rewrite the config of whoever
+//! ran `cargo test`.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -91,10 +85,16 @@ impl Env {
             .env("HOME", self.home.path())
             .env("XDG_CONFIG_HOME", self.home.path().join("config"))
             .env("XDG_STATE_HOME", self.home.path().join("state"))
+            .env("DEVBOY_CONFIG_DIR", self.config_dir())
             .env("DEVBOY_VAULT_PATH", &self.vault)
             .env("DEVBOY_VAULT_PASSPHRASE", PASSPHRASE)
             .output()
             .expect("run devboy")
+    }
+
+    /// Where the global config goes for this test.
+    fn config_dir(&self) -> PathBuf {
+        self.home.path().join("devboy-config")
     }
 
     /// `--path` for the subcommands that accept it.
@@ -115,27 +115,6 @@ impl Env {
             _ => None,
         })
     }
-}
-
-/// Locate the `config.toml` the binary wrote, wherever the platform
-/// put it.
-///
-/// Found rather than assumed: `dirs::config_dir()` honours
-/// `XDG_CONFIG_HOME` on Linux and `$HOME/Library/Application Support`
-/// on macOS, so a hardcoded path passes on one and fails on the other.
-fn find_config(root: &std::path::Path) -> Option<PathBuf> {
-    for entry in std::fs::read_dir(root).ok()?.flatten() {
-        let path = entry.path();
-        if path.file_name().is_some_and(|n| n == "config.toml") {
-            return Some(path);
-        }
-        if path.is_dir()
-            && let Some(found) = find_config(&path)
-        {
-            return Some(found);
-        }
-    }
-    None
 }
 
 fn stdout(out: &std::process::Output) -> String {
@@ -198,13 +177,9 @@ fn enrolling_records_the_path_in_the_config() {
     let out = env.run(&["secrets", "keyfile", "add"]);
     assert!(out.status.success(), "{}", stdout(&out));
 
-    // Found rather than assumed: `dirs::config_dir()` honours
-    // `XDG_CONFIG_HOME` on Linux and `$HOME/Library/Application
-    // Support` on macOS, so a hardcoded path passes on one and fails
-    // on the other.
-    let config = find_config(env.home.path())
-        .unwrap_or_else(|| panic!("no config.toml under {}", env.home.path().display()));
-    let text = std::fs::read_to_string(&config).expect("read config");
+    let config = env.config_dir().join("config.toml");
+    let text = std::fs::read_to_string(&config)
+        .unwrap_or_else(|e| panic!("no config at {}: {e}", config.display()));
 
     assert!(
         text.contains("keyfile_path"),
@@ -287,6 +262,7 @@ fn enrolling_under_a_machine_id_override_warns() {
         .env("HOME", env.home.path())
         .env("XDG_CONFIG_HOME", env.home.path().join("config"))
         .env("XDG_STATE_HOME", env.home.path().join("state"))
+        .env("DEVBOY_CONFIG_DIR", env.config_dir())
         .env("DEVBOY_VAULT_PATH", &env.vault)
         .env("DEVBOY_VAULT_PASSPHRASE", PASSPHRASE)
         .env("DEVBOY_MACHINE_ID", "a-value-from-this-shell-only")

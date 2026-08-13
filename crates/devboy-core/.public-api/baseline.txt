@@ -1256,6 +1256,7 @@ impl core::marker::Unpin for devboy_core::config::YouGileConfig
 impl core::marker::UnsafeUnpin for devboy_core::config::YouGileConfig
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::YouGileConfig
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::YouGileConfig
+pub const devboy_core::config::CONFIG_DIR_ENV: &str
 pub fn devboy_core::config::default_slack_required_scopes() -> alloc::vec::Vec<alloc::string::String>
 pub fn devboy_core::config::matches_glob(pattern: &str, name: &str) -> bool
 pub fn devboy_core::config::routing_strategy_slug(s: devboy_core::config::RoutingStrategy) -> alloc::string::String

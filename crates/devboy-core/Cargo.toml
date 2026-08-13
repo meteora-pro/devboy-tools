@@ -41,6 +41,10 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 mockall.workspace = true
 tempfile.workspace = true
 httpmock.workspace = true
+# Scoped env-var mutation for the config-dir override tests; the
+# workspace `unsafe_code = "forbid"` lint blocks a bare
+# `std::env::set_var`.
+temp-env = "0.3"
 
 [lints]
 workspace = true
