@@ -15,6 +15,7 @@
 
 pub mod aead;
 pub mod audit;
+pub mod fingerprint;
 pub mod format;
 pub mod keyfile;
 pub mod passphrase;

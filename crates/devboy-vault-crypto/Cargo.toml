@@ -38,8 +38,11 @@ dirs.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-# tempfile is in [dependencies] above (used by atomic write); no
-# extra dev-only deps for this crate yet.
+# tempfile is in [dependencies] above (used by atomic write).
+# Scoped env-var mutation for the machine-binding tests; the
+# workspace `unsafe_code = "forbid"` lint blocks a bare
+# `std::env::set_var`.
+temp-env = "0.3"
 
 [lints]
 workspace = true

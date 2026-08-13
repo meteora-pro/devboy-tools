@@ -398,6 +398,25 @@ pub enum Envelope {
         keyfile_salt: String,
         /// AEAD-wrapped vault key (base64 no-pad).
         wrapped_key: String,
+        /// Machine-binding scheme mixed into the derivation, if any
+        /// (ADR-024 §6, Ф16).
+        ///
+        /// `Some("machine-v1")` means this envelope only unwraps on
+        /// the machine that created it: copying the vault *and* the
+        /// keyfile together — a synced home directory, a container
+        /// image — will not open it elsewhere.
+        ///
+        /// `None` means unbound, and is not a defect. It is what an
+        /// environment with no stable machine identifier gets, and
+        /// what every envelope written before this field existed
+        /// has. Recording the choice here rather than inferring it
+        /// is what lets an unwrap failure say *which* thing changed
+        /// instead of reporting a generic AEAD error.
+        ///
+        /// The fingerprint itself is never stored — only the name of
+        /// the scheme that produced it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        machine_binding: Option<String>,
     },
     /// Recovery envelope — vault key wrapped under
     /// `HKDF(BIP39_seed, bip39_salt)`.

@@ -46,6 +46,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::aead::{self, AeadError, KEY_LEN};
+use crate::fingerprint::{self, MachineFingerprint};
 use crate::format::{Envelope, b64_decode, b64_encode};
 
 /// AAD bound into the keyfile envelope's AEAD wrap.
@@ -99,6 +100,32 @@ pub enum KeyfileError {
         path: String,
         /// Length actually read.
         got: usize,
+    },
+
+    /// The envelope is bound to a machine, and no machine identifier
+    /// could be read here.
+    ///
+    /// Distinct from a decryption failure because the fix is
+    /// different and the user cannot tell the two apart from the
+    /// outside: this is "I cannot tell which machine I am", not "the
+    /// key is wrong".
+    #[error(
+        "this vault's keyfile envelope is bound to the machine that created it, but no machine \
+         identifier could be read here. If this is the same machine, the identifier may have been \
+         reset; if the vault was copied from elsewhere, it will not open — re-run `devboy init` on \
+         this machine"
+    )]
+    MachineIdUnavailable,
+
+    /// The envelope records a binding scheme this build does not
+    /// implement — an envelope written by a newer devboy.
+    #[error(
+        "this vault's keyfile envelope uses machine-binding scheme `{scheme}`, which this version \
+         of devboy does not understand. Upgrade devboy, or unlock with a passphrase"
+    )]
+    UnknownBinding {
+        /// Scheme name found in the envelope.
+        scheme: String,
     },
 
     /// AEAD wrap or unwrap failed.
@@ -219,12 +246,56 @@ pub fn create_keyfile(path: &Path) -> Result<Zeroizing<Vec<u8>>, KeyfileError> {
     Ok(bytes)
 }
 
+/// Work out which fingerprint an envelope needs to be unwrapped.
+///
+/// The three outcomes are distinct on purpose, because the fixes are
+/// different: no binding recorded means derive without one; a
+/// recorded binding this build understands means reproduce it, and
+/// failing to *collect* it is a hard error rather than a silent
+/// fallback to unbound — falling back would turn "this machine has
+/// changed" into "the passphrase is wrong", which is the sort of
+/// diagnosis that costs an afternoon.
+/// `collected` is passed in rather than read here so the decision can
+/// be tested on every platform — including the case where no machine
+/// id is readable, which cannot be produced on a host that has one.
+pub(crate) fn resolve_binding(
+    recorded: Option<&str>,
+    collected: Option<MachineFingerprint>,
+) -> Result<Option<MachineFingerprint>, KeyfileError> {
+    let Some(scheme) = recorded else {
+        return Ok(None);
+    };
+
+    if scheme != fingerprint::BINDING_V1 {
+        return Err(KeyfileError::UnknownBinding {
+            scheme: scheme.to_owned(),
+        });
+    }
+
+    collected
+        .map(Some)
+        .ok_or(KeyfileError::MachineIdUnavailable)
+}
+
 /// Derive the envelope wrap key from keyfile bytes.
+///
+/// `binding`, when present, is appended to the HKDF salt. Extending
+/// the salt rather than the `info` label keeps the machine identifier
+/// where non-secret derivation inputs belong, and makes the two
+/// derivations trivially distinct: the same keyfile and the same
+/// per-envelope salt produce a different key on a different machine,
+/// which is the entire point.
 pub fn derive_keyfile_key(
     keyfile: &[u8],
     salt: &[u8],
+    binding: Option<&MachineFingerprint>,
 ) -> Result<Zeroizing<[u8; KEY_LEN]>, KeyfileError> {
-    let hkdf = Hkdf::<Sha256>::new(Some(salt), keyfile);
+    let mut salt_material = salt.to_vec();
+    if let Some(fp) = binding {
+        salt_material.extend_from_slice(fp.as_bytes());
+    }
+
+    let hkdf = Hkdf::<Sha256>::new(Some(&salt_material), keyfile);
     let mut out = Zeroizing::new([0u8; KEY_LEN]);
     hkdf.expand(KEYFILE_HKDF_INFO, out.as_mut())
         .map_err(|_| KeyfileError::HkdfFailed)?;
@@ -232,16 +303,24 @@ pub fn derive_keyfile_key(
 }
 
 /// Wrap `vault_key` in a keyfile envelope.
+///
+/// Binds the envelope to this machine when an identifier is
+/// available, and records the choice so [`unwrap_keyfile`] knows what
+/// to reproduce. An environment with no stable identifier gets an
+/// unbound envelope rather than a failure — see
+/// [`crate::fingerprint`] for why that is the right default.
 pub fn create_keyfile_envelope(
     vault_key: &[u8; KEY_LEN],
     keyfile: &[u8],
     salt: [u8; 32],
 ) -> Result<Envelope, KeyfileError> {
-    let wrap_key = derive_keyfile_key(keyfile, &salt)?;
+    let binding = fingerprint::machine_fingerprint();
+    let wrap_key = derive_keyfile_key(keyfile, &salt, binding.as_ref())?;
     let packed = aead::encrypt_packed(&wrap_key, KEYFILE_ENVELOPE_AAD, vault_key.as_ref())?;
     Ok(Envelope::Keyfile {
         keyfile_salt: b64_encode(&salt),
         wrapped_key: b64_encode(&packed),
+        machine_binding: binding.map(|_| fingerprint::BINDING_V1.to_owned()),
     })
 }
 
@@ -250,11 +329,12 @@ pub fn unwrap_keyfile(
     envelope: &Envelope,
     keyfile: &[u8],
 ) -> Result<Zeroizing<[u8; KEY_LEN]>, KeyfileError> {
-    let (keyfile_salt, wrapped_key) = match envelope {
+    let (keyfile_salt, wrapped_key, machine_binding) = match envelope {
         Envelope::Keyfile {
             keyfile_salt,
             wrapped_key,
-        } => (keyfile_salt, wrapped_key),
+            machine_binding,
+        } => (keyfile_salt, wrapped_key, machine_binding),
         Envelope::Passphrase { .. } => {
             return Err(KeyfileError::WrongKind { kind: "passphrase" });
         }
@@ -269,7 +349,11 @@ pub fn unwrap_keyfile(
         });
     }
 
-    let wrap_key = derive_keyfile_key(keyfile, &salt_bytes)?;
+    let binding = resolve_binding(
+        machine_binding.as_deref(),
+        fingerprint::machine_fingerprint(),
+    )?;
+    let wrap_key = derive_keyfile_key(keyfile, &salt_bytes, binding.as_ref())?;
     let packed = b64_decode(wrapped_key)?;
     let plaintext = aead::decrypt_packed(&wrap_key, KEYFILE_ENVELOPE_AAD, &packed)?;
 
@@ -397,6 +481,7 @@ mod tests {
         let Envelope::Keyfile {
             keyfile_salt,
             wrapped_key,
+            machine_binding,
         } = env
         else {
             unreachable!()
@@ -409,8 +494,64 @@ mod tests {
         let tampered = Envelope::Keyfile {
             keyfile_salt,
             wrapped_key: b64_encode(&bytes),
+            machine_binding,
         };
         assert!(unwrap_keyfile(&tampered, &keyfile_bytes()).is_err());
+    }
+
+    /// An unbound envelope needs no fingerprint, whether or not one
+    /// happens to be available.
+    #[test]
+    fn an_unrecorded_binding_needs_no_fingerprint() {
+        assert!(resolve_binding(None, None).unwrap().is_none());
+        assert!(
+            resolve_binding(None, Some(fingerprint::fingerprint_of("anything")))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// The case that cannot be produced end-to-end on a host that
+    /// has a machine id, which is every host these tests run on.
+    ///
+    /// Falling back to unbound here would be the dangerous
+    /// alternative: it would turn "this machine has changed" into a
+    /// decryption failure indistinguishable from a wrong keyfile.
+    #[test]
+    fn a_bound_envelope_with_no_readable_machine_id_says_exactly_that() {
+        let err = resolve_binding(Some(fingerprint::BINDING_V1), None)
+            .expect_err("must not silently fall back to unbound");
+
+        assert!(matches!(err, KeyfileError::MachineIdUnavailable), "{err:?}");
+        assert!(
+            err.to_string().contains("devboy init"),
+            "the error has to name the way out: {err}"
+        );
+    }
+
+    #[test]
+    fn a_recognised_binding_uses_the_collected_fingerprint() {
+        let fp = fingerprint::fingerprint_of("machine-alpha");
+        let resolved = resolve_binding(Some(fingerprint::BINDING_V1), Some(fp.clone()))
+            .unwrap()
+            .expect("some");
+
+        assert_eq!(resolved.as_bytes(), fp.as_bytes());
+    }
+
+    /// The derivation must actually depend on the fingerprint, or
+    /// every test above is passing for the wrong reason.
+    #[test]
+    fn the_fingerprint_changes_the_derived_key() {
+        let alpha = fingerprint::fingerprint_of("machine-alpha");
+        let beta = fingerprint::fingerprint_of("machine-beta");
+
+        let unbound = derive_keyfile_key(&keyfile_bytes(), &[0x33; 32], None).unwrap();
+        let with_alpha = derive_keyfile_key(&keyfile_bytes(), &[0x33; 32], Some(&alpha)).unwrap();
+        let with_beta = derive_keyfile_key(&keyfile_bytes(), &[0x33; 32], Some(&beta)).unwrap();
+
+        assert_ne!(unbound.as_ref(), with_alpha.as_ref());
+        assert_ne!(with_alpha.as_ref(), with_beta.as_ref());
     }
 
     #[test]

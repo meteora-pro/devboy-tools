@@ -229,6 +229,9 @@ fn a_wrapped_key_disguised_as_another_kind_stays_shut() {
     let disguised = Envelope::Keyfile {
         keyfile_salt: totp_salt,
         wrapped_key,
+        // Unbound, so the AAD is the only thing that can reject this
+        // — which is exactly what the assertion below is about.
+        machine_binding: None,
     };
 
     assert!(
