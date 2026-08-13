@@ -117,12 +117,21 @@ impl McpProxyClient {
         // the agent's transcript. Registering a copy adds no exposure:
         // the same value is already baked into `http_client`'s default
         // headers.
+        //
+        // Before the handshake, not after. `initialize` is the first
+        // request to carry this token and therefore the first that
+        // can be answered with a 401 quoting it, and its error goes
+        // out of here by `?`. Registering afterwards left the
+        // registry empty for exactly that request: the scrub ran and
+        // had nothing to match.
         if let Some(token) = token {
             client.credentials.remember(
                 crate::response_scrub::static_token_label(name),
                 token.expose_secret(),
             );
         }
+
+        client.initialize().await?;
 
         Ok(client)
     }
@@ -212,8 +221,6 @@ impl McpProxyClient {
             credentials: crate::response_scrub::CredentialRegistry::new(),
         };
 
-        client.initialize().await?;
-
         Ok(client)
     }
 
@@ -238,8 +245,6 @@ impl McpProxyClient {
             oauth,
             credentials: crate::response_scrub::CredentialRegistry::new(),
         };
-
-        client.initialize().await?;
 
         Ok(client)
     }
@@ -1171,6 +1176,53 @@ mod tests {
 
         let err = result.err().expect("should be error");
         assert!(err.to_string().contains("Initialize failed"));
+    }
+
+    /// A 401 on the handshake must not put the token in the error.
+    ///
+    /// `initialize` is the first request carrying the credential, so
+    /// it is the first that can be rejected with a body quoting it —
+    /// the case the whole error-scrubbing path exists for. The
+    /// registration used to happen after `connect_*` returned, which
+    /// is after the handshake, so for this one request the registry
+    /// was empty: the scrub ran and matched nothing, and the error
+    /// went out of `connect` with the token in it.
+    #[tokio::test]
+    async fn the_handshake_401_does_not_carry_the_token_out() {
+        // Deliberately shapeless: no `sk-`, no `ghp_`, nothing the
+        // catalogue recognises. A secret-shaped value would be
+        // redacted by pattern alone and the test would pass whether
+        // or not the registry knew it — which is exactly how the
+        // first draft of this test fooled its own negative control.
+        const TOKEN: &str = "upstream-credential-for-the-test-8823641907";
+
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/mcp");
+            // What a real gateway does: name the credential it
+            // refused.
+            then.status(401)
+                .body(format!("token {TOKEN} is expired or revoked"));
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let err = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            Some(&SecretString::from(TOKEN.to_owned())),
+            "bearer",
+            ProxyTransport::StreamableHttp,
+            None,
+        )
+        .await
+        .err()
+        .expect("a 401 handshake fails");
+
+        assert!(
+            !err.to_string().contains(TOKEN),
+            "the upstream quoted the token back and it reached the caller: {err}"
+        );
     }
 
     #[tokio::test]
