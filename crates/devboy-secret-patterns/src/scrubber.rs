@@ -24,6 +24,21 @@
 //!   no path is known, which catches tokens the framework never
 //!   provisioned.
 //!
+//! # Which regex the shape pass uses
+//!
+//! Catalogue patterns are anchored (`^glpat-…$`) because their first
+//! job is validating a whole candidate value. Fed to this pass as-is
+//! they can only match when the text *is* a single token, so the
+//! embedded occurrences the pass exists for slip through — which is
+//! exactly what happened until [`crate::scanning`] was added.
+//!
+//! So the pass prefers [`SecretPattern::scan_regex`] and falls back to
+//! the anchored [`SecretPattern::format_regex`] only for patterns that
+//! cannot safely scan free text. Those keep whole-string matching:
+//! narrower than before is wrong, and scanning them would be worse
+//! than not scanning at all. [`Scrubber::scanning_pattern_count`]
+//! reports the split so a caller can say which protection it has.
+//!
 //! # Cost
 //!
 //! Matching uses an Aho-Corasick automaton built once from the
@@ -66,6 +81,19 @@ impl ScrubOutcome {
     }
 }
 
+/// One catalogue pattern prepared for the shape pass.
+struct PatternMatcher {
+    /// Pattern id, used as the redaction label.
+    id: String,
+    /// The regex actually applied — scanning form where the pattern
+    /// has one, anchored validator otherwise.
+    regex: regex::Regex,
+    /// Whether `regex` can match inside a larger string. `false`
+    /// means this pattern only fires on text that is entirely one
+    /// token.
+    scans: bool,
+}
+
 /// Matches provisioned values, and secret-shaped strings that are
 /// not provisioned.
 pub struct Scrubber {
@@ -74,7 +102,7 @@ pub struct Scrubber {
     /// Path for each pattern index in the automaton.
     paths: Vec<String>,
     /// Catalogue patterns used for the shape-only fallback.
-    patterns: Vec<(String, regex::Regex)>,
+    patterns: Vec<PatternMatcher>,
 }
 
 impl std::fmt::Debug for Scrubber {
@@ -138,8 +166,18 @@ impl Scrubber {
         I: IntoIterator<Item = &'a dyn SecretPattern>,
     {
         for pattern in patterns {
-            self.patterns
-                .push((pattern.id().to_owned(), pattern.format_regex().clone()));
+            // Scanning form first: the anchored validator cannot find
+            // a token inside a sentence, which is the only case this
+            // pass is here for.
+            let (regex, scans) = match pattern.scan_regex() {
+                Some(scan) => (scan.clone(), true),
+                None => (pattern.format_regex().clone(), false),
+            };
+            self.patterns.push(PatternMatcher {
+                id: pattern.id().to_owned(),
+                regex,
+                scans,
+            });
         }
         self
     }
@@ -193,16 +231,17 @@ impl Scrubber {
         let mut out = text.to_owned();
         let mut replacements = Vec::new();
 
-        for (id, regex) in &self.patterns {
-            let count = regex.find_iter(&out).count();
+        for matcher in &self.patterns {
+            let count = matcher.regex.find_iter(&out).count();
             if count == 0 {
                 continue;
             }
-            out = regex
-                .replace_all(&out, format!("[REDACTED:{id}]").as_str())
+            out = matcher
+                .regex
+                .replace_all(&out, format!("[REDACTED:{}]", matcher.id).as_str())
                 .into_owned();
             replacements.push(Replacement {
-                label: id.clone(),
+                label: matcher.id.clone(),
                 known: false,
                 count,
             });
@@ -214,6 +253,22 @@ impl Scrubber {
     /// How many provisioned values this scrubber can recognise.
     pub fn known_value_count(&self) -> usize {
         self.paths.len()
+    }
+
+    /// How many catalogue patterns can find a match *inside* a larger
+    /// string, out of [`Scrubber::pattern_count`] total.
+    ///
+    /// The remainder only fire on text that is entirely one token.
+    /// Worth surfacing rather than assuming: a caller that reports
+    /// "shape-based redaction is on" while every pattern is
+    /// whole-string-only is describing protection it does not have.
+    pub fn scanning_pattern_count(&self) -> usize {
+        self.patterns.iter().filter(|p| p.scans).count()
+    }
+
+    /// How many catalogue patterns are loaded.
+    pub fn pattern_count(&self) -> usize {
+        self.patterns.len()
     }
 }
 
@@ -379,6 +434,71 @@ mod tests {
 
         assert!(!rendered.contains("SUPERSECRETVALUE"), "{rendered}");
         assert!(rendered.contains("known_values"), "{rendered}");
+    }
+
+    /// The regression this pass was silently missing.
+    ///
+    /// Every earlier test here used a hand-written unanchored pattern,
+    /// so the module looked correct while the real catalogue — which
+    /// is anchored — could never match anything but a bare token.
+    /// Using the shipped patterns is the whole point of the test.
+    #[test]
+    fn a_real_catalogue_pattern_matches_a_token_inside_a_sentence() {
+        let s = Scrubber::new(Vec::<(String, String)>::new()).with_patterns(crate::builtins());
+
+        let out = s.scrub("upstream returned 401: token glpat-ABCDEFGHIJKLMNOPQRSTU is invalid");
+
+        assert!(
+            !out.text.contains("glpat-ABCDEFGHIJKLMNOPQRSTU"),
+            "the value survived: {}",
+            out.text
+        );
+        assert!(out.text.contains("[REDACTED:gitlab-pat]"), "{}", out.text);
+    }
+
+    /// Most of the catalogue can scan; the ones that cannot are
+    /// refused on purpose and must still be loaded for whole-string
+    /// matching rather than dropped.
+    #[test]
+    fn the_catalogue_reports_how_much_of_it_can_scan() {
+        let s = Scrubber::new(Vec::<(String, String)>::new()).with_patterns(crate::builtins());
+
+        assert_eq!(s.pattern_count(), 31);
+        assert_eq!(s.scanning_pattern_count(), 26);
+    }
+
+    /// The alias written by pass one must survive pass two. If a
+    /// catalogue pattern matched `@secret:<path>` the log would say
+    /// `[REDACTED:…]` and lose the one detail that makes it useful —
+    /// which secret leaked.
+    #[test]
+    fn an_alias_from_the_first_pass_is_not_redacted_by_the_second() {
+        let s = Scrubber::new([("team/gitlab/deploy-token", "glpat-ABCDEFGHIJKLMNOPQRSTU")])
+            .with_patterns(crate::builtins());
+
+        let out = s.scrub("push failed with glpat-ABCDEFGHIJKLMNOPQRSTU");
+
+        assert!(
+            out.text.contains("@secret:team/gitlab/deploy-token"),
+            "{}",
+            out.text
+        );
+        assert!(!out.text.contains("[REDACTED"), "{}", out.text);
+    }
+
+    /// Ordinary output must come through untouched. A scrubber that
+    /// eats commit hashes and file paths gets switched off, and then
+    /// it protects nothing at all.
+    #[test]
+    fn ordinary_tool_output_passes_through_the_catalogue_untouched() {
+        let s = Scrubber::new(Vec::<(String, String)>::new()).with_patterns(crate::builtins());
+
+        let text = "commit 08a2981b047b0f8ffa464e80d5486e04ecaee460 touched \
+                    crates/devboy-storage/src/source.rs (see https://github.com/meteora-pro/devboy-tools)";
+        let out = s.scrub(text);
+
+        assert_eq!(out.text, text, "replacements: {:?}", out.replacements);
+        assert!(!out.had_leak());
     }
 
     /// Multi-byte input must not be sliced mid-character.

@@ -61,6 +61,7 @@
 #![forbid(unsafe_code)]
 
 pub mod builtin;
+pub mod scanning;
 pub mod scrubber;
 pub mod user;
 
@@ -289,6 +290,25 @@ pub trait SecretPattern: Send + Sync {
 
     /// Severity to attach to a leak finding for this pattern.
     fn severity(&self) -> Severity;
+
+    /// Regular expression that finds this kind of value *inside* a
+    /// larger string, or `None` when the pattern is unfit to scan
+    /// free text.
+    ///
+    /// [`format_regex`](Self::format_regex) answers "is this whole
+    /// string a token?" and is anchored for that reason. Redaction
+    /// asks a different question — "is there a token anywhere in this
+    /// response?" — which an anchored regex can never answer.
+    ///
+    /// `None` is a normal answer, not a defect: a pattern with no
+    /// distinctive literal prefix cannot scan free text without
+    /// matching ordinary content. See [`crate::scanning`] for the
+    /// promotion rules. Callers must treat `None` as "validate whole
+    /// strings only" rather than falling back to `format_regex`
+    /// expecting it to find embedded matches.
+    fn scan_regex(&self) -> Option<&Regex> {
+        None
+    }
 
     /// Optional descriptive metadata (provider, retrieval URL,
     /// expiry, scopes).
