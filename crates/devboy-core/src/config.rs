@@ -1327,6 +1327,24 @@ impl Config {
             .ok_or_else(|| Error::Config("Could not determine config directory".to_string()))
     }
 
+    /// Directory holding the vault, the global secrets index and the
+    /// audit log.
+    ///
+    /// Derived from [`Config::config_dir`] so it follows
+    /// [`CONFIG_DIR_ENV`] with everything else. Four call sites used
+    /// to build this path by hand from `dirs::config_dir()`; each
+    /// would have kept pointing at the platform default while the
+    /// config moved, which is the kind of split that produces a
+    /// vault the CLI can see and the daemon cannot.
+    pub fn secrets_dir() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("secrets"))
+    }
+
+    /// Canonical vault location.
+    pub fn vault_path() -> Result<PathBuf> {
+        Ok(Self::secrets_dir()?.join("vault.dvb"))
+    }
+
     /// Get the configuration file path.
     pub fn config_path() -> Result<PathBuf> {
         Ok(Self::config_dir()?.join(CONFIG_FILE_NAME))
@@ -4353,6 +4371,24 @@ mod config_dir_override_tests {
                 );
             });
         }
+    }
+
+    /// The vault, the index and the audit log must land beside the
+    /// config, not on the platform default. An override that moved
+    /// one and not the others would produce an install the CLI can
+    /// see and the daemon cannot.
+    #[test]
+    fn the_secrets_directory_follows_the_override() {
+        temp_env::with_var(CONFIG_DIR_ENV, Some("/tmp/devboy-scratch"), || {
+            assert_eq!(
+                Config::secrets_dir().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch/secrets")
+            );
+            assert_eq!(
+                Config::vault_path().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch/secrets/vault.dvb")
+            );
+        });
     }
 
     /// Without the variable, nothing about the existing behaviour

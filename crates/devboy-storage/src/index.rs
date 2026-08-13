@@ -297,11 +297,15 @@ impl GlobalIndex {
     ///
     /// Errors only if `dirs::config_dir()` returns `None`.
     pub fn default_path() -> Result<PathBuf, IndexError> {
-        let dir = dirs::config_dir().ok_or(IndexError::NoConfigDir)?;
-        Ok(dir
-            .join("devboy-tools")
-            .join(SECRETS_SUBDIR)
-            .join(INDEX_FILENAME))
+        // Via `Config::secrets_dir` rather than `dirs::config_dir()`
+        // directly, so the index follows `DEVBOY_CONFIG_DIR` along
+        // with the config and the vault. Resolving it independently
+        // would let an override move the config while the index
+        // stayed on the platform default — two halves of one install
+        // in two places.
+        devboy_core::config::Config::secrets_dir()
+            .map(|dir| dir.join(INDEX_FILENAME))
+            .map_err(|_| IndexError::NoConfigDir)
     }
 
     /// Load the index from the canonical default path.

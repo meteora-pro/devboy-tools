@@ -1836,8 +1836,9 @@ fn agent_uninstall(args: AgentUninstallArgs) -> Result<()> {
 }
 
 fn default_log_path() -> Result<PathBuf> {
-    let dir = dirs::config_dir().context("could not resolve the user's config directory")?;
-    Ok(dir.join("devboy-tools").join("secrets").join("agent.log"))
+    devboy_core::config::Config::secrets_dir()
+        .map(|dir| dir.join("agent.log"))
+        .context("could not resolve the user's config directory")
 }
 
 // =============================================================================

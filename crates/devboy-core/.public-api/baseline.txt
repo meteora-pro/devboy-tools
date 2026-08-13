@@ -673,9 +673,11 @@ pub fn devboy_core::config::Config::resolve_active_context_name(&self) -> core::
 pub fn devboy_core::config::Config::sanitize(&mut self)
 pub fn devboy_core::config::Config::save(&self) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::save_to(&self, path: &std::path::PathBuf) -> devboy_core::error::Result<()>
+pub fn devboy_core::config::Config::secrets_dir() -> devboy_core::error::Result<std::path::PathBuf>
 pub fn devboy_core::config::Config::set(&mut self, key: &str, value: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::set_active_context(&mut self, name: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::validate(&self) -> devboy_core::error::Result<()>
+pub fn devboy_core::config::Config::vault_path() -> devboy_core::error::Result<std::path::PathBuf>
 impl devboy_core::config::Config
 pub fn devboy_core::config::Config::idle_relock_seconds(&self) -> core::option::Option<u64>
 pub fn devboy_core::config::Config::is_ci_forced(&self) -> bool
@@ -4837,9 +4839,11 @@ pub fn devboy_core::config::Config::resolve_active_context_name(&self) -> core::
 pub fn devboy_core::config::Config::sanitize(&mut self)
 pub fn devboy_core::config::Config::save(&self) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::save_to(&self, path: &std::path::PathBuf) -> devboy_core::error::Result<()>
+pub fn devboy_core::config::Config::secrets_dir() -> devboy_core::error::Result<std::path::PathBuf>
 pub fn devboy_core::config::Config::set(&mut self, key: &str, value: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::set_active_context(&mut self, name: &str) -> devboy_core::error::Result<()>
 pub fn devboy_core::config::Config::validate(&self) -> devboy_core::error::Result<()>
+pub fn devboy_core::config::Config::vault_path() -> devboy_core::error::Result<std::path::PathBuf>
 impl devboy_core::config::Config
 pub fn devboy_core::config::Config::idle_relock_seconds(&self) -> core::option::Option<u64>
 pub fn devboy_core::config::Config::is_ci_forced(&self) -> bool

@@ -314,8 +314,10 @@ fn vault_path() -> Result<PathBuf> {
     if let Ok(explicit) = std::env::var("DEVBOY_VAULT_PATH") {
         return Ok(PathBuf::from(explicit));
     }
-    let dir = dirs::config_dir().context("could not resolve the user's config directory")?;
-    Ok(dir.join("devboy-tools").join("secrets").join("vault.dvb"))
+    // Shared with the daemon and the index rather than rebuilt here:
+    // a second copy of this path is a second thing to keep in step.
+    devboy_core::config::Config::vault_path()
+        .context("could not resolve the user's config directory")
 }
 
 /// Environment variable holding the vault passphrase for an
