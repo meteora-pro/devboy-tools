@@ -593,7 +593,6 @@ mod tests {
         assert_ne!(key_a.as_ref(), key_b.as_ref());
     }
 
-    #[test]
     /// The round trip the daemon depends on: what enrolment stores
     /// decodes back to the key the authenticator uses.
     #[test]
