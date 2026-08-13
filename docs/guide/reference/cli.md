@@ -79,6 +79,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets keyfile remove`↴](#devboy-secrets-keyfile-remove)
 * [`devboy secrets versions`↴](#devboy-secrets-versions)
 * [`devboy secrets restore`↴](#devboy-secrets-restore)
+* [`devboy secrets purge`↴](#devboy-secrets-purge)
 * [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
 * [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
 * [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
@@ -810,6 +811,7 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `keyfile` — Manage the keyfile that lets the vault open with no human present (ADR-024 §6)
 * `versions` — Show the write history of a secret (ADR-024 §5)
 * `restore` — Undo a write by bringing an earlier version back
+* `purge` — Permanently destroy a secret's ciphertext (ADR-024 §5)
 * `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
 
 
@@ -1239,6 +1241,25 @@ Deliberately a person's command and not an agent's: an agent that can undo its o
 ###### **Options:**
 
 * `--version <VERSION>` — Version to bring back. Omit to restore the one before the current version, which is what "undo that last write" means
+
+
+
+## `devboy secrets purge`
+
+Permanently destroy a secret's ciphertext (ADR-024 §5).
+
+The only operation here that cannot be undone: every other write appends a version and leaves the old one recoverable. User-only by design — no agent-facing tool purges anything.
+
+**Usage:** `devboy secrets purge [OPTIONS] <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path to purge. Accepts the `path@version` form the ADR names, as well as `--version`
+
+###### **Options:**
+
+* `--version <VERSION>` — Purge only this version. Omit to purge every version of the path — including the current one
+* `--yes` — Required when there is no terminal to confirm on
 
 
 

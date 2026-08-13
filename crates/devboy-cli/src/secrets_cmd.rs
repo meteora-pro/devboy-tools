@@ -117,6 +117,13 @@ pub enum SecretsCommands {
     /// that can undo its own writes can also undo a human's
     /// correction of them.
     Restore(crate::secrets_versions::RestoreArgs),
+
+    /// Permanently destroy a secret's ciphertext (ADR-024 §5).
+    ///
+    /// The only operation here that cannot be undone: every other
+    /// write appends a version and leaves the old one recoverable.
+    /// User-only by design — no agent-facing tool purges anything.
+    Purge(crate::secrets_versions::PurgeArgs),
     /// Work with KDBX 4 (KeePass) files as a SecretSource. The
     /// passphrase is prompted from stdin with no echo; the
     /// decrypted body lives only inside this process and is
@@ -573,6 +580,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Keyfile(args) => crate::secrets_keyfile::run(args),
         SecretsCommands::Versions(args) => crate::secrets_versions::run_versions(args),
         SecretsCommands::Restore(args) => crate::secrets_versions::run_restore(args),
+        SecretsCommands::Purge(args) => crate::secrets_versions::run_purge(args),
         SecretsCommands::Kdbx { command } => match command {
             KdbxCommands::Peek(args) => kdbx_peek(args),
             KdbxCommands::DescribeMetadata(args) => kdbx_describe_metadata(args),

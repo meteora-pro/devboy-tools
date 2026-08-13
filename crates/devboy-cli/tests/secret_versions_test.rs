@@ -185,3 +185,53 @@ fn an_unknown_path_says_how_to_find_the_right_one() {
     let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr));
     assert!(text.contains("devboy secrets list"), "{text}");
 }
+
+/// Purge is the one operation the version history does not protect
+/// against, so it must actually destroy — and must refuse to do so
+/// without explicit agreement.
+#[test]
+fn purge_destroys_only_after_explicit_agreement() {
+    let env = Env::with_a_clobbered_secret();
+
+    // Without --yes and without a terminal, it must refuse.
+    let refused = env.run(&["secrets", "purge", PATH]);
+    assert!(!refused.status.success(), "{}", stdout(&refused));
+    let text = format!(
+        "{}{}",
+        stdout(&refused),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(text.contains("--yes"), "the refusal must say how: {text}");
+    assert_eq!(
+        env.current_value(),
+        "oops-wrong-token",
+        "a refused purge must not have destroyed anything"
+    );
+
+    // With --yes it goes through.
+    let done = env.run(&["secrets", "purge", PATH, "--yes"]);
+    assert!(done.status.success(), "{}", stdout(&done));
+
+    let vault = Vault::open(
+        &env.vault,
+        UnlockMethod::Passphrase(SecretString::from(PASSPHRASE.to_owned())),
+    )
+    .expect("reopen");
+    assert!(
+        vault.versions(PATH).is_empty(),
+        "every version should be gone"
+    );
+}
+
+/// One version can be purged while the rest survive.
+#[test]
+fn a_single_version_can_be_purged_by_the_inline_form() {
+    let env = Env::with_a_clobbered_secret();
+
+    let out = env.run(&["secrets", "purge", &format!("{PATH}@1"), "--yes"]);
+    assert!(out.status.success(), "{}", stdout(&out));
+
+    let listing = stdout(&env.run(&["secrets", "versions", PATH]));
+    assert!(!listing.contains("v1 "), "v1 should be gone: {listing}");
+    assert!(listing.contains("v2"), "v2 should remain: {listing}");
+}

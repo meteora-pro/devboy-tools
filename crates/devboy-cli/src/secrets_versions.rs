@@ -55,6 +55,23 @@ pub struct RestoreArgs {
     pub version: Option<u64>,
 }
 
+/// Arguments for `devboy secrets purge <path>`.
+#[derive(Args, Debug)]
+pub struct PurgeArgs {
+    /// ADR-020 path to purge. Accepts the `path@version` form the
+    /// ADR names, as well as `--version`.
+    pub path: String,
+
+    /// Purge only this version. Omit to purge every version of the
+    /// path — including the current one.
+    #[arg(long)]
+    pub version: Option<u64>,
+
+    /// Required when there is no terminal to confirm on.
+    #[arg(long)]
+    pub yes: bool,
+}
+
 /// Run `devboy secrets versions`.
 pub fn run_versions(args: VersionsArgs) -> Result<()> {
     let vault = open_vault()?;
@@ -94,6 +111,89 @@ pub fn run_restore(args: RestoreArgs) -> Result<()> {
          history, so the value you just replaced is still recoverable too.",
         args.path
     );
+    Ok(())
+}
+
+/// Run `devboy secrets purge`.
+///
+/// The only operation in the vault that destroys ciphertext, which is
+/// why it asks twice: once for the passphrase, once for the intent.
+pub fn run_purge(args: PurgeArgs) -> Result<()> {
+    let (path, inline_version) = split_versioned_path(&args.path);
+    let version = args.version.or(inline_version);
+
+    confirm_destruction(&path, version, args.yes)?;
+
+    let mut vault = open_vault()?;
+    vault
+        .purge(&path, version)
+        .with_context(|| format!("could not purge `{path}`"))?;
+
+    println!("{}", purged_message(&path, version));
+    Ok(())
+}
+
+/// Split the `path@version` form the ADR names.
+///
+/// Kept separate and tested because a path that merely contains an
+/// `@` — which ADR-020 paths may — must not be mistaken for a
+/// version selector.
+pub fn split_versioned_path(raw: &str) -> (String, Option<u64>) {
+    match raw.rsplit_once('@') {
+        Some((path, suffix)) => match suffix.parse::<u64>() {
+            Ok(v) if !path.is_empty() => (path.to_owned(), Some(v)),
+            _ => (raw.to_owned(), None),
+        },
+        None => (raw.to_owned(), None),
+    }
+}
+
+/// What the user is told after a purge.
+pub fn purged_message(path: &str, version: Option<u64>) -> String {
+    match version {
+        Some(v) => format!("Purged version {v} of `{path}`. That ciphertext is gone."),
+        None => format!("Purged every version of `{path}`. That ciphertext is gone."),
+    }
+}
+
+/// The warning shown before destroying anything.
+///
+/// Separate from the prompt so the wording can be tested: this is the
+/// last thing a user reads before an irreversible action, and it has
+/// to say plainly that no version history saves them here.
+pub fn destruction_warning(path: &str, version: Option<u64>) -> String {
+    match version {
+        Some(v) => format!(
+            "This permanently destroys version {v} of `{path}`. Unlike every other write in this              vault, a purge cannot be undone — there is no version to restore it from afterwards."
+        ),
+        None => format!(
+            "This permanently destroys EVERY version of `{path}`, including the current one.              Unlike every other write in this vault, a purge cannot be undone."
+        ),
+    }
+}
+
+/// Get explicit agreement before destroying ciphertext.
+fn confirm_destruction(path: &str, version: Option<u64>, yes: bool) -> Result<()> {
+    use std::io::IsTerminal;
+
+    eprintln!("{}", destruction_warning(path, version));
+
+    if yes {
+        return Ok(());
+    }
+
+    anyhow::ensure!(
+        std::io::stdin().is_terminal(),
+        "refusing to purge without confirmation. Re-run with `--yes` if you are sure"
+    );
+
+    let agreed = dialoguer::Confirm::new()
+        .with_prompt("Purge anyway?")
+        .default(false)
+        .interact()
+        .context("could not read the confirmation")?;
+
+    anyhow::ensure!(agreed, "purge cancelled — nothing was destroyed");
     Ok(())
 }
 
@@ -257,6 +357,44 @@ mod tests {
     fn the_listing_says_plainly_that_it_shows_no_values() {
         let out = render_versions("p", &[v(1, false)]);
         assert!(out.contains("Values are never shown"), "{out}");
+    }
+
+    /// The ADR names `path@version`, so it has to work.
+    #[test]
+    fn the_inline_version_form_is_understood() {
+        assert_eq!(
+            split_versioned_path("team/gitlab/token@3"),
+            ("team/gitlab/token".to_owned(), Some(3))
+        );
+    }
+
+    /// An ADR-020 path may contain an `@`; only a trailing number
+    /// after the last one is a version selector.
+    #[test]
+    fn an_at_sign_that_is_not_a_version_is_left_alone() {
+        assert_eq!(
+            split_versioned_path("team/mail@example.com/token"),
+            ("team/mail@example.com/token".to_owned(), None)
+        );
+        assert_eq!(
+            split_versioned_path("team/x/token@latest"),
+            ("team/x/token@latest".to_owned(), None)
+        );
+    }
+
+    /// Purge is the one operation the version history does not
+    /// protect against, and the warning has to say exactly that —
+    /// the user's whole mental model here is "everything is
+    /// recoverable".
+    #[test]
+    fn the_warning_says_this_one_cannot_be_undone() {
+        let one = destruction_warning("p", Some(2));
+        assert!(one.contains("version 2"), "{one}");
+        assert!(one.contains("cannot be undone"), "{one}");
+
+        let all = destruction_warning("p", None);
+        assert!(all.contains("EVERY version"), "{all}");
+        assert!(all.contains("including the current one"), "{all}");
     }
 
     /// A user looking at history is usually about to undo something,
