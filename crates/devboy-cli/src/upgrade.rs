@@ -370,7 +370,7 @@ pub async fn run_upgrade(check_only: bool) -> Result<()> {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            bail!("Unknown archive format: {}", asset_name);
+            bail!("ZIP archives are only supported on Windows: {}", asset_name);
         }
     } else {
         bail!("Unknown archive format: {}", asset_name);
