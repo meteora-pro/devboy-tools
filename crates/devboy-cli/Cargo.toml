@@ -44,6 +44,7 @@ devboy-secrets-agent = { workspace = true }
 devboy-secrets-ui = { workspace = true }
 devboy-token-catalog = { workspace = true }
 regex.workspace = true
+rayon.workspace = true
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.28"
 devboy-secret-keychain = { workspace = true }

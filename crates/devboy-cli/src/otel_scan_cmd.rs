@@ -10,6 +10,7 @@ use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use devboy_otel_scan::{Finding, ScanReport, Scanner, scan_jsonl};
 use devboy_secret_patterns::Catalogue;
+use rayon::prelude::*;
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
 
@@ -227,15 +228,24 @@ fn scan_input(
         ));
     }
     if metadata.is_dir() {
-        let mut report = ScanReport::default();
         let files = collect_jsonl_files(path)?;
         if files.is_empty() {
             return Err(format!("no .jsonl files found under '{raw_path}'"));
         }
         let file_count = u64::try_from(files.len()).expect("file count always fits u64");
-        for file in files {
-            report.extend(scan_jsonl_file(scanner, &file)?);
-        }
+        // Each artifact is independent, so scan files concurrently. `files`
+        // is sorted and Rayon collects an indexed parallel iterator in input
+        // order; extending afterward keeps findings deterministic for CI.
+        let reports = files
+            .par_iter()
+            .map(|file| scan_jsonl_file(scanner, file))
+            .collect::<Result<Vec<_>, _>>()?;
+        let report = reports
+            .into_iter()
+            .fold(ScanReport::default(), |mut all, report| {
+                all.extend(report);
+                all
+            });
         return Ok(ScanResult {
             report,
             files: file_count,

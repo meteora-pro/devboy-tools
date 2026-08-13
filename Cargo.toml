@@ -106,6 +106,9 @@ sha2 = "0.10"
 # Regular expressions (used by secret patterns and provider plugins)
 regex = "1"
 
+# CPU-parallel processing for independent artifact files.
+rayon = "1.12"
+
 # Base64 encoding (used by the vault file format for binary payloads in TOML)
 base64 = "0.22"
 
