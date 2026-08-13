@@ -11,7 +11,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use devboy_otel_scan::{Finding, ScanReport, Scanner, scan_jsonl};
 use devboy_secret_patterns::Catalogue;
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// `devboy otel <subcommand>`.
 #[derive(Subcommand)]
@@ -78,8 +78,15 @@ pub fn handle(command: OtelCommands) -> Result<i32> {
 }
 
 fn scan(args: ScanArgs) -> Result<i32> {
+    let overrides = match load_severity_overrides() {
+        Ok(overrides) => overrides,
+        Err(error) => {
+            eprintln!("scan error: {error}");
+            return Ok(3);
+        }
+    };
     let catalogue = Catalogue::builtins_only();
-    let scanner = Scanner::new(&catalogue);
+    let scanner = Scanner::with_severity_overrides(&catalogue, &overrides);
     if matches!(args.output, ScanOutput::RedactedJsonl) {
         return redact_jsonl_input(&scanner, &args.input, args.format);
     }
@@ -98,6 +105,42 @@ fn scan(args: ScanArgs) -> Result<i32> {
         ScanOutput::RedactedJsonl => unreachable!("handled before scanning"),
     }
     Ok(exit_code(&result.report, args.fail_on))
+}
+
+#[derive(Default, Deserialize)]
+struct OtelFileConfig {
+    #[serde(default)]
+    otel: OtelConfig,
+}
+
+#[derive(Default, Deserialize)]
+struct OtelConfig {
+    #[serde(default)]
+    scan: OtelScanConfig,
+}
+
+#[derive(Default, Deserialize)]
+struct OtelScanConfig {
+    #[serde(default)]
+    severity: BTreeMap<String, devboy_secret_patterns::Severity>,
+}
+
+/// Loads project-local category severities from `.devboy.toml`.
+///
+/// ```toml
+/// [otel.scan.severity]
+/// github-pat = "medium"
+/// ```
+fn load_severity_overrides() -> Result<BTreeMap<String, devboy_secret_patterns::Severity>, String> {
+    let path = Path::new(".devboy.toml");
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let contents = fs::read_to_string(path)
+        .map_err(|_| "could not read .devboy.toml".to_owned())?;
+    toml::from_str::<OtelFileConfig>(&contents)
+        .map(|config| config.otel.scan.severity)
+        .map_err(|error| format!("invalid otel scan configuration: {error}"))
 }
 
 fn redact_jsonl_input(scanner: &Scanner<'_>, input: &str, format: ScanFormat) -> Result<i32> {
@@ -583,6 +626,22 @@ mod tests {
         report.summary.medium = 0;
         assert_eq!(exit_code(&report, FailOn::High), 0);
         assert_eq!(exit_code(&report, FailOn::Low), 1);
+    }
+
+    #[test]
+    fn parses_project_severity_overrides() {
+        let config: OtelFileConfig = toml::from_str(
+            r#"
+                [otel.scan.severity]
+                github-pat = "medium"
+            "#,
+        )
+        .expect("valid OTEL scan config");
+
+        assert_eq!(
+            config.otel.scan.severity.get("github-pat"),
+            Some(&devboy_secret_patterns::Severity::Medium)
+        );
     }
 
     #[test]

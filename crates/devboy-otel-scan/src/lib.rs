@@ -12,6 +12,7 @@
 
 use std::fmt;
 use std::io::{self, BufRead};
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use devboy_secret_patterns::{Catalogue, SecretPattern, Severity};
@@ -104,14 +105,39 @@ impl ScanReport {
 
 /// Stateless, non-mutating scanner over a shared secret-pattern catalogue.
 pub struct Scanner<'a> {
-    patterns: Vec<&'a dyn SecretPattern>,
+    patterns: Vec<(&'a dyn SecretPattern, Severity)>,
 }
 
 impl<'a> Scanner<'a> {
     /// Creates a scanner from a catalogue, including user-supplied patterns.
     pub fn new(catalogue: &'a Catalogue) -> Self {
         Self {
-            patterns: catalogue.iter(),
+            patterns: catalogue
+                .iter()
+                .into_iter()
+                .map(|pattern| (pattern, pattern.severity()))
+                .collect(),
+        }
+    }
+
+    /// Creates a scanner whose configured category severities override the
+    /// catalogue defaults. Unknown category ids are ignored.
+    pub fn with_severity_overrides(
+        catalogue: &'a Catalogue,
+        overrides: &BTreeMap<String, Severity>,
+    ) -> Self {
+        Self {
+            patterns: catalogue
+                .iter()
+                .into_iter()
+                .map(|pattern| {
+                    let severity = overrides
+                        .get(pattern.id())
+                        .copied()
+                        .unwrap_or_else(|| pattern.severity());
+                    (pattern, severity)
+                })
+                .collect(),
         }
     }
 
@@ -212,7 +238,7 @@ fn record_id(value: &Value) -> Option<String> {
 }
 
 fn scan_value_at(
-    patterns: &[&dyn SecretPattern],
+    patterns: &[(&dyn SecretPattern, Severity)],
     context: &ScanContext,
     value: &Value,
     path: &str,
@@ -246,7 +272,7 @@ fn scan_value_at(
     }
 }
 
-fn redact_value_at(patterns: &[&dyn SecretPattern], value: &mut Value) {
+fn redact_value_at(patterns: &[(&dyn SecretPattern, Severity)], value: &mut Value) {
     match value {
         Value::String(text) => redact_text(patterns, text),
         Value::Array(values) => {
@@ -263,8 +289,8 @@ fn redact_value_at(patterns: &[&dyn SecretPattern], value: &mut Value) {
     }
 }
 
-fn redact_text(patterns: &[&dyn SecretPattern], text: &mut String) {
-    for pattern in patterns {
+fn redact_text(patterns: &[(&dyn SecretPattern, Severity)], text: &mut String) {
+    for (pattern, _) in patterns {
         if pattern.format_regex().is_match(text) {
             *text = format!("[REDACTED:{}]", pattern.id());
             return;
@@ -292,11 +318,11 @@ fn redact_text(patterns: &[&dyn SecretPattern], text: &mut String) {
     *text = output;
 }
 
-fn redact_token(patterns: &[&dyn SecretPattern], output: &mut String, token: &mut String) {
+fn redact_token(patterns: &[(&dyn SecretPattern, Severity)], output: &mut String, token: &mut String) {
     let trimmed = token.trim_matches(|character: char| matches!(character, '=' | ':' | '`' | '.'));
-    if let Some(pattern) = patterns
+    if let Some((pattern, _)) = patterns
         .iter()
-        .find(|pattern| pattern.format_regex().is_match(trimmed))
+        .find(|(pattern, _)| pattern.format_regex().is_match(trimmed))
     {
         let prefix_length = token.find(trimmed).unwrap_or(0);
         output.push_str(&token[..prefix_length]);
@@ -309,7 +335,7 @@ fn redact_token(patterns: &[&dyn SecretPattern], output: &mut String, token: &mu
 }
 
 fn scan_text(
-    patterns: &[&dyn SecretPattern],
+    patterns: &[(&dyn SecretPattern, Severity)],
     context: &ScanContext,
     path: &str,
     text: &str,
@@ -337,7 +363,7 @@ fn scan_text(
 }
 
 fn scan_candidate(
-    patterns: &[&dyn SecretPattern],
+    patterns: &[(&dyn SecretPattern, Severity)],
     context: &ScanContext,
     path: &str,
     candidate: &str,
@@ -346,9 +372,9 @@ fn scan_candidate(
     if candidate.is_empty() {
         return;
     }
-    for pattern in patterns {
+    for (pattern, severity) in patterns {
         if pattern.format_regex().is_match(candidate) {
-            push_finding(report, context, path, candidate, *pattern);
+            push_finding(report, context, path, candidate, *pattern, *severity);
         }
     }
 }
@@ -537,8 +563,8 @@ fn push_finding(
     attribute_path: &str,
     candidate: &str,
     pattern: &dyn SecretPattern,
+    severity: Severity,
 ) {
-    let severity = pattern.severity();
     let suggested_strategy = match severity {
         Severity::High => SuggestedStrategy::RegexRedact,
         Severity::Medium => SuggestedStrategy::Hash,
@@ -689,5 +715,27 @@ mod tests {
         let serialized = serde_json::to_string(&report).expect("JSON");
         assert!(!serialized.contains("person@example.test"));
         assert!(!serialized.contains(entropy));
+    }
+
+    #[test]
+    fn configured_severity_overrides_change_findings_and_strategy() {
+        let catalogue = Catalogue::builtins_only();
+        let mut overrides = BTreeMap::new();
+        overrides.insert("github-pat".to_owned(), Severity::Medium);
+        let scanner = Scanner::with_severity_overrides(&catalogue, &overrides);
+        let report = scanner.scan_value(
+            &ScanContext::default(),
+            &json!({"token": "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"}),
+        );
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.category == "github-pat")
+            .expect("GitHub PAT finding");
+        assert_eq!(finding.severity, Severity::Medium);
+        assert_eq!(finding.suggested_strategy, SuggestedStrategy::Hash);
+        assert_eq!(report.summary.high, 0);
+        assert_eq!(report.summary.medium, 1);
     }
 }
