@@ -242,9 +242,25 @@ impl VaultServer {
         let Some(vault) = self.vault.as_ref() else {
             return;
         };
-        if let Ok(Some(secret)) = vault.get(crate::totp_session::TOTP_SECRET_PATH) {
-            self.totp
-                .set_secret(secret.expose_secret().as_bytes().to_vec());
+        let Ok(Some(secret)) = vault.get(crate::totp_session::TOTP_SECRET_PATH) else {
+            return;
+        };
+
+        // Decoded, not taken verbatim. The slot is a `SecretString`,
+        // so enrolment stores the base32 *text* of the key; the
+        // authenticator app decodes that same text and HMACs the raw
+        // bytes. Using the text as the key produces a different key
+        // and rejects every code the user's phone shows — which is
+        // what happened until this decode was added.
+        match devboy_vault_crypto::totp::decode_secret(secret.expose_secret()) {
+            Ok(key) => self.totp.set_secret(key),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "the stored TOTP secret could not be decoded, so TOTP re-unlock is \
+                     unavailable. Re-enrol with `devboy secrets add-totp`"
+                );
+            }
         }
     }
 
@@ -1672,7 +1688,77 @@ mod tests {
         );
     }
 
-    /// The check the whole TOTP scheme rests on.
+    /// A code computed the way a phone computes it must verify
+    /// through the daemon.
+    ///
+    /// This is the regression test for the defect that shipped: the
+    /// slot holds base32, the phone HMACs the *decoded* bytes, and
+    /// the daemon used to HMAC the text. Every other test seeded the
+    /// slot with an arbitrary string and derived the expected code
+    /// from that same string, so both halves agreed with each other
+    /// and neither agreed with the user.
+    #[tokio::test]
+    async fn a_code_a_phone_would_show_unlocks_through_the_daemon() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        // Enrolment stores base32 text, exactly as `secrets add-totp`
+        // does.
+        let key = [0x2au8; 32];
+        server
+            .vault
+            .as_mut()
+            .unwrap()
+            .put(
+                crate::totp_session::TOTP_SECRET_PATH,
+                &SecretString::from(data_encoding::BASE32_NOPAD.encode(&key)),
+                EntryMetadata::default(),
+            )
+            .expect("seed");
+
+        // Re-unlock so the daemon adopts it.
+        server
+            .handle_request(req(2, "vault.lock", Value::Null))
+            .await;
+        server
+            .handle_request(req(
+                3,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        // The code the phone shows, derived from the raw key — never
+        // from anything the daemon stored.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let code = devboy_vault_crypto::totp::code_for_step(&key, now / 30).expect("code");
+
+        // Verified against the session rather than through
+        // `totp.unlock`, because §7 refuses the RPC outright for a
+        // daemon started by its caller — which is every daemon under
+        // `cargo test`. That refusal is why this defect survived:
+        // the only path that would have exercised the adopted key was
+        // closed before it reached the key.
+        assert!(
+            server.totp.is_available(),
+            "the daemon should have adopted the enrolled secret"
+        );
+        server
+            .totp
+            .verify(&code, std::time::Instant::now(), now)
+            .expect("a code from the user's authenticator must verify");
+    }
+
+    /// The check the whole TOTP scheme rests on.    /// The check the whole TOTP scheme rests on.
     ///
     /// A code proves a human is present only because the agent
     /// cannot mint one. An agent that could ask an unlocked daemon
@@ -1765,7 +1851,14 @@ mod tests {
             .unwrap()
             .put(
                 crate::totp_session::TOTP_SECRET_PATH,
-                &SecretString::from("12345678901234567890".to_owned()),
+                // Base32, because that is what enrolment writes. The
+                // earlier version of this test seeded a raw ASCII
+                // string, which the daemon then used verbatim as the
+                // HMAC key — the test agreed with the daemon, both
+                // disagreed with the user's authenticator app, and
+                // the feature was dead in production while this
+                // stayed green.
+                &SecretString::from(data_encoding::BASE32_NOPAD.encode(b"12345678901234567890")),
                 EntryMetadata::default(),
             )
             .expect("seed");

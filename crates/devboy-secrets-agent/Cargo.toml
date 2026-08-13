@@ -51,6 +51,8 @@ nix = { version = "0.30", default-features = false, features = ["user", "process
 
 [dev-dependencies]
 tempfile.workspace = true
+# Base32 for seeding the TOTP slot the way enrolment does.
+data-encoding.workspace = true
 temp-env = "0.3"
 
 [lints]

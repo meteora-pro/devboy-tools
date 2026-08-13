@@ -185,6 +185,105 @@ fn collect_gated_paths() -> Vec<GatedPath> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use devboy_storage::{GlobalIndex, IndexEntry, SecretPath};
+
+    /// A context is required by the trait but unused by this check —
+    /// it reads the index and the manifest, not the config.
+    fn ctx() -> DiagnosticContext {
+        DiagnosticContext {
+            config: None,
+            config_path: None,
+            config_exists: false,
+            config_source: "test",
+            config_path_error: None,
+            config_load_error: None,
+            credential_store: std::sync::Arc::new(devboy_storage::MemoryStore::new()),
+            verbose: false,
+        }
+    }
+
+    /// Write a global index containing one path with `policy`.
+    fn index_with(dir: &std::path::Path, path: &str, policy: Option<ApproveOnUse>) {
+        let mut index = GlobalIndex::new();
+        let entry = IndexEntry {
+            approve_on_use: policy,
+            ..IndexEntry::default()
+        };
+        index.insert(SecretPath::parse(path).expect("path"), entry);
+        index
+            .save_to(&dir.join("secrets").join("index.toml"))
+            .expect("save index");
+    }
+
+    /// The check as it actually runs. Until this test existed, only
+    /// the pure helpers were covered — which is precisely the shape
+    /// of defect this whole check was written to catch.
+    // Plain `#[test]`: the runtime is built inside `with_var`, and
+    // `#[tokio::test]` would already have one running.
+    #[test]
+    fn a_gated_path_in_the_index_is_reported_as_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        index_with(
+            dir.path(),
+            "team/prod/db-password",
+            Some(ApproveOnUse::PerCall),
+        );
+
+        let result = temp_env::with_var(
+            devboy_core::config::CONFIG_DIR_ENV,
+            Some(dir.path()),
+            || {
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(ApproveOnUseCheck.run(&ctx()))
+            },
+        );
+
+        assert!(
+            matches!(result.status, CheckStatus::Error),
+            "a path nothing can resolve is an error, not a warning: {:?}",
+            result.status
+        );
+        assert!(
+            result.message.contains("team/prod/db-password"),
+            "{}",
+            result.message
+        );
+        assert!(
+            result.fix_command.is_some(),
+            "the check must offer the command that fixes it"
+        );
+    }
+
+    /// The ordinary case has to stay quiet, or the check becomes
+    /// noise on every `doctor` run.
+    #[test]
+    fn an_index_without_gated_paths_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        index_with(
+            dir.path(),
+            "team/prod/db-password",
+            Some(ApproveOnUse::Never),
+        );
+
+        let result = temp_env::with_var(
+            devboy_core::config::CONFIG_DIR_ENV,
+            Some(dir.path()),
+            || {
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(ApproveOnUseCheck.run(&ctx()))
+            },
+        );
+
+        assert!(
+            matches!(result.status, CheckStatus::Pass),
+            "{:?}",
+            result.status
+        );
+    }
 
     /// `Never` is the only policy that resolves, so it is the
     /// only one this check must stay quiet about.

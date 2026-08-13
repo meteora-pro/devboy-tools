@@ -75,6 +75,9 @@ pub enum TotpError {
     /// The submitted code is not `DIGITS` ASCII digits.
     #[error("TOTP code must be exactly {DIGITS} digits")]
     MalformedCode,
+    /// A stored secret was not the base32 text this module writes.
+    #[error("stored TOTP secret is not valid unpadded base32")]
+    MalformedStoredSecret,
 }
 
 /// Which step a verified code belonged to.
@@ -160,6 +163,30 @@ pub fn verify(secret: &[u8], code: &str, unix_seconds: u64) -> Result<VerifiedSt
 ///
 /// The secret is base32 without padding, which is what every
 /// authenticator expects; `=` padding is rejected by several.
+/// Decode a stored secret back into the key bytes.
+///
+/// # Why this has to exist
+///
+/// The key is raw bytes: [`verify`] and [`code_for_step`] take
+/// `&[u8]`, and [`provisioning_uri`] base32-*encodes* them for the
+/// authenticator app, which decodes and HMACs the raw bytes.
+///
+/// But the vault slot holding the shared secret is a `SecretString`,
+/// so what gets stored is the base32 *text*. Anything reading that
+/// slot must decode it before using it as a key. Skipping that step
+/// yields a key made of the ASCII characters of the base32 — a
+/// different key from the one in the user's phone, so every code is
+/// rejected and nothing says why.
+///
+/// That is not hypothetical: it is exactly what the daemon did until
+/// this function existed, and the tests missed it because both sides
+/// of the test used the same undecoded string.
+pub fn decode_secret(stored: &str) -> Result<Vec<u8>, TotpError> {
+    data_encoding::BASE32_NOPAD
+        .decode(stored.trim().as_bytes())
+        .map_err(|_| TotpError::MalformedStoredSecret)
+}
+
 pub fn provisioning_uri(secret: &[u8], issuer: &str, account: &str) -> String {
     let encoded = data_encoding::BASE32_NOPAD.encode(secret);
     let issuer_enc = urlencode(issuer);
@@ -564,6 +591,42 @@ mod tests {
         let key_a = derive_totp_key(TOTP_SECRET, &[0x01; 32]).unwrap();
         let key_b = derive_totp_key(TOTP_SECRET, &[0x02; 32]).unwrap();
         assert_ne!(key_a.as_ref(), key_b.as_ref());
+    }
+
+    #[test]
+    /// The round trip the daemon depends on: what enrolment stores
+    /// decodes back to the key the authenticator uses.
+    #[test]
+    fn a_stored_secret_decodes_to_the_key_the_app_hmacs() {
+        let secret = [7u8; 32];
+        let stored = data_encoding::BASE32_NOPAD.encode(&secret);
+
+        assert_eq!(decode_secret(&stored).expect("decode"), secret.to_vec());
+    }
+
+    /// The failure that must not be silent: using the base32 text as
+    /// the key produces different codes from using the decoded bytes.
+    /// This is the bug that shipped.
+    #[test]
+    fn hmacing_the_base32_text_gives_a_different_code_than_the_key() {
+        let secret = [7u8; 32];
+        let stored = data_encoding::BASE32_NOPAD.encode(&secret);
+
+        let from_key = code_for_step(&secret, 42).expect("code");
+        let from_text = code_for_step(stored.as_bytes(), 42).expect("code");
+
+        assert_ne!(
+            from_key, from_text,
+            "if these ever matched, the mistake this guards against would be undetectable"
+        );
+    }
+
+    #[test]
+    fn a_secret_that_is_not_base32_is_refused_rather_than_used_raw() {
+        assert!(matches!(
+            decode_secret("this is not base32!"),
+            Err(TotpError::MalformedStoredSecret)
+        ));
     }
 
     #[test]
