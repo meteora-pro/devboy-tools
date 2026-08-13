@@ -57,6 +57,10 @@ pub struct McpProxyClient {
     /// Bearer is injected per request (pre-flight + on-401 refresh) instead of
     /// being baked into `http_client` at connect. `None` for bearer/api_key/none.
     oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
+    /// Credentials this client has sent upstream, so a response
+    /// echoing one back can be redacted before the agent — and its
+    /// transcript file — ever sees it (Ф15).
+    credentials: crate::response_scrub::CredentialRegistry,
 }
 
 impl McpProxyClient {
@@ -98,14 +102,29 @@ impl McpProxyClient {
 
         let prefix = tool_prefix.unwrap_or(name).to_string();
 
-        match transport {
+        let client = match transport {
             ProxyTransport::Sse => {
                 Self::connect_sse(name, url, &prefix, headers, http_client, oauth).await
             }
             ProxyTransport::StreamableHttp => {
                 Self::connect_streamable_http(name, url, &prefix, http_client, oauth).await
             }
+        }?;
+
+        // Register the credential we just handed this upstream, so
+        // that if it quotes it back at us — which is what a 401 body
+        // routinely does — the value is redacted before it reaches
+        // the agent's transcript. Registering a copy adds no exposure:
+        // the same value is already baked into `http_client`'s default
+        // headers.
+        if let Some(token) = token {
+            client.credentials.remember(
+                crate::response_scrub::static_token_label(name),
+                token.expose_secret(),
+            );
         }
+
+        Ok(client)
     }
 
     /// Connect via SSE transport.
@@ -190,6 +209,7 @@ impl McpProxyClient {
             session_id: RwLock::new(None),
             pending,
             oauth,
+            credentials: crate::response_scrub::CredentialRegistry::new(),
         };
 
         client.initialize().await?;
@@ -216,6 +236,7 @@ impl McpProxyClient {
             session_id: RwLock::new(None),
             pending: Arc::new(Mutex::new(Vec::new())),
             oauth,
+            credentials: crate::response_scrub::CredentialRegistry::new(),
         };
 
         client.initialize().await?;
@@ -261,6 +282,18 @@ impl McpProxyClient {
 
     fn next_request_id(&self) -> i64 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Note the OAuth access token about to go out on the wire.
+    ///
+    /// Called at the point of sending rather than at the point of
+    /// fetching, so a token obtained by an on-401 refresh is covered
+    /// by the same line — a refreshed token that was not registered
+    /// would be exactly the one an upstream is about to complain
+    /// about. Replaces the previous value under the same label.
+    fn remember_access_token(&self, access: &str) {
+        self.credentials
+            .remember(crate::response_scrub::oauth_token_label(&self.name), access);
     }
 
     /// Send a JSON-RPC request and wait for response.
@@ -315,6 +348,7 @@ impl McpProxyClient {
             loop {
                 let mut request = self.http_client.post(&self.post_url).json(&req);
                 if let Some(a) = &access {
+                    self.remember_access_token(a);
                     request = request.header(AUTHORIZATION, format!("Bearer {a}"));
                 }
                 let resp = request
@@ -406,6 +440,7 @@ impl McpProxyClient {
                 }
             }
             if let Some(a) = &access {
+                self.remember_access_token(a);
                 request = request.header(AUTHORIZATION, format!("Bearer {a}"));
             }
 
@@ -751,6 +786,13 @@ impl McpProxyClient {
     }
 
     /// Execute a tool call, stripping the prefix before forwarding.
+    ///
+    /// Everything returned here is written verbatim into the agent's
+    /// session transcript, so the result goes through
+    /// [`crate::response_scrub`] first. An upstream quoting a token
+    /// back at us — the ordinary shape of a 401 body — would
+    /// otherwise put that value on disk in a file any process running
+    /// as the user can read.
     pub async fn call_tool(
         &self,
         original_name: &str,
@@ -763,18 +805,29 @@ impl McpProxyClient {
 
         let resp = self.request("tools/call", Some(params)).await?;
 
+        // The JSON-RPC error path is scrubbed too: an upstream that
+        // fails authentication reports it here at least as often as
+        // in a result body.
         if let Some(err) = resp.error {
-            return Ok(ToolCallResult::error(err.message));
+            return Ok(self.scrub(ToolCallResult::error(err.message)));
         }
 
         match resp.result {
-            Some(result) => serde_json::from_value(result).map_err(|e| {
-                devboy_core::Error::InvalidData(format!("Invalid tool result: {}", e))
-            }),
+            Some(result) => serde_json::from_value(result)
+                .map(|r| self.scrub(r))
+                .map_err(|e| {
+                    devboy_core::Error::InvalidData(format!("Invalid tool result: {}", e))
+                }),
             None => Ok(ToolCallResult::error(
                 "Empty response from upstream".to_string(),
             )),
         }
+    }
+
+    /// Redact any credential this client sent, or anything
+    /// secret-shaped, out of a result bound for the agent.
+    fn scrub(&self, result: ToolCallResult) -> ToolCallResult {
+        crate::response_scrub::scrub_tool_result(&self.name, &self.credentials, result)
     }
 
     /// Get the tool prefix for this client.

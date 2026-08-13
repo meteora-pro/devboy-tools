@@ -34,6 +34,7 @@ pub mod protocol;
 pub mod proxy;
 pub mod proxy_secrets;
 pub mod remediation;
+pub mod response_scrub;
 pub mod routing;
 pub mod secrets_provision;
 pub mod secrets_tool;
