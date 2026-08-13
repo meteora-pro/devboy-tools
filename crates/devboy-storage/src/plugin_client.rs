@@ -237,6 +237,19 @@ struct RunningProcess {
     stdout: BufReader<ChildStdout>,
 }
 
+/// The diagnostic for a handshake answered with the wrong reply.
+///
+/// A named function rather than an inline `format!` because it
+/// prints a plugin-controlled value into an error string that ends
+/// up in logs, and that deserves somewhere to hang a test. The
+/// safety now rests on [`GetResult`]'s redacting `Debug`; before it
+/// had one, a plugin that answered `init` with a queued `get`
+/// reply — the exact desync the id check upstream exists to catch —
+/// wrote the user's secret here in plaintext.
+fn init_reply_mismatch_detail(other: &PluginResponse) -> String {
+    format!("expected an init result, got {other:?}")
+}
+
 impl PluginClient {
     /// Build a fresh client. Does **not** spawn — the first
     /// `request` call performs the lazy spawn.
@@ -540,7 +553,7 @@ impl PluginClient {
                 self.record_crash_locked_msg(state, "init returned a non-init reply");
                 return Err(PluginClientError::InitFailed {
                     plugin: self.manifest.name.clone(),
-                    detail: format!("expected an init result, got {other:?}"),
+                    detail: init_reply_mismatch_detail(&other),
                 });
             }
             RpcOutcome::Error(e) => {
@@ -814,6 +827,57 @@ mod capability_gate_tests {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
+
+    /// A plugin that answers the handshake with a `get` reply must
+    /// not write the user's secret into the error string.
+    ///
+    /// This is not hypothetical plumbing: request/response desync is
+    /// what the id check above this exists to catch, and a desynced
+    /// plugin's queued `get` reply is precisely what lands in the
+    /// wrong slot. The detail string goes to logs.
+    #[test]
+    fn a_wrong_handshake_reply_does_not_print_the_secret() {
+        let detail = init_reply_mismatch_detail(&PluginResponse::Get(GetResult {
+            value: "correct-horse-battery-staple".into(),
+            lease_seconds: Some(300),
+        }));
+
+        assert!(
+            !detail.contains("correct-horse-battery-staple"),
+            "the plaintext reached an error string: {detail}"
+        );
+        assert!(
+            detail.contains("expected an init result"),
+            "the diagnostic still has to say what went wrong: {detail}"
+        );
+    }
+
+    /// The guarantee at its source, so it holds for every `{:?}`
+    /// site and not only the one that was found.
+    #[test]
+    fn get_result_never_prints_its_value() {
+        let one = GetResult {
+            value: "s3cret-alpha".into(),
+            lease_seconds: None,
+        };
+        let rendered = format!("{one:?}");
+        assert!(!rendered.contains("s3cret-alpha"), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+
+        // Nested in the response enum — how it actually travels.
+        let nested = format!(
+            "{:?}",
+            PluginResponse::Get(GetResult {
+                value: "s3cret-beta".into(),
+                lease_seconds: Some(60),
+            })
+        );
+        assert!(!nested.contains("s3cret-beta"), "{nested}");
+        assert!(
+            nested.contains("60"),
+            "the lease is not a secret and stays useful: {nested}"
+        );
+    }
     use super::*;
     use crate::plugin_manifest::PluginManifest;
     use std::fs;

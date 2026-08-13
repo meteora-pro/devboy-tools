@@ -270,7 +270,17 @@ pub enum IsAvailableStatus {
     NeedsCredential,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The answer to `secret_source.get`.
+///
+/// `Debug` is hand-written for the same reason as [`PutParams`] —
+/// and this is the type that carries the user's actual secret on
+/// the most-travelled path. It had the derived one, while both of
+/// its neighbours ([`PutParams`], [`KeyMaterialResult`]) were
+/// given redacting impls, so a `{:?}` anywhere in the response
+/// path printed the plaintext. One did: the plugin client's
+/// init-handshake mismatch put the whole reply into an error
+/// string.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GetResult {
     /// The secret value as plaintext. The plugin client wraps
     /// it in [`secrecy::SecretString`] before returning to the
@@ -280,6 +290,18 @@ pub struct GetResult {
     /// Upstream-reported lease duration, in seconds. `None`
     /// means "no lease" → cache uses default TTL.
     pub lease_seconds: Option<u64>,
+}
+
+impl std::fmt::Debug for GetResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // No length, unlike `KeyMaterialResult`: that one holds
+        // key bytes of a size fixed by the algorithm, where here
+        // the length is a property of the user's own secret.
+        f.debug_struct("GetResult")
+            .field("value", &"<redacted>")
+            .field("lease_seconds", &self.lease_seconds)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
