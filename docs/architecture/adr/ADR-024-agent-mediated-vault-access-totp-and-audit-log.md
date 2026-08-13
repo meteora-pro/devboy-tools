@@ -531,6 +531,36 @@ commitment — there is nothing to commit to, and the file is created before a
 key exists). All three are the same shape — a file cannot testify to its own
 absence — and closing them needs an anchor the attacker cannot reach.
 
+#### Vault file: the index is committed to as well
+
+The same hole existed one file over. Per-entry AEAD binds a ciphertext to
+`path@version`, so an entry cannot be edited or moved between paths — but it
+says nothing about an entry *existing*. Deleting the newest version's index
+record left `get` resolving to the previous one, which decrypts perfectly
+under its own AAD: a token rotated **because it leaked** comes back to life,
+and nothing in the file registers that anything happened.
+
+Vault format version 2 puts a tag between the header and the envelopes:
+
+```
+XChaCha20-Poly1305(
+  plaintext       = <empty>,
+  key             = vault_key,
+  nonce           = header.commitment_nonce,
+  associated_data = "vault-index-v2:" || hex(SHA-256(
+                       version || kdf_params || salt ||
+                       envelopes_toml || entries_toml))
+)
+```
+
+`Vault::open` verifies it before anything reads the index, and every write
+re-stamps it. The digest is taken over the *parsed and re-serialized*
+sections rather than the raw bytes, so re-indenting the TOML is not tampering
+while removing an entry is.
+
+Per-entry AEAD still says "this ciphertext belongs to this path at this
+version". The commitment adds "and this is the whole list".
+
 #### `vault_log_append` MCP tool and the enforced scrub
 
 ```

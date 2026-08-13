@@ -117,12 +117,28 @@ fn a_ciphertext_cannot_be_moved_between_paths() {
     file.entries[high].ct_length = low_len;
     file.write_file_atomic(&file_path).unwrap();
 
-    // The AAD no longer matches the path, so the read fails closed
-    // rather than handing back the other secret.
-    let tampered = open(&dir, "pw");
+    // Since format v2 the swap is caught a layer earlier: rewriting
+    // the index breaks the header commitment, so the vault refuses
+    // to open at all rather than opening and failing the read.
+    //
+    // The per-entry AAD that used to catch this is still tested —
+    // at the AEAD layer by
+    // `decrypt_with_wrong_path_fails_swap_attack_mitigation`, and
+    // end to end through the `Vault` API by
+    // `a_swapped_blob_is_refused_even_when_the_index_is_signed`,
+    // which can re-sign the doctored file because it lives in the
+    // crate and can reach the key.
+    let err = Vault::open(
+        &file_path,
+        UnlockMethod::Passphrase(SecretString::from("pw".to_owned())),
+    )
+    .expect_err("a rewritten index must not open");
     assert!(
-        tampered.get("team/high/value").is_err(),
-        "a swapped ciphertext must not decrypt under a different path"
+        matches!(
+            err,
+            devboy_vault_crypto::vault::VaultError::IndexUnauthenticated { .. }
+        ),
+        "{err:?}"
     );
 }
 
@@ -173,10 +189,22 @@ fn a_ciphertext_cannot_be_moved_between_vaults() {
     b_file.ciphertext_blobs = a_file.ciphertext_blobs.clone();
     b_file.write_file_atomic(&b_path).unwrap();
 
-    let tampered = open(&dir_b, "pw-b");
+    // Caught by the header commitment now, for the same reason as
+    // the path swap above: b's index was rewritten. That b's key
+    // cannot decrypt a's blob is what
+    // `a_blob_from_another_vault_is_refused_even_when_signed`
+    // checks, from inside the crate where the file can be re-signed.
+    let err = Vault::open(
+        &b_path,
+        UnlockMethod::Passphrase(SecretString::from("pw-b".to_owned())),
+    )
+    .expect_err("a rewritten index must not open");
     assert!(
-        tampered.get("shared/path").is_err(),
-        "another vault's ciphertext must not decrypt here"
+        matches!(
+            err,
+            devboy_vault_crypto::vault::VaultError::IndexUnauthenticated { .. }
+        ),
+        "{err:?}"
     );
 }
 

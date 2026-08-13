@@ -228,6 +228,25 @@ pub enum VaultError {
     #[error("could not derive the audit-log key")]
     AuditKeyDerivation,
 
+    /// The file's index does not match its commitment.
+    ///
+    /// Per-entry AEAD binds a ciphertext to its own path and
+    /// version, so an entry cannot be edited or moved between
+    /// paths. It says nothing about the entry *existing*: deleting
+    /// the newest version's index record left `get` resolving to the
+    /// previous one, which decrypts perfectly under its own AAD. A
+    /// token rotated because it leaked came back to life, and
+    /// nothing in the file registered that anything had happened.
+    #[error(
+        "{path}: the entry index does not match its commitment. Entries have been removed or \
+         altered outside this tool, or the file was written under a different key — refusing to \
+         open it"
+    )]
+    IndexUnauthenticated {
+        /// The vault file whose index does not verify.
+        path: PathBuf,
+    },
+
     /// The file changed since this handle opened it.
     ///
     /// Refused rather than reconciled. A mutation rewrites the whole
@@ -377,6 +396,7 @@ impl Vault {
         // Persist atomically before handing back the in-memory
         // vault. If anything fails after this point, we want disk
         // and memory to agree.
+        Self::sign_index(&mut file, &vault_key_bytes)?;
         file.write_file_atomic(path)?;
 
         let vault = Vault {
@@ -436,6 +456,12 @@ impl Vault {
         // Convert Zeroizing<[u8; KEY_LEN]> -> SecretBox<[u8; KEY_LEN]>.
         let mut key_array = [0u8; KEY_LEN];
         key_array.copy_from_slice(vault_key_bytes.as_ref());
+
+        // Before anything reads the index. An entry removed from it
+        // is invisible to per-entry AEAD — every survivor still
+        // decrypts — so this is the only place the deletion can be
+        // caught.
+        Self::verify_index(&file, &key_array, path)?;
 
         Ok(Vault {
             path: path.to_path_buf(),
@@ -1008,6 +1034,52 @@ impl Vault {
         Sha256::digest(&bytes).into()
     }
 
+    /// The AAD the index commitment is computed under.
+    fn commitment_aad(digest: &[u8; 32]) -> String {
+        let mut hex = String::with_capacity(64);
+        for byte in digest {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+        }
+        format!("vault-index-v2:{hex}")
+    }
+
+    /// Stamp the file with a fresh commitment over its current
+    /// contents.
+    ///
+    /// Called on every write. The format layer holds no keys, so it
+    /// carries the bytes and this computes them.
+    fn sign_index(file: &mut VaultFile, vault_key: &[u8; KEY_LEN]) -> Result<(), VaultError> {
+        let digest = file.commitment_digest()?;
+        let sealed = crate::aead::encrypt_entry(vault_key, &Self::commitment_aad(&digest), &[])?;
+        let mut commitment = [0u8; crate::format::COMMITMENT_LEN];
+        commitment[..NONCE_LEN].copy_from_slice(&sealed.nonce);
+        commitment[NONCE_LEN..].copy_from_slice(&sealed.ciphertext);
+        file.commitment = commitment;
+        Ok(())
+    }
+
+    /// Check a file's commitment before trusting its index.
+    fn verify_index(
+        file: &VaultFile,
+        vault_key: &[u8; KEY_LEN],
+        path: &Path,
+    ) -> Result<(), VaultError> {
+        let digest = file.commitment_digest()?;
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce.copy_from_slice(&file.commitment[..NONCE_LEN]);
+        crate::aead::decrypt_entry(
+            vault_key,
+            &Self::commitment_aad(&digest),
+            &nonce,
+            &file.commitment[NONCE_LEN..],
+        )
+        .map(|_| ())
+        .map_err(|_| VaultError::IndexUnauthenticated {
+            path: path.to_path_buf(),
+        })
+    }
+
     /// Write this handle's image out, refusing if the disk moved.
     ///
     /// Every path that touches the file goes through here — the
@@ -1017,6 +1089,8 @@ impl Vault {
     /// change.
     fn write_through(&mut self) -> Result<(), VaultError> {
         self.ensure_disk_unchanged()?;
+        let key = *self.vault_key.expose_secret();
+        Self::sign_index(&mut self.file, &key)?;
         self.file.write_file_atomic(&self.path)?;
         self.disk_fingerprint = Self::fingerprint_on_disk(&self.path);
         Ok(())
@@ -1224,6 +1298,163 @@ mod tests {
     }
 
     // -- put / get / list / delete -----------------------------------------
+
+    /// The per-entry guarantee, end to end, with the outer one
+    /// satisfied.
+    ///
+    /// `crypto_invariants.rs` used to swap two entries' ciphertext
+    /// pointers and check that `get` refused. Since the index is
+    /// committed to, that swap no longer gets as far as `get` — the
+    /// vault will not open. The invariant it was testing has not
+    /// gone away, so it is tested here instead, where the key is
+    /// reachable and the doctored file can be re-signed exactly as
+    /// something holding the key would.
+    #[test]
+    fn a_swapped_blob_is_refused_even_when_the_index_is_signed() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+
+        let key = {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault.put("team/low/value", &val("LOW"), meta()).unwrap();
+            vault.put("team/high/value", &val("HIGH"), meta()).unwrap();
+            *vault.vault_key.expose_secret()
+        };
+
+        let mut file = crate::format::VaultFile::read_file(&path).unwrap();
+        let low = file
+            .entries
+            .iter()
+            .position(|e| e.path == "team/low/value")
+            .unwrap();
+        let high = file
+            .entries
+            .iter()
+            .position(|e| e.path == "team/high/value")
+            .unwrap();
+        let carried = (
+            file.entries[low].nonce.clone(),
+            file.entries[low].ct_offset,
+            file.entries[low].ct_length,
+        );
+        file.entries[low].nonce = file.entries[high].nonce.clone();
+        file.entries[low].ct_offset = file.entries[high].ct_offset;
+        file.entries[low].ct_length = file.entries[high].ct_length;
+        file.entries[high].nonce = carried.0;
+        file.entries[high].ct_offset = carried.1;
+        file.entries[high].ct_length = carried.2;
+
+        // Re-sign, so the commitment is not what refuses this.
+        Vault::sign_index(&mut file, &key).unwrap();
+        file.write_file_atomic(&path).unwrap();
+
+        let opened = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect("a correctly signed index opens, which is the point of this test");
+        assert!(
+            opened.get("team/high/value").is_err(),
+            "a swapped ciphertext must not decrypt under a different path"
+        );
+    }
+
+    /// The attack the index commitment exists for: rolling a
+    /// rotation back by deleting the newest version's index entry.
+    ///
+    /// Per-entry AEAD binds a ciphertext to its own path and
+    /// version, so every survivor of the deletion decrypts
+    /// perfectly. `get` then resolves to the previous version — a
+    /// token rotated *because it leaked* is live again, and nothing
+    /// in the file says anything happened.
+    #[test]
+    fn deleting_the_newest_version_to_roll_a_rotation_back_is_caught() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault
+                .put("team/api/key", &val("leaked-value"), meta())
+                .unwrap();
+            vault
+                .rotate("team/api/key", &val("the-replacement"))
+                .unwrap();
+        }
+
+        // Confirm the rollback target is really there to roll back
+        // to, or the test proves nothing.
+        let mut file = crate::format::VaultFile::read_file(&path).unwrap();
+        assert_eq!(
+            file.entries.len(),
+            2,
+            "rotation must have kept the old version"
+        );
+
+        // Drop the newest index entry — the ciphertext stays,
+        // unreferenced, exactly as a careful attacker would leave it.
+        let newest = file
+            .entries
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, e)| e.version)
+            .map(|(i, _)| i)
+            .unwrap();
+        file.entries.remove(newest);
+        file.write_file_atomic(&path).unwrap();
+
+        let err = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect_err("a doctored index must not open");
+        assert!(
+            matches!(err, VaultError::IndexUnauthenticated { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The same guard, aimed at metadata rather than at an entry.
+    ///
+    /// `expires_at` and friends are plaintext by design, so nothing
+    /// encrypts them. Without a commitment over the index, editing a
+    /// rotation reminder out of the file was free.
+    #[test]
+    fn editing_plaintext_metadata_in_the_index_is_caught() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault.put("team/api/key", &val("a-value"), meta()).unwrap();
+        }
+
+        let mut file = crate::format::VaultFile::read_file(&path).unwrap();
+        file.entries[0].path = "team/api/somewhere-else".to_owned();
+        file.write_file_atomic(&path).unwrap();
+
+        let err = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect_err("a renamed entry must not open");
+        assert!(
+            matches!(err, VaultError::IndexUnauthenticated { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// And the ordinary case must keep working across a re-open.
+    #[test]
+    fn an_untouched_vault_opens_and_reads_back() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault.put("team/api/one", &val("first"), meta()).unwrap();
+            vault.rotate("team/api/one", &val("second")).unwrap();
+        }
+
+        let reopened = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect("an untouched vault must open");
+        assert_eq!(
+            reopened
+                .get("team/api/one")
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "second"
+        );
+    }
 
     /// A second writer's change must not be silently erased.
     ///

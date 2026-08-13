@@ -6,9 +6,16 @@
 //! ```text
 //! HEADER (53 bytes, fixed):
 //!   MAGIC       [4]   = b"DVB1"
-//!   VERSION     [1]   = 0x01
+//!   VERSION     [1]   = 0x02
 //!   KDF_PARAMS [16]   = (m_cost u32 LE, t_cost u32 LE, p_cost u32 LE, salt_len u32 LE)
 //!   SALT       [32]   = random per vault, used by the passphrase envelope's KDF
+//!
+//! INDEX_COMMITMENT (v2+): tag over the header, the envelopes and the
+//! entry index, under the vault key. Verified by `Vault::open` before
+//! the index is trusted — per-entry AEAD cannot notice an entry that
+//! was deleted.
+//!   NONCE      [24]
+//!   TAG        [16]
 //!
 //! UNLOCK_ENVELOPES (length-prefixed TOML, each envelope independently
 //! wraps the vault key under one unlock method — passphrase, TOTP,
@@ -57,8 +64,20 @@ use thiserror::Error;
 /// Vault format v1).
 pub const MAGIC: [u8; 4] = *b"DVB1";
 
-/// First (and currently only) version of the file format.
+/// The original format: per-entry AEAD, unauthenticated index.
 pub const VERSION_V1: u8 = 0x01;
+
+/// Current version: adds a tag over the header, the envelopes and
+/// the entry index, under the vault key.
+///
+/// A v1 file is refused rather than read. Its index was
+/// unauthenticated, which is what made a rotation rollback invisible
+/// — reading one means trusting the thing this version exists to
+/// stop trusting.
+pub const VERSION_V2: u8 = 0x02;
+
+/// Bytes the commitment occupies, immediately after the header.
+pub const COMMITMENT_LEN: usize = 24 + 16;
 
 /// Total byte length of the fixed-width header
 /// (4 magic + 1 version + 16 kdf_params + 32 salt).
@@ -94,7 +113,7 @@ pub enum FormatError {
     },
 
     /// Version byte is not one this crate knows how to read.
-    #[error("vault file version {got} is not supported (this build understands {VERSION_V1})")]
+    #[error("vault file version {got} is not supported (this build understands {VERSION_V2})")]
     VersionUnsupported {
         /// The version byte read from the file.
         got: u8,
@@ -248,7 +267,7 @@ impl KdfParams {
 pub struct Header {
     /// Always [`MAGIC`].
     pub magic: [u8; 4],
-    /// Format version. Currently always [`VERSION_V1`].
+    /// Format version. Currently always [`VERSION_V2`].
     pub version: u8,
     /// Argon2id parameters.
     pub kdf_params: KdfParams,
@@ -265,7 +284,7 @@ impl Header {
     pub fn new(salt: [u8; 32]) -> Self {
         Self {
             magic: MAGIC,
-            version: VERSION_V1,
+            version: VERSION_V2,
             kdf_params: KdfParams::DEFAULT,
             salt,
         }
@@ -284,7 +303,7 @@ impl Header {
         }
 
         let version = buf[4];
-        if version != VERSION_V1 {
+        if version != VERSION_V2 {
             return Err(FormatError::VersionUnsupported { got: version });
         }
 
@@ -533,19 +552,20 @@ fn is_false(b: &bool) -> bool {
 /// nothing about which entries *should* be present, because the
 /// entry list itself is unauthenticated.
 ///
-/// So an attacker who can write to the vault file can roll a
-/// rotation back: delete the newest version's index entry, and
-/// [`crate::vault::Vault::get`] resolves to the previous one, which
-/// decrypts perfectly well under its own AAD. A token that was
-/// rotated *because it leaked* becomes live again, and nothing in
-/// the file registers that anything happened.
+/// On its own that would let an attacker who can write to the vault
+/// file roll a rotation back: delete the newest version's index
+/// entry, and [`crate::vault::Vault::get`] resolves to the previous
+/// one, which decrypts perfectly well under its own AAD. A token
+/// rotated *because it leaked* comes back to life with nothing in
+/// the file registering that anything happened.
 ///
-/// This is the same shape as the audit log's unauthenticated record
-/// count, and it wants the same fix — authenticating the index under
-/// the vault key — which is a format change and is tracked with it.
-/// Until then: per-entry integrity is real, whole-file integrity is
-/// not, and the difference matters for anyone reasoning about an
-/// attacker with write access.
+/// Format version 2 closes that from the other side. The header
+/// carries a tag over the KDF parameters, the salt, the envelopes
+/// and the whole entry index, under the vault key
+/// ([`VaultFile::commitment`]), and `Vault::open` verifies it before
+/// anything reads the index. Per-entry AEAD still says "this
+/// ciphertext belongs to this path at this version"; the commitment
+/// says "and this is the whole list".
 pub fn entry_aad(path: &str, version: u64) -> String {
     if version <= 1 {
         path.to_owned()
@@ -571,6 +591,15 @@ struct EntriesFile {
 pub struct VaultFile {
     /// Fixed-width binary header.
     pub header: Header,
+    /// Nonce + tag committing to the header, the envelopes and the
+    /// entry index, under the vault key.
+    ///
+    /// Read and written here, verified in [`crate::vault::Vault`] —
+    /// this module owns the byte layout and holds no keys. Zeroes
+    /// until something with the key fills it in, which is why
+    /// `Vault` sets it on every write rather than leaving it to the
+    /// format layer.
+    pub commitment: [u8; COMMITMENT_LEN],
     /// Unlock envelopes (one per unlock method).
     pub envelopes: Vec<Envelope>,
     /// Per-entry index records (plaintext metadata).
@@ -587,6 +616,7 @@ impl VaultFile {
     pub fn empty(salt: [u8; 32]) -> Self {
         Self {
             header: Header::new(salt),
+            commitment: [0u8; COMMITMENT_LEN],
             envelopes: Vec::new(),
             entries: Vec::new(),
             ciphertext_blobs: Vec::new(),
@@ -596,6 +626,17 @@ impl VaultFile {
     /// Read a vault from any reader implementing [`Read`].
     pub fn read_from(reader: &mut impl Read) -> Result<Self, FormatError> {
         let header = Header::read(reader)?;
+
+        let mut commitment = [0u8; COMMITMENT_LEN];
+        reader.read_exact(&mut commitment).map_err(|e| {
+            if e.kind() == io::ErrorKind::UnexpectedEof {
+                FormatError::Truncated {
+                    stage: "commitment",
+                }
+            } else {
+                FormatError::Io(e)
+            }
+        })?;
 
         let envelopes_bytes = read_length_prefixed_u32(reader, "envelopes_len")?;
         let envelopes_file: EnvelopesFile =
@@ -627,6 +668,7 @@ impl VaultFile {
 
         Ok(Self {
             header,
+            commitment,
             envelopes: envelopes_file.envelope,
             entries: entries_file.entry,
             ciphertext_blobs: blobs,
@@ -636,6 +678,7 @@ impl VaultFile {
     /// Write a vault to any writer implementing [`Write`].
     pub fn write_to(&self, writer: &mut impl Write) -> Result<(), FormatError> {
         self.header.write(writer)?;
+        writer.write_all(&self.commitment)?;
 
         let envelopes_file = EnvelopesFile {
             envelope: self.envelopes.clone(),
@@ -660,6 +703,44 @@ impl VaultFile {
         write_length_prefixed_u64(writer, &self.ciphertext_blobs)?;
 
         Ok(())
+    }
+
+    /// Digest of everything the commitment covers.
+    ///
+    /// The KDF parameters, the salt, and the serialized envelopes
+    /// and entries. Computed from the parsed structures rather than
+    /// the raw bytes on purpose: what needs pinning is the *meaning*
+    /// of the file, so re-indenting the TOML is not tampering while
+    /// removing an entry is.
+    pub fn commitment_digest(&self) -> Result<[u8; 32], FormatError> {
+        use sha2::{Digest, Sha256};
+
+        let envelopes_toml = toml::to_string(&EnvelopesFile {
+            envelope: self.envelopes.clone(),
+        })
+        .map_err(|source| FormatError::TomlSerialize {
+            section: "envelopes",
+            source,
+        })?;
+        let entries_toml = toml::to_string(&EntriesFile {
+            entry: self.entries.clone(),
+        })
+        .map_err(|source| FormatError::TomlSerialize {
+            section: "entries",
+            source,
+        })?;
+
+        let mut hasher = Sha256::new();
+        hasher.update([self.header.version]);
+        hasher.update(self.header.kdf_params.m_cost.to_le_bytes());
+        hasher.update(self.header.kdf_params.t_cost.to_le_bytes());
+        hasher.update(self.header.kdf_params.p_cost.to_le_bytes());
+        hasher.update(self.header.salt);
+        hasher.update((envelopes_toml.len() as u64).to_le_bytes());
+        hasher.update(envelopes_toml.as_bytes());
+        hasher.update((entries_toml.len() as u64).to_le_bytes());
+        hasher.update(entries_toml.as_bytes());
+        Ok(hasher.finalize().into())
     }
 
     /// Read a vault from a path on disk. Equivalent to opening the
@@ -840,7 +921,7 @@ mod tests {
 
     #[test]
     fn header_rejects_wrong_magic() {
-        let mut buf = vec![b'X', b'Y', b'Z', b'!', VERSION_V1];
+        let mut buf = vec![b'X', b'Y', b'Z', b'!', VERSION_V2];
         buf.extend(std::iter::repeat_n(0u8, HEADER_LEN - buf.len()));
         let mut cursor = Cursor::new(&buf);
         match Header::read(&mut cursor).unwrap_err() {
@@ -897,7 +978,7 @@ mod tests {
     fn synth_header_with_kdf(m: u32, t: u32, p: u32, salt_len: u32) -> Vec<u8> {
         let mut buf = Vec::with_capacity(HEADER_LEN);
         buf.extend_from_slice(&MAGIC);
-        buf.push(VERSION_V1);
+        buf.push(VERSION_V2);
         buf.extend_from_slice(&m.to_le_bytes());
         buf.extend_from_slice(&t.to_le_bytes());
         buf.extend_from_slice(&p.to_le_bytes());
@@ -1058,8 +1139,11 @@ mod tests {
         header.write(&mut buf).unwrap();
         std::fs::write(&path, buf).unwrap();
 
+        // The commitment sits immediately after the header, so a
+        // header-only file now stops there rather than at the
+        // envelopes length.
         match VaultFile::read_file(&path).unwrap_err() {
-            FormatError::Truncated { stage } => assert_eq!(stage, "envelopes_len"),
+            FormatError::Truncated { stage } => assert_eq!(stage, "commitment"),
             other => panic!("expected Truncated, got {other:?}"),
         }
     }
