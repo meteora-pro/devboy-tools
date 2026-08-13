@@ -1028,8 +1028,42 @@ fn env_var_name_for_key(key: &str) -> String {
     format!("DEVBOY_{body}")
 }
 
+/// Whether `--ci` was passed on the command line.
+///
+/// A process-global rather than a threaded parameter because
+/// [`is_env_only_mode`] is reached from a dozen places that have a
+/// `Config` and no access to the parsed CLI. Set once, at startup,
+/// from `cli.ci`.
+///
+/// It exists because the flag used to go nowhere: `is_env_only_mode`
+/// passed a hard-coded `false` where the flag belonged, so `--ci`
+/// only ever produced a `doctor` notice. A CI job that passed it and
+/// then hit an interactive prompt hung waiting for a human — the
+/// exact failure the flag is for, and the refusal that would have
+/// caught it names `--ci` in its own error text.
+static CI_FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Record the `--ci` flag for the rest of the process.
+pub(crate) fn set_ci_flag(active: bool) {
+    let _ = CI_FLAG.set(active);
+}
+
+/// Whether `--ci` was given.
+fn ci_flag() -> bool {
+    *CI_FLAG.get().unwrap_or(&false)
+}
+
 pub(crate) fn is_env_only_mode(config: &devboy_core::config::Config) -> bool {
-    devboy_storage::detect_ci_mode(false, Some(config.is_ci_forced())).active
+    env_only_with_flag(ci_flag(), config)
+}
+
+/// The decision itself, with the flag passed in.
+///
+/// Separated so a test can exercise it without setting the
+/// process-global — which is a `OnceLock` and would leak `--ci` into
+/// every other test sharing the binary.
+fn env_only_with_flag(ci_flag: bool, config: &devboy_core::config::Config) -> bool {
+    devboy_storage::detect_ci_mode(ci_flag, Some(config.is_ci_forced())).active
         || is_skip_keychain_enabled()
 }
 
@@ -1089,6 +1123,9 @@ async fn main() -> Result<()> {
     // (`CI`, `GITLAB_CI`, …) only emit a notice — they never
     // flip routing on their own. The notice goes to stderr so
     // it does not pollute scriptable subcommands' stdout.
+    // Before anything can consult the posture: `is_env_only_mode`
+    // reads this, and it is reached from paths that never see `cli`.
+    set_ci_flag(cli.ci);
     let ci_detection = devboy_storage::detect_ci_mode(cli.ci, None);
     if let Some(notice) = ci_detection.doctor_notice() {
         eprintln!("warning: {notice}");
@@ -6553,6 +6590,24 @@ mod tests {
     /// The warning has one job beyond scolding: tell the person
     /// what to do instead, and never repeat the value back — it
     /// would land in the same history it is warning about.
+    /// The flag has to reach the posture, not just the report.
+    ///
+    /// It used to go nowhere: `is_env_only_mode` passed a hard-coded
+    /// `false` where the flag belonged, so a CI job that passed
+    /// `--ci` and then hit an interactive prompt hung waiting for a
+    /// human — while the refusal that would have caught it names
+    /// `--ci` in its own error text.
+    #[test]
+    fn the_ci_flag_reaches_the_env_only_decision() {
+        let config = devboy_core::config::Config::default();
+
+        assert!(
+            env_only_with_flag(true, &config),
+            "with `--ci` given, the posture must be env-only — it used to be dropped on the \
+             floor, and a CI job that passed it hung on the first interactive prompt"
+        );
+    }
+
     #[test]
     fn the_warning_names_both_escapes_and_carries_no_value() {
         let w = argv_leak_warning("--remote-config-token", "DEVBOY_REMOTE_CONFIG_TOKEN");
