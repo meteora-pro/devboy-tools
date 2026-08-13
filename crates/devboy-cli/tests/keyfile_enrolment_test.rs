@@ -12,6 +12,22 @@
 //! A unit test of the enrolment logic would have passed happily
 //! throughout. So these tests spawn the actual `devboy` binary and
 //! then check the vault file it left behind.
+//!
+//! # Why UNIX only
+//!
+//! `keyfile add` writes `secrets.keyfile_path` into the global
+//! config, and the global config's location comes from
+//! `dirs::config_dir()`. On Windows that resolves through the Known
+//! Folder API, which no environment variable can redirect — so on
+//! Windows these tests would not be hermetic: they would rewrite the
+//! real config of whoever ran `cargo test`. Refusing to run is better
+//! than running and modifying a developer's machine.
+//!
+//! The command itself is not UNIX-only; only this harness is. Making
+//! it testable on Windows needs a config-directory override, which is
+//! a change to `devboy-core` rather than to a test.
+
+#![cfg(unix)]
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -36,6 +52,15 @@ fn devboy_bin() -> PathBuf {
 struct Env {
     home: TempDir,
     vault: PathBuf,
+    /// Where the keyfile goes.
+    ///
+    /// Passed explicitly rather than left to `default_keyfile_path()`
+    /// because `dirs` does not honour `HOME` on Windows and does not
+    /// honour `XDG_STATE_HOME` on macOS. Left to the default, every
+    /// test in this file would write to the *real* user directory and
+    /// race the others there — which is exactly how they failed on
+    /// both platforms. The default path has its own unit tests.
+    keyfile: PathBuf,
 }
 
 impl Env {
@@ -51,12 +76,18 @@ impl Env {
             Some(devboy_vault_crypto::format::EnvelopeKdfParams { m: 8, t: 1, p: 1 });
         Vault::create(&vault, init).expect("create vault");
 
-        Self { home, vault }
+        let keyfile = home.path().join("vault.key");
+        Self {
+            home,
+            vault,
+            keyfile,
+        }
     }
 
     fn run(&self, args: &[&str]) -> std::process::Output {
         Command::new(devboy_bin())
             .args(args)
+            .args(self.path_args(args))
             .env("HOME", self.home.path())
             .env("XDG_CONFIG_HOME", self.home.path().join("config"))
             .env("XDG_STATE_HOME", self.home.path().join("state"))
@@ -64,6 +95,15 @@ impl Env {
             .env("DEVBOY_VAULT_PASSPHRASE", PASSPHRASE)
             .output()
             .expect("run devboy")
+    }
+
+    /// `--path` for the subcommands that accept it.
+    fn path_args(&self, args: &[&str]) -> Vec<String> {
+        if args.contains(&"add") {
+            vec!["--path".to_string(), self.keyfile.display().to_string()]
+        } else {
+            Vec::new()
+        }
     }
 
     fn keyfile_envelope(&self) -> Option<Option<String>> {
@@ -75,6 +115,27 @@ impl Env {
             _ => None,
         })
     }
+}
+
+/// Locate the `config.toml` the binary wrote, wherever the platform
+/// put it.
+///
+/// Found rather than assumed: `dirs::config_dir()` honours
+/// `XDG_CONFIG_HOME` on Linux and `$HOME/Library/Application Support`
+/// on macOS, so a hardcoded path passes on one and fails on the other.
+fn find_config(root: &std::path::Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let path = entry.path();
+        if path.file_name().is_some_and(|n| n == "config.toml") {
+            return Some(path);
+        }
+        if path.is_dir()
+            && let Some(found) = find_config(&path)
+        {
+            return Some(found);
+        }
+    }
+    None
 }
 
 fn stdout(out: &std::process::Output) -> String {
@@ -105,19 +166,13 @@ fn enrolling_a_keyfile_makes_the_vault_openable_without_a_passphrase() {
 
     // And the file it wrote actually opens the vault — the property
     // the envelope exists for, checked rather than assumed.
-    let keyfile_path = env
-        .home
-        .path()
-        .join("state")
-        .join("devboy-tools")
-        .join("vault.key");
     assert!(
-        keyfile_path.exists(),
+        env.keyfile.exists(),
         "expected the keyfile at {}",
-        keyfile_path.display()
+        env.keyfile.display()
     );
 
-    let bytes = load_keyfile(&keyfile_path).expect("load keyfile");
+    let bytes = load_keyfile(&env.keyfile).expect("load keyfile");
     let vault = Vault::open(&env.vault, UnlockMethod::Keyfile { keyfile: bytes })
         .expect("the enrolled keyfile must open the vault");
     drop(vault);
@@ -143,14 +198,13 @@ fn enrolling_records_the_path_in_the_config() {
     let out = env.run(&["secrets", "keyfile", "add"]);
     assert!(out.status.success(), "{}", stdout(&out));
 
-    let config = env
-        .home
-        .path()
-        .join("config")
-        .join("devboy-tools")
-        .join("config.toml");
-    let text = std::fs::read_to_string(&config)
-        .unwrap_or_else(|e| panic!("no config at {}: {e}", config.display()));
+    // Found rather than assumed: `dirs::config_dir()` honours
+    // `XDG_CONFIG_HOME` on Linux and `$HOME/Library/Application
+    // Support` on macOS, so a hardcoded path passes on one and fails
+    // on the other.
+    let config = find_config(env.home.path())
+        .unwrap_or_else(|| panic!("no config.toml under {}", env.home.path().display()));
+    let text = std::fs::read_to_string(&config).expect("read config");
 
     assert!(
         text.contains("keyfile_path"),
@@ -213,13 +267,7 @@ fn removing_un_enrols_the_keyfile() {
         "the envelope survived removal"
     );
 
-    let keyfile_path = env
-        .home
-        .path()
-        .join("state")
-        .join("devboy-tools")
-        .join("vault.key");
-    let bytes = load_keyfile(&keyfile_path).expect("the file itself is left in place");
+    let bytes = load_keyfile(&env.keyfile).expect("the file itself is left in place");
     assert!(
         Vault::open(&env.vault, UnlockMethod::Keyfile { keyfile: bytes }).is_err(),
         "the un-enrolled keyfile still opens the vault"
@@ -234,7 +282,8 @@ fn removing_un_enrols_the_keyfile() {
 fn enrolling_under_a_machine_id_override_warns() {
     let env = Env::new();
     let out = Command::new(devboy_bin())
-        .args(["secrets", "keyfile", "add"])
+        .args(["secrets", "keyfile", "add", "--path"])
+        .arg(&env.keyfile)
         .env("HOME", env.home.path())
         .env("XDG_CONFIG_HOME", env.home.path().join("config"))
         .env("XDG_STATE_HOME", env.home.path().join("state"))

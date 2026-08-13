@@ -2218,7 +2218,10 @@ async fn exchange_onboarding_token(
     match token_exchange::exchange(config_url, exchange_url, &bootstrap).await {
         Ok(exchanged) => {
             println!("Exchanged the onboarding token: {}", exchanged.describe());
-            Ok(exchanged.token)
+            // Exposed only here, at the boundary with the existing
+            // `options.tokens` plumbing, which predates this and
+            // carries plain strings.
+            Ok(exchanged.token.expose_secret().to_owned())
         }
         Err(e) => Err(anyhow::anyhow!(
             "{e}\n\nThe token you pasted is short-lived and is now of no further use. Ask for a \

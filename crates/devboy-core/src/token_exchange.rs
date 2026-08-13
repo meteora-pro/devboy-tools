@@ -63,6 +63,7 @@
 //! message. Whether it is truly single-use, and what a replay is
 //! recorded as, is for the server to decide and to audit.
 
+use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 
 /// How long the client waits for the exchange.
@@ -72,10 +73,16 @@ use serde::Deserialize;
 const EXCHANGE_TIMEOUT_SECS: u64 = 10;
 
 /// The durable token an exchange produced.
+///
+/// `token` is a [`SecretString`] rather than a `String`: this is the
+/// credential the whole exchange exists to produce, and the repo's
+/// secrets-discipline gate is right that a plain `String` here would
+/// be one accidental `{:?}` away from the log line the scheme is
+/// meant to prevent.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExchangedToken {
     /// The token to store.
-    pub token: String,
+    pub token: SecretString,
     /// Advisory expiry, RFC 3339, when the server chose to state one.
     #[serde(default)]
     pub expires_at: Option<String>,
@@ -93,11 +100,11 @@ impl ExchangedToken {
         match &self.expires_at {
             Some(exp) => format!(
                 "received a durable token ({} chars), valid until {exp}",
-                self.token.len()
+                self.token.expose_secret().len()
             ),
             None => format!(
                 "received a durable token ({} chars); the server stated no expiry",
-                self.token.len()
+                self.token.expose_secret().len()
             ),
         }
     }
@@ -238,7 +245,7 @@ pub fn parse_response(body: &str) -> Result<ExchangedToken, ExchangeError> {
     let parsed: ExchangedToken = serde_json::from_str(body)
         .map_err(|e| ExchangeError::BadResponse(format!("not the expected JSON ({e})")))?;
 
-    if parsed.token.trim().is_empty() {
+    if parsed.token.expose_secret().trim().is_empty() {
         return Err(ExchangeError::BadResponse(
             "the `token` field was empty".to_string(),
         ));
@@ -325,7 +332,7 @@ mod tests {
             parse_response(r#"{"token":"durable-abc","expires_at":"2027-01-01T00:00:00Z"}"#)
                 .expect("parse");
 
-        assert_eq!(parsed.token, "durable-abc");
+        assert_eq!(parsed.token.expose_secret(), "durable-abc");
         assert_eq!(parsed.expires_at.as_deref(), Some("2027-01-01T00:00:00Z"));
     }
 
@@ -361,7 +368,7 @@ mod tests {
     #[test]
     fn the_description_never_contains_the_token() {
         let t = ExchangedToken {
-            token: "durable-supersecret-value".into(),
+            token: SecretString::from("durable-supersecret-value".to_owned()),
             expires_at: None,
         };
         assert!(!t.describe().contains("durable-supersecret-value"));

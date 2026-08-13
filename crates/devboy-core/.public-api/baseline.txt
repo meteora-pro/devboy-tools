@@ -1825,7 +1825,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::token_exchange::Ex
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::token_exchange::ExchangeError
 pub struct devboy_core::token_exchange::ExchangedToken
 pub devboy_core::token_exchange::ExchangedToken::expires_at: core::option::Option<alloc::string::String>
-pub devboy_core::token_exchange::ExchangedToken::token: alloc::string::String
+pub devboy_core::token_exchange::ExchangedToken::token: secrecy::SecretString
 impl devboy_core::token_exchange::ExchangedToken
 pub fn devboy_core::token_exchange::ExchangedToken::describe(&self) -> alloc::string::String
 impl core::clone::Clone for devboy_core::token_exchange::ExchangedToken
