@@ -658,6 +658,53 @@ impl Drop for PluginClient {
 // filesystems. macOS runs the same exec without the quirk, so gate
 // the whole module to macOS — mirrors the same fix already in
 // `crates/plugins/secrets/1password/src/lib.rs`.
+/// The shell body of a fake plugin, without writing or running it.
+///
+/// Split out so the script can be checked on any platform: the
+/// module that spawns these is macOS-only, so a malformed reply
+/// template here — a doubled brace in a `format!`, say — is
+/// invisible until a macOS runner reports a parse error, which is
+/// exactly how one got in.
+#[cfg(test)]
+fn fake_plugin_script(dir: &std::path::Path, name: &str, behaviour: &str) -> String {
+    match behaviour {
+        "echo" => format!(
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '{{"jsonrpc":"2.0","id":%s,"result":{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}\n' "$id"
+done
+"#
+        ),
+        // Records every request line it is handed, so a test
+        // can assert that a refused call never reached the
+        // plugin at all.
+        "log-calls" => format!(
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "{}/calls.txt"
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '{{"jsonrpc":"2.0","id":%s,"result":{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}\n' "$id"
+done
+"#,
+            dir.display()
+        ),
+        "crash" => "#!/bin/sh\nexit 7\n".to_string(),
+        "hang" => "#!/bin/sh\nwhile read line; do :; done\nsleep 30\n".to_string(),
+        "env-dump" => format!(
+            r#"#!/bin/sh
+env > "{}/env-dump.txt"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '{{"jsonrpc":"2.0","id":%s,"result":{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}\n' "$id"
+done
+"#,
+            dir.display()
+        ),
+        other => panic!("unknown behaviour: {other}"),
+    }
+}
+
 /// Pure capability-mapping tests.
 ///
 /// Deliberately outside the module below: that one is gated to
@@ -669,6 +716,43 @@ impl Drop for PluginClient {
 mod capability_gate_tests {
     use super::*;
     use crate::plugin_protocol::PROTOCOL_VERSION;
+
+    /// The fake plugins answer in JSON, and nothing on a Linux
+    /// developer machine ever runs them — the module that spawns
+    /// them is macOS-only. So check the text they would print.
+    ///
+    /// This exists because a `format!` with doubled braces
+    /// produced `{{"jsonrpc"...` and the failure surfaced only as
+    /// a parse error on a macOS runner, two pushes later.
+    #[test]
+    fn every_fake_plugin_emits_parseable_json() {
+        let dir = std::path::Path::new("/tmp/whatever");
+
+        for behaviour in ["echo", "log-calls", "env-dump"] {
+            let script = fake_plugin_script(dir, "probe", behaviour);
+
+            let line = script
+                .lines()
+                .find(|l| l.contains("jsonrpc"))
+                .unwrap_or_else(|| panic!("{behaviour}: no reply line in the script"));
+
+            // Lift the payload out of `printf '<payload>\n' "$id"`
+            // and stand in for the shell's own substitution.
+            let start = line.find('\'').expect("opening quote") + 1;
+            let end = line.rfind("\\n'").expect("closing quote");
+            let payload = line[start..end].replace("%s", "1");
+
+            let parsed: serde_json::Value = serde_json::from_str(&payload)
+                .unwrap_or_else(|e| panic!("{behaviour} emits invalid JSON: {e}\n{payload}"));
+
+            assert_eq!(parsed["jsonrpc"], "2.0", "{behaviour}");
+            assert_eq!(parsed["result"]["source_name"], "probe", "{behaviour}");
+            assert!(
+                parsed["result"]["capabilities_bits"].is_number(),
+                "{behaviour}: the handshake has to carry a bitset"
+            );
+        }
+    }
 
     /// Every method maps to exactly one capability, and the two
     /// session-level ones map to none. A wrong entry here either
@@ -793,42 +877,7 @@ mod tests {
 
     fn write_fake_plugin(dir: &Path, name: &str, behaviour: &str) -> (PluginManifest, PathBuf) {
         let exec_path = dir.join(format!("devboy-source-{name}"));
-        let script = match behaviour {
-            "echo" => format!(
-                r#"#!/bin/sh
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-  printf '{{"jsonrpc":"2.0","id":%s,"result":{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}\n' "$id"
-done
-"#
-            ),
-            // Records every request line it is handed, so a test
-            // can assert that a refused call never reached the
-            // plugin at all.
-            "log-calls" => format!(
-                r#"#!/bin/sh
-while IFS= read -r line; do
-  printf '%s\n' "$line" >> "{}/calls.txt"
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-  printf '{{{{"jsonrpc":"2.0","id":%s,"result":{{{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}}}}}\n' "$id"
-done
-"#,
-                dir.display()
-            ),
-            "crash" => "#!/bin/sh\nexit 7\n".to_string(),
-            "hang" => "#!/bin/sh\nwhile read line; do :; done\nsleep 30\n".to_string(),
-            "env-dump" => format!(
-                r#"#!/bin/sh
-env > "{}/env-dump.txt"
-while IFS= read -r line; do
-  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
-  printf '{{"jsonrpc":"2.0","id":%s,"result":{{"source_name":"{name}","capabilities_bits":1,"plugin_version":"0.0.1"}}}}\n' "$id"
-done
-"#,
-                dir.display()
-            ),
-            other => panic!("unknown behaviour: {other}"),
-        };
+        let script = fake_plugin_script(dir, name, behaviour);
         fs::write(&exec_path, script).unwrap();
         let mut perms = fs::metadata(&exec_path).unwrap().permissions();
         perms.set_mode(0o755);
