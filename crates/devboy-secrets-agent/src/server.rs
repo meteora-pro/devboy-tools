@@ -1219,7 +1219,7 @@ fn totp_denial_to_rpc(denial: crate::totp_session::TotpDenial) -> JsonRpcError {
     match denial {
         TotpDenial::Unavailable => JsonRpcError::new(
             TOTP_UNAVAILABLE,
-            "no TOTP secret is resident: unlock the vault with its passphrase first, or enrol an              authenticator with `devboy secrets vault add-totp`",
+            "no TOTP secret is resident: unlock the vault with its passphrase first, or enrol an              authenticator with `devboy secrets add-totp`",
         ),
         TotpDenial::BadCode => JsonRpcError::new(
             BAD_TOTP,

@@ -260,7 +260,7 @@ impl SecretsErrorKind {
                 action: RemediationAction::AskUserToUnlock,
                 user_message: "The vault is locked and there is no TOTP session this boot, so a \
                                code cannot be checked. Unlock it with your passphrase via \
-                               `devboy secrets unlock`."
+                               `devboy secrets agent unlock`."
                     .to_string(),
                 retryable: false,
                 retry_after_seconds: None,
@@ -317,7 +317,7 @@ impl SecretsErrorKind {
                             ctx.env_candidates.join(", ")
                         ));
                     } else if let Some(p) = &ctx.path {
-                        msg.push_str(&format!(" Then run `devboy secrets set {p}`."));
+                        msg.push_str(&format!(" Then run `devboy config set-secret {p}`."));
                     }
                     msg
                 },
@@ -598,7 +598,11 @@ mod tests {
         assert!(msg.contains("GitLab deploy token"), "{msg}");
         assert!(msg.contains("api, read_repository"), "{msg}");
         assert!(msg.contains("https://gitlab.example"), "{msg}");
-        assert!(msg.contains("devboy secrets set"), "{msg}");
+        // The command the message names has to be one the CLI has.
+        // This assertion used to pin a "secrets set" subcommand that
+        // never existed — the test agreed with the message and both
+        // were wrong.
+        assert!(msg.contains("devboy config set-secret"), "{msg}");
     }
 
     /// In env-only mode the fix is an environment variable, and

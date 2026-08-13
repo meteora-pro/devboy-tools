@@ -129,7 +129,7 @@ impl McpServer {
         tracing::info!(
             "Paper 2 layered pipeline enabled — L0 dedup active. \
              Edit ~/.devboy/pipeline_config.toml (or set DEVBOY_PIPELINE_CONFIG) \
-             to tune knobs. See `devboy tune analyze` for split-savings metrics."
+             to tune knobs."
         );
     }
 

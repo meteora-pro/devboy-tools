@@ -1,4 +1,4 @@
-//! `devboy secrets vault add-totp` — enrol an authenticator
+//! `devboy secrets add-totp` — enrol an authenticator
 //! (ADR-024 §1, Ф6d-2).
 //!
 //! # What enrolment actually establishes
@@ -30,7 +30,7 @@ use secrecy::SecretString;
 /// costs nothing here and leaves no argument about margin.
 const SECRET_BYTES: usize = 32;
 
-/// Arguments for `devboy secrets vault add-totp`.
+/// Arguments for `devboy secrets add-totp`.
 #[derive(Args, Debug, Default)]
 pub struct AddTotpArgs {
     /// Label shown in the authenticator app.
@@ -102,7 +102,7 @@ pub fn enrolment_message(secret: &[u8], issuer: &str, account: &str, qr: Option<
     out
 }
 
-/// Run `devboy secrets vault add-totp`.
+/// Run `devboy secrets add-totp`.
 pub fn handle(args: AddTotpArgs) -> Result<()> {
     let account = match args.account {
         Some(a) => a,

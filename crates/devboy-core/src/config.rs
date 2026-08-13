@@ -246,7 +246,8 @@ impl Config {
         if secrets.unlock_ttl_seconds == Some(0) {
             out.push(
                 "[secrets] unlock_ttl_seconds = 0 re-locks the vault immediately after every \
-                 unlock; use `devboy secrets lock` for an explicit lock instead"
+                 unlock, so nothing can ever read a secret. For a short window set a small \
+                 non-zero value, and use idle_relock_seconds to re-lock after inactivity"
                     .to_string(),
             );
         }
