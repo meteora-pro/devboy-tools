@@ -15,6 +15,7 @@ mod secrets_setup;
 mod secrets_totp;
 mod secrets_ui;
 mod secrets_validate;
+mod secrets_versions;
 mod skills_cmd;
 mod update_check;
 mod upgrade;

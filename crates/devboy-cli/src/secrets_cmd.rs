@@ -100,6 +100,23 @@ pub enum SecretsCommands {
     /// bound to this host — the same two files will not open the
     /// vault anywhere else.
     Keyfile(crate::secrets_keyfile::KeyfileArgs),
+
+    /// Show the write history of a secret (ADR-024 §5).
+    ///
+    /// Every write appends a version and keeps the previous
+    /// ciphertext, so a wrong value is recoverable. Values are never
+    /// printed here.
+    Versions(crate::secrets_versions::VersionsArgs),
+
+    /// Undo a write by bringing an earlier version back.
+    ///
+    /// Restoring appends a new version rather than rewriting history,
+    /// so the value being replaced stays recoverable in turn.
+    ///
+    /// Deliberately a person's command and not an agent's: an agent
+    /// that can undo its own writes can also undo a human's
+    /// correction of them.
+    Restore(crate::secrets_versions::RestoreArgs),
     /// Work with KDBX 4 (KeePass) files as a SecretSource. The
     /// passphrase is prompted from stdin with no echo; the
     /// decrypted body lives only inside this process and is
@@ -554,6 +571,8 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
         SecretsCommands::Selftest(args) => crate::secrets_selftest::handle(args),
         SecretsCommands::AddTotp(args) => crate::secrets_totp::handle(args),
         SecretsCommands::Keyfile(args) => crate::secrets_keyfile::run(args),
+        SecretsCommands::Versions(args) => crate::secrets_versions::run_versions(args),
+        SecretsCommands::Restore(args) => crate::secrets_versions::run_restore(args),
         SecretsCommands::Kdbx { command } => match command {
             KdbxCommands::Peek(args) => kdbx_peek(args),
             KdbxCommands::DescribeMetadata(args) => kdbx_describe_metadata(args),

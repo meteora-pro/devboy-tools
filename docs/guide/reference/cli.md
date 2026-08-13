@@ -77,6 +77,8 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets keyfile add`↴](#devboy-secrets-keyfile-add)
 * [`devboy secrets keyfile status`↴](#devboy-secrets-keyfile-status)
 * [`devboy secrets keyfile remove`↴](#devboy-secrets-keyfile-remove)
+* [`devboy secrets versions`↴](#devboy-secrets-versions)
+* [`devboy secrets restore`↴](#devboy-secrets-restore)
 * [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
 * [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
 * [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
@@ -806,6 +808,8 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `selftest` — Report which security posture is actually in force, and where it is weaker than it looks (ADR-024). `doctor` asks "is anything broken"; this asks "what am I actually getting"
 * `add-totp` — Enrol an authenticator app so the vault can be re-unlocked with a six-digit code instead of the passphrase (ADR-024 §1)
 * `keyfile` — Manage the keyfile that lets the vault open with no human present (ADR-024 §6)
+* `versions` — Show the write history of a secret (ADR-024 §5)
+* `restore` — Undo a write by bringing an earlier version back
 * `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
 
 
@@ -1201,6 +1205,40 @@ Report whether a keyfile is enrolled and usable
 Un-enrol the keyfile. The file on disk is left alone
 
 **Usage:** `devboy secrets keyfile remove`
+
+
+
+## `devboy secrets versions`
+
+Show the write history of a secret (ADR-024 §5).
+
+Every write appends a version and keeps the previous ciphertext, so a wrong value is recoverable. Values are never printed here.
+
+**Usage:** `devboy secrets versions <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path whose history to show
+
+
+
+## `devboy secrets restore`
+
+Undo a write by bringing an earlier version back.
+
+Restoring appends a new version rather than rewriting history, so the value being replaced stays recoverable in turn.
+
+Deliberately a person's command and not an agent's: an agent that can undo its own writes can also undo a human's correction of them.
+
+**Usage:** `devboy secrets restore <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path to restore
+
+###### **Options:**
+
+* `--version <VERSION>` — Version to bring back. Omit to restore the one before the current version, which is what "undo that last write" means
 
 
 
