@@ -526,6 +526,26 @@ fn is_false(b: &bool) -> bool {
 /// which extends the existing swap-attack protection from "cannot
 /// move a ciphertext between paths" to "cannot move it between
 /// versions of the same path" either.
+///
+/// # What this does not cover: deletion
+///
+/// The AAD binds each ciphertext to where it belongs. It says
+/// nothing about which entries *should* be present, because the
+/// entry list itself is unauthenticated.
+///
+/// So an attacker who can write to the vault file can roll a
+/// rotation back: delete the newest version's index entry, and
+/// [`crate::vault::Vault::get`] resolves to the previous one, which
+/// decrypts perfectly well under its own AAD. A token that was
+/// rotated *because it leaked* becomes live again, and nothing in
+/// the file registers that anything happened.
+///
+/// This is the same shape as the audit log's unauthenticated record
+/// count, and it wants the same fix — authenticating the index under
+/// the vault key — which is a format change and is tracked with it.
+/// Until then: per-entry integrity is real, whole-file integrity is
+/// not, and the difference matters for anyone reasoning about an
+/// attacker with write access.
 pub fn entry_aad(path: &str, version: u64) -> String {
     if version <= 1 {
         path.to_owned()
