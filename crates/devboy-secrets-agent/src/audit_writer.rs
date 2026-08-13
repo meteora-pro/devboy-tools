@@ -104,7 +104,7 @@ impl AuditWriter {
         // against secrets this daemon provisioned, which is the
         // smaller half of the problem.
         let scrubber = Scrubber::new(collected.iter().map(|(p, v)| (p.clone(), v.clone())))
-            .with_patterns(devboy_secret_patterns::builtins());
+            .with_patterns(devboy_secret_patterns::resolved::patterns());
         let unscrubbable = offered.saturating_sub(scrubber.known_value_count());
 
         Ok(Self {
@@ -141,7 +141,7 @@ impl AuditWriter {
         let offered = collected.len();
 
         self.scrubber = Scrubber::new(collected.iter().map(|(p, v)| (p.clone(), v.clone())))
-            .with_patterns(devboy_secret_patterns::builtins());
+            .with_patterns(devboy_secret_patterns::resolved::patterns());
         self.unscrubbable = offered.saturating_sub(self.scrubber.known_value_count());
     }
 

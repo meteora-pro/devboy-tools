@@ -90,7 +90,7 @@ pub async fn handle(args: RotateArgs) -> Result<()> {
         .ok_or_else(|| anyhow!("no entry for `{path}` in the global index"))?
         .clone();
 
-    let catalogue = Catalogue::builtins_only();
+    let catalogue = devboy_secret_patterns::resolved::shared();
 
     let opener = SystemBrowser;
     let prompts = real_prompts(&args);
@@ -99,7 +99,7 @@ pub async fn handle(args: RotateArgs) -> Result<()> {
         &path,
         &entry,
         &args,
-        &catalogue,
+        catalogue,
         &opener,
         prompts.as_ref(),
         TodayProvider::default(),

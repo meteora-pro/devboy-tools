@@ -32,9 +32,11 @@
 //!   vault or the daemon to build it, because pulling every secret
 //!   into the MCP server so it could recognise them would create a
 //!   larger exposure than the one being fixed.
-//! - **Anything secret-shaped** — the built-in catalogue, which
-//!   catches an upstream leaking a credential of its own that devboy
-//!   has never seen.
+//! - **Anything secret-shaped** — the catalogue, which catches an
+//!   upstream leaking a credential of its own that devboy has never
+//!   seen. Built-ins plus whatever the user declared in
+//!   `<config>/secrets/patterns.d/`, which is how an internal token
+//!   format nobody upstream has heard of gets caught here too.
 //!
 //! # Deliberately unconditional
 //!
@@ -144,7 +146,7 @@ impl CredentialRegistry {
 /// refreshed, which is exactly the kind of staleness that turns into a
 /// silent hole.
 fn scrubber_for(registry: &CredentialRegistry) -> Scrubber {
-    Scrubber::new(registry.snapshot()).with_patterns(devboy_secret_patterns::builtins())
+    Scrubber::new(registry.snapshot()).with_patterns(devboy_secret_patterns::resolved::patterns())
 }
 
 /// Redact secrets from a tool result on its way to the agent.

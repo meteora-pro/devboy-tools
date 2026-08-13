@@ -298,6 +298,48 @@ A green run means:
 
 If anything is red, `doctor` prints the exact code and suggests a fix command. Next stops: the `repair` skill or the [Doctor](../configuration/doctor.md) section.
 
+## Optional. Teach it your own secret shapes
+
+The built-in catalogue knows the public formats — `ghp_…`, `glpat-…`,
+`sk-…`, PEM blocks. It does not know your company's internal token,
+which is exactly the credential most likely to end up in a log nobody
+audits.
+
+Drop a TOML file into `<config>/secrets/patterns.d/` (that is
+`~/.config/devboy/secrets/patterns.d/` by default, and honours
+`DEVBOY_CONFIG_DIR`):
+
+```toml
+# ~/.config/devboy/secrets/patterns.d/acme.toml
+[[pattern]]
+id = "acme-deploy-key"
+display_name = "ACME deploy key"
+format_regex = "^acme_deploy_[A-Za-z0-9]{20}$"
+severity = "high"
+
+# Optional, and worth filling in — these drive rotation:
+provider_id = "acme"
+retrieval_url_template = "https://acme.example/settings/tokens"
+default_expiry_days = 90
+```
+
+Every `.toml` file in that directory is read, in filename order. A
+pattern with the same `id` as a built-in replaces it, and you are told
+so at startup.
+
+Once loaded, the pattern is used everywhere shapes matter: format
+validation in `devboy secrets validate`, the rotation flow, redaction
+in the audit log, and redaction of proxied tool results before they
+reach the agent.
+
+Two things worth knowing:
+
+- The files are read **once, at process start**. Edit one and restart
+  whatever is running — the daemon, the MCP server, your shell.
+- A malformed file is never fatal. Devboy warns, names the file and
+  the reason, and continues with the built-ins alone. Read the warning:
+  it means the pattern you wrote is *not* in force.
+
 ## What's next
 
 - [`local-vault.md`](./local-vault.md) — set up your own local store (zeroize-on-drop file with XChaCha20-Poly1305).

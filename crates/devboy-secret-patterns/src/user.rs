@@ -225,6 +225,21 @@ pub struct LoadWarning {
     pub subject: String,
 }
 
+impl std::fmt::Display for LoadWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            LoadWarningKind::ShadowsBuiltin => write!(
+                f,
+                "`{}` shadows a built-in pattern of the same id; yours wins",
+                self.subject
+            ),
+            LoadWarningKind::SkippedNonToml => {
+                write!(f, "skipped {} — not a .toml file", self.subject)
+            }
+        }
+    }
+}
+
 /// Categories of advisory warnings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadWarningKind {

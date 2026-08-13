@@ -173,7 +173,7 @@ pub async fn handle(args: ValidateArgs) -> Result<()> {
     let global = GlobalIndex::load().context("failed to load global index")?;
     let manifest = ProjectManifest::load().context("failed to load project manifest")?;
     let merged = merge_manifest(&global, &manifest).context("failed to merge manifest")?;
-    let catalogue = Catalogue::builtins_only();
+    let catalogue = devboy_secret_patterns::resolved::shared();
 
     let filter = args
         .path
@@ -189,7 +189,7 @@ pub async fn handle(args: ValidateArgs) -> Result<()> {
         {
             continue;
         }
-        let row = build_row(resolved, &catalogue, args.liveness).await;
+        let row = build_row(resolved, catalogue, args.liveness).await;
         rows.push(row);
     }
 

@@ -61,6 +61,7 @@
 #![forbid(unsafe_code)]
 
 pub mod builtin;
+pub mod resolved;
 pub mod scanning;
 pub mod scrubber;
 pub mod user;
