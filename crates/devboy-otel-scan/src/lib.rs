@@ -120,6 +120,15 @@ impl<'a> Scanner<'a> {
         report.summary.records = 1;
         report
     }
+
+    /// Redacts catalogue matches from a structured record in place.
+    ///
+    /// This is the streaming transform used by `redacted-jsonl`. It shares the
+    /// scanner's catalogue, but deliberately returns no findings so callers
+    /// cannot accidentally write raw candidate values to an output stream.
+    pub fn redact_value(&self, value: &mut Value) {
+        redact_value_at(&self.patterns, value);
+    }
 }
 
 /// Error while reading a JSONL artifact.
@@ -233,6 +242,68 @@ fn scan_value_at(
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => {}
     }
+}
+
+fn redact_value_at(patterns: &[&dyn SecretPattern], value: &mut Value) {
+    match value {
+        Value::String(text) => redact_text(patterns, text),
+        Value::Array(values) => {
+            for child in values {
+                redact_value_at(patterns, child);
+            }
+        }
+        Value::Object(values) => {
+            for child in values.values_mut() {
+                redact_value_at(patterns, child);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn redact_text(patterns: &[&dyn SecretPattern], text: &mut String) {
+    for pattern in patterns {
+        if pattern.format_regex().is_match(text) {
+            *text = format!("[REDACTED:{}]", pattern.id());
+            return;
+        }
+    }
+
+    // Catalogue patterns are full-value validators. Replace the token-shaped
+    // pieces in command strings while retaining surrounding context.
+    let mut output = String::with_capacity(text.len());
+    let mut token = String::new();
+    for character in text.chars() {
+        if character.is_whitespace()
+            || matches!(
+                character,
+                ',' | ';' | '\'' | '"' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+            )
+        {
+            redact_token(patterns, &mut output, &mut token);
+            output.push(character);
+        } else {
+            token.push(character);
+        }
+    }
+    redact_token(patterns, &mut output, &mut token);
+    *text = output;
+}
+
+fn redact_token(patterns: &[&dyn SecretPattern], output: &mut String, token: &mut String) {
+    let trimmed = token.trim_matches(|character: char| matches!(character, '=' | ':' | '`' | '.'));
+    if let Some(pattern) = patterns
+        .iter()
+        .find(|pattern| pattern.format_regex().is_match(trimmed))
+    {
+        let prefix_length = token.find(trimmed).unwrap_or(0);
+        output.push_str(&token[..prefix_length]);
+        output.push_str(&format!("[REDACTED:{}]", pattern.id()));
+        output.push_str(&token[prefix_length + trimmed.len()..]);
+    } else {
+        output.push_str(token);
+    }
+    token.clear();
 }
 
 fn scan_text(
@@ -369,5 +440,26 @@ mod tests {
             .expect_err("must reject malformed JSON");
         assert_eq!(error.to_string(), "invalid JSON on line 1");
         assert!(!error.to_string().contains("possibly-secret"));
+    }
+
+    #[test]
+    fn redacts_nested_and_embedded_tokens_without_changing_safe_fields() {
+        let token = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ";
+        let mut value = json!({
+            "safe": "unchanged",
+            "token": token,
+            "command": format!("curl -H 'Authorization: Bearer {token}'"),
+        });
+        scanner().redact_value(&mut value);
+
+        assert_eq!(value["safe"], "unchanged");
+        assert_eq!(value["token"], "[REDACTED:github-pat]");
+        assert!(!value.to_string().contains(token));
+        assert!(
+            value["command"]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED:github-pat]")
+        );
     }
 }

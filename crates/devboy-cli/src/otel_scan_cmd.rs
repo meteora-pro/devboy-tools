@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader};
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -52,6 +53,8 @@ pub enum ScanOutput {
     Text,
     Json,
     Sarif,
+    #[value(name = "redacted-jsonl")]
+    RedactedJsonl,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -77,6 +80,9 @@ pub fn handle(command: OtelCommands) -> Result<i32> {
 fn scan(args: ScanArgs) -> Result<i32> {
     let catalogue = Catalogue::builtins_only();
     let scanner = Scanner::new(&catalogue);
+    if matches!(args.output, ScanOutput::RedactedJsonl) {
+        return redact_jsonl_input(&scanner, &args.input, args.format);
+    }
     let result = match scan_input(&scanner, &args.input, args.format) {
         Ok(result) => result,
         Err(error) => {
@@ -89,8 +95,56 @@ fn scan(args: ScanArgs) -> Result<i32> {
         ScanOutput::Text => print_text(&args.input, &result),
         ScanOutput::Json => print_json(&result)?,
         ScanOutput::Sarif => print_sarif(&result.report)?,
+        ScanOutput::RedactedJsonl => unreachable!("handled before scanning"),
     }
     Ok(exit_code(&result.report, args.fail_on))
+}
+
+fn redact_jsonl_input(scanner: &Scanner<'_>, input: &str, format: ScanFormat) -> Result<i32> {
+    if matches!(input, "-" | "stdin") {
+        redact_jsonl(
+            scanner,
+            BufReader::new(io::stdin().lock()),
+            io::stdout().lock(),
+        )?;
+        return Ok(0);
+    }
+    let raw_path = input.strip_prefix("jsonl:").unwrap_or(input);
+    let path = Path::new(raw_path);
+    if !matches!(format, ScanFormat::Jsonl | ScanFormat::Auto) || !is_jsonl(path) {
+        eprintln!("scan error: redacted-jsonl requires a JSONL file or stdin");
+        return Ok(3);
+    }
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => {
+            eprintln!("scan error: could not open input '{raw_path}'");
+            return Ok(3);
+        }
+    };
+    redact_jsonl(scanner, BufReader::new(file), io::stdout().lock())?;
+    Ok(0)
+}
+
+fn redact_jsonl<R: BufRead, W: Write>(
+    scanner: &Scanner<'_>,
+    reader: R,
+    mut writer: W,
+) -> Result<()> {
+    for (index, line) in reader.lines().enumerate() {
+        let line_number = index + 1;
+        let line = line.map_err(|_| anyhow::anyhow!("failed to read JSONL input"))?;
+        if line.trim().is_empty() {
+            writeln!(writer)?;
+            continue;
+        }
+        let mut value: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|_| anyhow::anyhow!("invalid JSON on line {line_number}"))?;
+        scanner.redact_value(&mut value);
+        serde_json::to_writer(&mut writer, &value)?;
+        writeln!(writer)?;
+    }
+    Ok(())
 }
 
 fn scan_input(
@@ -621,5 +675,33 @@ mod tests {
             7
         );
         assert!(!serde_json::to_string(&value).expect("JSON").contains(token));
+    }
+
+    #[test]
+    fn redacted_jsonl_keeps_valid_records_and_blank_lines() {
+        let token = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ";
+        let input =
+            format!("{{\"safe\":\"yes\",\"command\":\"Bearer {token}\"}}\n\n{{\"value\":42}}\n");
+        let catalogue = Catalogue::builtins_only();
+        let scanner = Scanner::new(&catalogue);
+        let mut output = Vec::new();
+        redact_jsonl(&scanner, BufReader::new(input.as_bytes()), &mut output).expect("redaction");
+        let output = String::from_utf8(output).expect("UTF-8 output");
+
+        assert!(!output.contains(token));
+        let mut lines = output.lines();
+        let first: serde_json::Value =
+            serde_json::from_str(lines.next().expect("first line")).expect("JSON");
+        assert_eq!(first["safe"], "yes");
+        assert!(
+            first["command"]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED:github-pat]")
+        );
+        assert_eq!(lines.next(), Some(""));
+        let third: serde_json::Value =
+            serde_json::from_str(lines.next().expect("third line")).expect("JSON");
+        assert_eq!(third["value"], 42);
     }
 }
