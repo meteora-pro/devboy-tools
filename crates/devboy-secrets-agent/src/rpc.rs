@@ -66,11 +66,23 @@ pub const DAEMON_UNTRUSTED: i32 = -32005;
 ///
 /// Distinct from a failed unlock because the fix is completely
 /// different — nothing about the passphrase is wrong, the daemon
-/// simply has no channel to the human. A properly daemonised
-/// process has no controlling terminal by construction, so this is
-/// the *expected* answer until a prompt channel that does not
-/// depend on one is chosen.
+/// simply has no channel to the human.
+///
+/// A properly daemonised process has no controlling terminal by
+/// construction, so this used to be the *expected* answer. Since Ф14
+/// a caller can lend one, and this code now means both channels were
+/// unavailable: the daemon has no terminal and the caller offered
+/// none, or offered something that is not a terminal. The message
+/// says which.
 pub const NO_PROMPT_SURFACE: i32 = -32006;
+
+/// What to say when neither the daemon nor the caller has a terminal.
+///
+/// A constant rather than an inline string because it is asserted on
+/// from both the daemon's tests and the CLI's, and a message that
+/// drifts between the two is a message nobody trusts.
+pub const NO_TERMINAL_AT_ALL: &str = "this daemon has no terminal to ask on, and the caller offered none. Run `devboy secrets \
+     agent unlock` from a terminal, or export DEVBOY_VAULT_PASSPHRASE for an unattended start.";
 
 /// ADR-024 §1: no TOTP secret is resident, so a code cannot be
 /// checked at all.

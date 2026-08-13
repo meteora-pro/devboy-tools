@@ -1715,9 +1715,12 @@ async fn agent_unlock(args: AgentUnlockArgs) -> Result<()> {
         return Ok(());
     }
 
-    println!("asking the daemon to unlock — answer the prompt where it is running");
+    // The prompt appears here when this process has a terminal to
+    // lend, and on the daemon's own terminal otherwise — so the
+    // wording no longer promises one or the other.
+    println!("asking the daemon to unlock — answer the passphrase prompt when it appears");
 
-    match client.call("vault.request_unlock", serde_json::Value::Null) {
+    match client.request_unlock() {
         Ok(_) => {}
         Err(devboy_secrets_agent::ClientError::Daemon(e)) => {
             // The daemon's refusal already explains itself; passing

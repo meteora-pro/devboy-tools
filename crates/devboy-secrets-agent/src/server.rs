@@ -43,7 +43,8 @@ use crate::idle::{IdleClock, IdleTracker, UnlockWindow};
 use crate::rpc::{
     BAD_TOTP, BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INVALID_PARAMS, IO_ERROR, JsonRpcError,
     JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND, NO_MATCHING_ENVELOPE, NO_PROMPT_SURFACE,
-    REPLAYED_TOTP, TOTP_RATE_LIMITED, TOTP_UNAVAILABLE, VAULT_LOCKED, read_request, write_response,
+    NO_TERMINAL_AT_ALL, REPLAYED_TOTP, TOTP_RATE_LIMITED, TOTP_UNAVAILABLE, VAULT_LOCKED,
+    read_request, write_response,
 };
 
 /// Daemon-side state machine wrapping a vault.
@@ -79,6 +80,29 @@ pub struct VaultServer {
     /// unlock and cleared on every lock, so the TOTP path never
     /// outlives the unlock that established it.
     totp: crate::totp_session::TotpSession,
+    /// Whether to look for a controlling terminal of our own when a
+    /// passphrase has to be collected (ADR-024 §7, Ф14).
+    ///
+    /// Always `Detect` in production; the other variant exists only
+    /// under `cfg(test)` and is therefore unreachable from a shipped
+    /// binary. It is here because a test that reaches the prompt
+    /// **blocks on the developer's real screen** when `cargo test`
+    /// runs in a terminal — which is how a hang went unnoticed:
+    /// neither CI nor a piped shell has a controlling terminal, so
+    /// the branch only ever fired on a person's laptop.
+    #[cfg(unix)]
+    own_tty: OwnTty,
+}
+
+/// Where the daemon looks for its own terminal.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnTty {
+    /// Open `/dev/tty` and use it if it exists.
+    Detect,
+    /// Behave as a properly-installed daemon does: no terminal.
+    #[cfg(test)]
+    Absent,
 }
 
 impl VaultServer {
@@ -93,7 +117,23 @@ impl VaultServer {
             idle: IdleTracker::new(),
             audit: None,
             totp: crate::totp_session::TotpSession::new(),
+            #[cfg(unix)]
+            own_tty: OwnTty::Detect,
         }
+    }
+
+    /// Behave as a properly-installed daemon does: no controlling
+    /// terminal of its own.
+    ///
+    /// Test-only, and the variant it sets does not exist outside
+    /// `cfg(test)`. Without it a test that reaches the passphrase
+    /// prompt blocks on the developer's real screen whenever
+    /// `cargo test` is run from a terminal — silently, because
+    /// neither CI nor a piped shell has one.
+    #[cfg(all(test, unix))]
+    fn pretend_to_have_no_terminal(&mut self) -> &mut Self {
+        self.own_tty = OwnTty::Absent;
+        self
     }
 
     /// Build a server with a custom idle-timeout duration.
@@ -107,6 +147,8 @@ impl VaultServer {
             idle: IdleTracker::with_timeout(idle_timeout),
             audit: None,
             totp: crate::totp_session::TotpSession::new(),
+            #[cfg(unix)]
+            own_tty: OwnTty::Detect,
         }
     }
 
@@ -127,6 +169,8 @@ impl VaultServer {
             idle: IdleTracker::with_window(window, std::sync::Arc::new(crate::idle::SystemClock)),
             audit: None,
             totp: crate::totp_session::TotpSession::new(),
+            #[cfg(unix)]
+            own_tty: OwnTty::Detect,
         }
     }
 
@@ -152,6 +196,8 @@ impl VaultServer {
             idle: IdleTracker::with_clock(idle_timeout, clock),
             audit: None,
             totp: crate::totp_session::TotpSession::new(),
+            #[cfg(unix)]
+            own_tty: OwnTty::Detect,
         }
     }
 
@@ -409,20 +455,25 @@ impl VaultServer {
     /// agent can have. This method only says "a human is asking to
     /// unlock"; the secret never crosses the socket.
     ///
-    /// # Why this usually cannot work yet
+    /// # Two channels, and why the second one exists
     ///
-    /// The only channel implemented is the daemon's own controlling
-    /// terminal, and a daemon that satisfies the §7 startup check
-    /// does not have one: the check demands reparenting to init, and
-    /// a reparented process has no controlling terminal (our own
-    /// systemd unit sets `StandardInput=null`). So in the supported
-    /// configuration this returns [`NO_PROMPT_SURFACE`], and the
-    /// error says what would fix it.
+    /// The daemon's own controlling terminal is tried first. A daemon
+    /// that satisfies the §7 startup check does not have one — the
+    /// check demands reparenting to init, and a reparented process
+    /// has no controlling terminal (our own systemd unit sets
+    /// `StandardInput=null`). On its own that made this method
+    /// useless in exactly the configuration we recommend.
     ///
-    /// That is a real conflict inside §7 rather than an oversight
-    /// here, and resolving it means choosing a channel that does not
-    /// need a terminal — `systemd-ask-password`, a launchd GUI
-    /// helper, or a helper process of our own.
+    /// So a caller may **lend** its terminal by naming it, and the
+    /// daemon opens that and asks there
+    /// (see [`crate::client_terminal`], which also works through why
+    /// letting the caller choose does not weaken §7). The passphrase
+    /// still never crosses the socket and never enters the client's
+    /// memory; only the *location of the screen* comes from the
+    /// caller.
+    ///
+    /// With neither channel available this returns
+    /// [`NO_PROMPT_SURFACE`], and the error says what would fix it.
     fn handle_vault_request_unlock(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         let id = req.id.clone();
 
@@ -430,15 +481,16 @@ impl VaultServer {
             return JsonRpcResponse::ok(id, json!({"state": "unlocked"}));
         }
 
-        let Some(mut prompt) = crate::prompt::TtyPrompt::open() else {
-            return JsonRpcResponse::err(
-                id,
-                JsonRpcError::new(
-                    NO_PROMPT_SURFACE,
-                    "this daemon has no terminal to ask on, so it cannot collect the passphrase                      itself. Unlock it from the terminal it was started in, or export                      DEVBOY_VAULT_PASSPHRASE for an unattended start."
-                        .to_string(),
-                ),
-            );
+        // Anything else the caller sent is ignored rather than
+        // rejected — notably a `passphrase` field, which this method
+        // must never honour.
+        let params: RequestUnlockParams = serde_json::from_value(req.params).unwrap_or_default();
+
+        let (mut prompt, channel) = match self.prompt_surface(params.tty.as_deref()) {
+            Ok(pair) => pair,
+            Err(message) => {
+                return JsonRpcResponse::err(id, JsonRpcError::new(NO_PROMPT_SURFACE, message));
+            }
         };
 
         let passphrase = match prompt.read_passphrase("Unlock the devboy vault: ") {
@@ -448,7 +500,7 @@ impl VaultServer {
                     id,
                     JsonRpcError::new(
                         NO_PROMPT_SURFACE,
-                        format!("could not read a passphrase from the daemon's terminal: {e}"),
+                        format!("could not read a passphrase from the {channel} terminal: {e}"),
                     ),
                 );
             }
@@ -464,12 +516,39 @@ impl VaultServer {
                 // the safest path the least visible one.
                 self.open_audit();
                 let trust = crate::provenance::startup_provenance().trust_level();
-                let detail = format!("method=daemon-prompt trust={}", trust.as_str());
+                // Which screen the question was printed on is part of
+                // the record: "the daemon asked" and "the daemon asked
+                // on a terminal the caller named" are different
+                // enough that a reader of the trail should not have
+                // to guess which happened.
+                let detail = format!(
+                    "method=daemon-prompt channel={channel} trust={}",
+                    trust.as_str()
+                );
                 self.audit_with_detail("unlock", "vault", "user", Some(&detail));
                 JsonRpcResponse::ok(id, json!({"state": "unlocked"}))
             }
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
         }
+    }
+
+    /// Find a screen to ask on, preferring the daemon's own.
+    ///
+    /// Returns the prompt and a label naming the channel, or the
+    /// message to fail with. The daemon's own terminal comes first
+    /// because it needs nothing from the caller; a lent one is the
+    /// fallback that makes the properly-installed case work at all.
+    #[cfg(unix)]
+    fn prompt_surface(
+        &self,
+        lent: Option<&str>,
+    ) -> Result<(crate::prompt::TtyPrompt, &'static str), String> {
+        let own = match self.own_tty {
+            OwnTty::Detect => crate::prompt::TtyPrompt::open(),
+            #[cfg(test)]
+            OwnTty::Absent => None,
+        };
+        choose_prompt_surface(own, lent)
     }
 
     /// Re-unlock with a TOTP code (ADR-024 §1).
@@ -1005,6 +1084,22 @@ struct PutInteractiveParams {
     value: String,
 }
 
+/// Parameters for `vault.request_unlock`.
+///
+/// Note what is *not* here: a passphrase. This request only says "a
+/// human is asking to unlock"; the secret never crosses the socket.
+/// Unknown fields are ignored rather than rejected, so a caller that
+/// sends one is refused by omission rather than by an error that
+/// might tempt someone to add the field.
+#[derive(Debug, Default, Deserialize)]
+struct RequestUnlockParams {
+    /// A terminal the caller is lending the daemon to ask on
+    /// (ADR-024 §7, Ф14). Absent means "use your own, if you have
+    /// one".
+    #[serde(default)]
+    tty: Option<String>,
+}
+
 /// Parameters for `totp.unlock`.
 #[derive(Debug, Deserialize)]
 struct TotpUnlockParams {
@@ -1106,6 +1201,42 @@ impl EntryMetadataParams {
 // Error helpers
 // =============================================================================
 
+/// Decide which screen to ask the passphrase on (ADR-024 §7, Ф14).
+///
+/// `own` is the daemon's own controlling terminal if it has one, and
+/// `lent` a path the caller offered. Taken as arguments rather than
+/// read inside, for a reason that is not merely stylistic: a test
+/// process usually *does* have a controlling terminal, so a version
+/// that opened `/dev/tty` itself would take the "own" branch on a
+/// developer's machine and block on their real screen. The branch
+/// that matters would then be exercised only in CI, where nobody
+/// looks until it breaks.
+///
+/// The daemon's own terminal wins when both exist: it needs nothing
+/// from the caller, and the fewer moving parts in a passphrase prompt
+/// the better.
+#[cfg(unix)]
+fn choose_prompt_surface(
+    own: Option<crate::prompt::TtyPrompt>,
+    lent: Option<&str>,
+) -> Result<(crate::prompt::TtyPrompt, &'static str), String> {
+    if let Some(prompt) = own {
+        return Ok((prompt, "own"));
+    }
+
+    let Some(path) = lent else {
+        return Err(NO_TERMINAL_AT_ALL.to_string());
+    };
+
+    match crate::client_terminal::open_client_terminal(std::path::Path::new(path)) {
+        Ok(file) => Ok((crate::prompt::TtyPrompt::from_file(file), "client")),
+        Err(e) => Err(format!(
+            "this daemon has no terminal of its own, and the one offered by the caller cannot be \
+             used: {e}"
+        )),
+    }
+}
+
 fn invalid_params(id: Value, source: serde_json::Error) -> JsonRpcResponse {
     JsonRpcResponse::err(
         id,
@@ -1196,7 +1327,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("vault.dvb");
         let _outcome = Vault::create(&path, fast_init(p)).unwrap();
-        let server = VaultServer::new(path);
+        let mut server = VaultServer::new(path);
+        // Every test here runs against the configuration the ADR
+        // recommends: a daemon with no terminal of its own. It is
+        // also the only way these tests do not block on the
+        // developer's screen when `cargo test` runs in a terminal.
+        server.pretend_to_have_no_terminal();
         (dir, server)
     }
 
@@ -1674,6 +1810,93 @@ mod tests {
             .await;
 
         assert!(!server.totp_available());
+    }
+
+    /// The whole point of Ф14, driven through the dispatcher: a
+    /// daemon with no screen of its own asks on the one the caller
+    /// lent, and a human answering there unlocks the vault.
+    #[tokio::test]
+    async fn a_lent_terminal_unlocks_through_the_dispatcher() {
+        use std::io::Write;
+        use std::os::fd::AsFd;
+
+        let (_dir, mut server) = fresh_vault("correct horse");
+        let pty = nix::pty::openpty(None, None).expect("openpty");
+        let path = nix::unistd::ttyname(pty.slave.as_fd()).expect("ttyname");
+
+        // Reading blocks, so the human types from another thread.
+        let master = pty.master.try_clone().expect("clone master");
+        let typist = std::thread::spawn(move || {
+            let mut m = std::fs::File::from(master);
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            m.write_all(b"correct horse\n").expect("type");
+        });
+
+        let r = server
+            .handle_request(req(
+                1,
+                "vault.request_unlock",
+                json!({ "tty": path.display().to_string() }),
+            ))
+            .await;
+        typist.join().expect("typist");
+
+        assert!(r.error.is_none(), "unlock failed: {:?}", r.error);
+        assert!(
+            server.is_unlocked(),
+            "the passphrase typed on the lent terminal must have opened the vault"
+        );
+    }
+
+    /// A caller naming something that is not a terminal must be
+    /// refused, and told which of the two channels failed — the
+    /// daemon having no screen is a different problem from the
+    /// offered one being unusable.
+    #[tokio::test]
+    async fn a_lent_path_that_is_not_a_terminal_is_refused() {
+        let (_dir, mut server) = fresh_vault("p");
+
+        let r = server
+            .handle_request(req(
+                1,
+                "vault.request_unlock",
+                json!({"tty": "/etc/passwd"}),
+            ))
+            .await;
+
+        let err = r.error.expect("must refuse");
+        assert_eq!(err.code, NO_PROMPT_SURFACE);
+        assert!(
+            err.message.contains("offered by the caller"),
+            "the message must say which channel failed: {}",
+            err.message
+        );
+        assert!(!server.is_unlocked());
+    }
+
+    /// The daemon's own terminal wins when it has one: it needs
+    /// nothing from the caller, and fewer moving parts in a
+    /// passphrase prompt is better.
+    #[test]
+    fn the_daemons_own_terminal_is_preferred_over_a_lent_one() {
+        let pty = nix::pty::openpty(None, None).expect("openpty");
+        let own = crate::prompt::TtyPrompt::from_file(std::fs::File::from(pty.slave));
+
+        let (_prompt, channel) =
+            choose_prompt_surface(Some(own), Some("/dev/pts/999")).expect("own wins");
+
+        assert_eq!(channel, "own");
+    }
+
+    /// Neither channel available is its own message, distinct from
+    /// "what you offered is unusable".
+    #[test]
+    fn no_terminal_anywhere_says_so_and_names_the_way_out() {
+        let err = choose_prompt_surface(None, None).expect_err("no surface");
+
+        assert_eq!(err, NO_TERMINAL_AT_ALL);
+        assert!(err.contains("devboy secrets agent unlock"), "{err}");
+        assert!(err.contains("DEVBOY_VAULT_PASSPHRASE"), "{err}");
     }
 
     /// `vault.request_unlock` must carry no passphrase field at all.

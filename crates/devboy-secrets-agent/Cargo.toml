@@ -44,8 +44,10 @@ zeroize = "1.8"
 [target.'cfg(unix)'.dependencies]
 # `term` carries both halves the passphrase prompt needs: termios
 # for the echo-off dance, and `nix::pty` so the tests can drive that
-# prompt over a real terminal rather than a stand-in.
-nix = { version = "0.30", default-features = false, features = ["user", "process", "term"] }
+# prompt over a real terminal rather than a stand-in. `fs` adds
+# `isatty`, which is how a caller-supplied terminal path is checked
+# to actually be a terminal (Ф14).
+nix = { version = "0.30", default-features = false, features = ["user", "process", "term", "fs"] }
 
 [dev-dependencies]
 tempfile.workspace = true

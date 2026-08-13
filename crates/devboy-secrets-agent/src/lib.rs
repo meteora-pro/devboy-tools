@@ -16,6 +16,8 @@
 
 pub mod audit_writer;
 pub mod client;
+#[cfg(unix)]
+pub mod client_terminal;
 pub mod idle;
 #[cfg(unix)]
 pub mod prompt;

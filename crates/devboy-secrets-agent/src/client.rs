@@ -199,6 +199,31 @@ impl AgentClient {
         self.call("secret.get", json!({ "path": path }))
     }
 
+    /// `vault.request_unlock`, lending the daemon this process's
+    /// terminal if it has one (ADR-024 §7, Ф14).
+    ///
+    /// Carries no passphrase — that is the whole point of the method.
+    /// It names a *screen*, so a daemon with no controlling terminal
+    /// of its own can still ask a human. See
+    /// [`crate::client_terminal`] for why letting the caller name it
+    /// does not weaken the guarantee.
+    ///
+    /// Resolving the terminal lives here rather than in the CLI so
+    /// that every caller gets the same behaviour, and so the
+    /// platform-specific part stays in the crate that already owns
+    /// the daemon protocol.
+    pub fn request_unlock(&self) -> Result<Value, ClientError> {
+        #[cfg(unix)]
+        let params = match crate::client_terminal::caller_terminal() {
+            Some(path) => json!({ "tty": path.display().to_string() }),
+            None => Value::Null,
+        };
+        #[cfg(not(unix))]
+        let params = Value::Null;
+
+        self.call("vault.request_unlock", params)
+    }
+
     /// `totp.unlock` with a six-digit code.
     pub fn totp_unlock(
         &self,

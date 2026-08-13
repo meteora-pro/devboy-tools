@@ -1127,6 +1127,63 @@ secret value. Users who consider this unacceptable should use the `strict`
 profile of §2, where per-call approval makes each subsequent access a separate
 human decision.
 
+#### The conflict inside this section, and how it is resolved (Ф14)
+
+§7 asks for two things that pull against each other. The daemon must be
+reparented to init, so that no process the agent controls is its parent. And
+the daemon must collect the passphrase itself, so that nothing the agent
+controls sees it typed.
+
+A reparented process has no controlling terminal. Our own systemd unit sets
+`StandardInput=null`; launchd is no different. So the daemon that satisfies the
+first requirement has no screen on which to satisfy the second. For a while
+that was simply the state of things: `vault.request_unlock` answered "no prompt
+surface", and the only way into a locked vault was
+`DEVBOY_VAULT_PASSPHRASE` — adequate for a server, useless for a person at a
+laptop. Interactive unlock did not work in the configuration this ADR
+recommends.
+
+**Resolution: the caller lends a terminal.** The client has one, because a
+human just typed a command into it. It resolves that terminal to a concrete
+path — `/dev/pts/3`, never the per-process `/dev/tty` — and names it in the
+request. The daemon opens that path and asks there. The passphrase still never
+crosses the socket and never enters the client's memory; only the *location of
+the screen* comes from the caller.
+
+**Why that does not give the game away.** The objection is obvious: §7 exists so
+the prompt lives on a channel the agent does not own, and here the caller picks
+the channel. Worked through, nothing is lost. An agent that names a terminal it
+controls gains nothing, because nobody types into it — the passphrase comes
+from a human looking at their own screen. Guessing is no better: `vault.unlock`
+already accepts a passphrase outright, so that oracle always existed. And an
+agent that wants to trick a human into typing a passphrase where it can read it
+never needed any of this; it can print its own prompt.
+
+What the daemon rests on is *provenance* — who started it, and whether the
+caller is an ancestor that could read its memory. Neither is affected by which
+terminal is named. The path decides where the question is printed, not whether
+the answer can be trusted. The audit entry records which channel was used
+(`channel=own` or `channel=client`), because those are different enough that a
+reader of the trail should not have to guess.
+
+**What is refused.** The daemon opens a caller-supplied path read-write, so the
+path must be under `/dev` (checked before opening — otherwise the prompt text
+would land in whatever file was named) and the result must be a terminal
+(checked after opening, since only the descriptor can answer that). A pipe
+would mean a script is answering, and the whole arrangement is built on a human
+having been present.
+
+**Mechanism note.** Passing the descriptor itself over the socket
+(`SCM_RIGHTS`) was the original plan and is the more obvious design. Adopting a
+received descriptor requires `OwnedFd::from_raw_fd`, which is `unsafe`, and
+this workspace sets `unsafe_code = "forbid"` — no local exception is possible,
+and the fd-passing crates return raw descriptors too, so each would only move
+the same `unsafe` somewhere less visible. Naming the terminal reaches the same
+place with an ordinary `File::open`. The one real difference: a daemon in a
+different mount namespace from its client (a container) may not have that path,
+where `SCM_RIGHTS` would still work. That is the reason to revisit this if
+namespaces ever come up.
+
 #### Platform trusted-path primitives
 
 Where the OS offers a real trusted path, use it in addition to the levels above:

@@ -312,7 +312,11 @@ fn trust_level_findings() -> Vec<Finding> {
     );
     if channel == "none" {
         channel_finding = channel_finding.with_note(
-            "the daemon has no terminal, so it cannot ask you for a passphrase itself. This is              the normal state for a properly-installed service — the same startup check that              makes it trustworthy is what leaves it without a terminal. Unlock it from the              terminal it was started in, or export DEVBOY_VAULT_PASSPHRASE for an unattended              start.",
+            "the daemon has no terminal of its own. This is the normal state for a \
+             properly-installed service — the same startup check that makes it trustworthy is \
+             what leaves it without one — and it is no longer a dead end: `devboy secrets agent \
+             unlock` lends the daemon the terminal you run it from, and the prompt appears \
+             there. For an unattended start, export DEVBOY_VAULT_PASSPHRASE instead.",
         );
     } else if let Some(daemon_tty) = status.get("terminal_id")
         && !daemon_tty.is_null()
