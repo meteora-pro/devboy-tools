@@ -55,6 +55,80 @@ use std::fmt;
 /// cannot be reached *silently* or by default.
 pub const INSECURE_OVERRIDE_ENV: &str = "DEVBOY_INSECURE_ALLOW_UNTRUSTED_DAEMON";
 
+/// What the kernel lets one process do to another under the same
+/// user.
+///
+/// Levels 2 and 3 of §7 rest entirely on this. "A daemon that is
+/// not the agent's child keeps its memory out of the agent's reach"
+/// is true *because of* Linux's Yama `ptrace_scope = 1`, which
+/// permits tracing descendants only. Where that policy is not in
+/// force the sentence is simply false, and a same-UID agent reads
+/// `vault_key` and `totp_secret` straight out of daemon memory.
+///
+/// The setting was named in this module's comments from the start
+/// and never read. Reporting `independent` without checking it
+/// promises a guarantee whose premise nobody verified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PtracePolicy {
+    /// Tracing is restricted to descendants or tighter
+    /// (`ptrace_scope >= 1`), so the process-tree argument holds.
+    Restricted,
+    /// Any process under this UID may trace any other
+    /// (`ptrace_scope = 0`, or Yama absent). The default on some
+    /// distributions and common inside containers.
+    Permissive,
+    /// Could not be determined.
+    ///
+    /// Treated as [`Permissive`] when deciding what to promise:
+    /// an unverified premise is not a guarantee.
+    ///
+    /// [`Permissive`]: PtracePolicy::Permissive
+    Unknown,
+}
+
+impl PtracePolicy {
+    /// Whether the process-tree argument actually holds.
+    pub fn protects_non_descendants(self) -> bool {
+        matches!(self, Self::Restricted)
+    }
+
+    /// Interpret the contents of `kernel.yama.ptrace_scope`.
+    ///
+    /// `0` is classic permissive ptrace; `1` restricts to
+    /// descendants; `2` is admin-only; `3` disables attach
+    /// entirely. Anything unparseable is not assumed friendly.
+    pub fn from_sysctl_value(raw: &str) -> Self {
+        match raw.trim().parse::<u8>() {
+            Ok(0) => Self::Permissive,
+            Ok(_) => Self::Restricted,
+            Err(_) => Self::Unknown,
+        }
+    }
+}
+
+/// Read the platform's ptrace policy.
+///
+/// Linux reads Yama's sysctl; a missing file means Yama is not
+/// built in, which is permissive rather than unknown. Elsewhere the
+/// question does not arise the same way — macOS gates
+/// `task_for_pid` behind root or a debugger entitlement regardless
+/// of kinship — so those platforms report restricted.
+pub fn ptrace_policy() -> PtracePolicy {
+    #[cfg(target_os = "linux")]
+    {
+        match std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope") {
+            Ok(raw) => PtracePolicy::from_sysctl_value(&raw),
+            // No Yama in this kernel: classic permissive ptrace.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => PtracePolicy::Permissive,
+            Err(_) => PtracePolicy::Unknown,
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        PtracePolicy::Restricted
+    }
+}
+
 /// How well the process layout supports the guarantees in §1/§7.
 ///
 /// Computed from the actual process tree — never asserted by
@@ -72,6 +146,20 @@ pub enum TrustLevel {
     /// Same UID and inside a session process's tree. No meaningful
     /// protection against a hostile caller.
     AgentParented,
+    /// Started independently, but the kernel does not restrict
+    /// `ptrace` between same-UID processes.
+    ///
+    /// Its own variant rather than a warning on top of
+    /// [`Independent`], because the remediation is completely
+    /// different — nothing is wrong with how the daemon was
+    /// started, and the fix is one sysctl, not a change of launch
+    /// method. Protection-wise it sits with [`AgentParented`]: a
+    /// caller that can trace the daemon reads `vault_key` and
+    /// `totp_secret` whatever the process tree looks like.
+    ///
+    /// [`Independent`]: TrustLevel::Independent
+    /// [`AgentParented`]: TrustLevel::AgentParented
+    PtraceUnrestricted,
 }
 
 impl TrustLevel {
@@ -81,6 +169,7 @@ impl TrustLevel {
             Self::SeparateUid => "separate_uid",
             Self::Independent => "independent",
             Self::AgentParented => "agent_parented",
+            Self::PtraceUnrestricted => "ptrace_unrestricted",
         }
     }
 
@@ -91,7 +180,12 @@ impl TrustLevel {
     /// can read that memory, the guarantee is gone and offering
     /// the method would be theatre.
     pub fn allows_totp(self) -> bool {
-        !matches!(self, Self::AgentParented)
+        // Listed positively rather than as a negation, so a new
+        // level has to be classified deliberately instead of
+        // inheriting "allowed" by omission — which is how
+        // `PtraceUnrestricted` briefly ended up offering TOTP on
+        // exactly the hosts where it means nothing.
+        matches!(self, Self::SeparateUid | Self::Independent)
     }
 }
 
@@ -112,6 +206,8 @@ pub struct StartupProvenance {
     pub has_controlling_terminal: bool,
     /// Whether [`INSECURE_OVERRIDE_ENV`] was set.
     pub override_active: bool,
+    /// What the kernel permits between same-UID processes.
+    pub ptrace_policy: PtracePolicy,
 }
 
 impl StartupProvenance {
@@ -127,10 +223,15 @@ impl StartupProvenance {
     /// The trust level implied by startup alone. Per-connection
     /// ancestry can still lower it for a specific caller.
     pub fn trust_level(&self) -> TrustLevel {
-        if self.reparented_to_init {
+        if !self.reparented_to_init {
+            return TrustLevel::AgentParented;
+        }
+        // Being outside the caller's process tree only buys
+        // anything where the kernel makes the tree matter.
+        if self.ptrace_policy.protects_non_descendants() {
             TrustLevel::Independent
         } else {
-            TrustLevel::AgentParented
+            TrustLevel::PtraceUnrestricted
         }
     }
 
@@ -159,6 +260,20 @@ impl StartupProvenance {
                  tree (parent {}) and cannot protect its memory from it. TOTP unlock is \
                  unavailable and trust_level is agent_parented.",
                 self.parent_pid
+            ));
+        }
+        if self.reparented_to_init && !self.ptrace_policy.protects_non_descendants() {
+            out.push(format!(
+                "This kernel does not restrict ptrace between processes of the same user ({}), so \
+                 anything running as you — the coding agent included — can read this daemon's \
+                 memory and lift the vault key out of it. Starting the daemon outside the agent's \
+                 process tree buys nothing here. Fix with `sudo sysctl -w \
+                 kernel.yama.ptrace_scope=1` (persist it in /etc/sysctl.d/). Until then \
+                 trust_level is ptrace_unrestricted and TOTP unlock is unavailable.",
+                match self.ptrace_policy {
+                    PtracePolicy::Permissive => "kernel.yama.ptrace_scope=0, or Yama not built in",
+                    _ => "its policy could not be read",
+                }
             ));
         }
         if self.has_controlling_terminal {
@@ -284,6 +399,7 @@ mod imp {
             parent_pid,
             has_controlling_terminal: has_controlling_terminal(),
             override_active: insecure_override_active(),
+            ptrace_policy: super::ptrace_policy(),
         }
     }
 }
@@ -321,6 +437,7 @@ mod imp {
             parent_pid: 0,
             has_controlling_terminal: false,
             override_active: insecure_override_active(),
+            ptrace_policy: super::ptrace_policy(),
         }
     }
 }
@@ -500,6 +617,110 @@ mod tests {
         assert!(ConnectionVerdict::CallerIsAncestor.should_refuse(false));
     }
 
+    /// Reporting `independent` is a claim about what the kernel
+    /// will not let a same-UID process do. Nothing checked it.
+    ///
+    /// The `Independent` doc has said "under `ptrace_scope = 1`"
+    /// since it was written, and the value was never read. On a
+    /// host with `ptrace_scope = 0` — a distribution default in
+    /// places, and the usual state inside containers — a daemon
+    /// started properly by systemd still reported `independent`
+    /// while the agent could attach to it and lift the vault key.
+    #[test]
+    fn a_correctly_started_daemon_is_not_independent_when_ptrace_is_open() {
+        let exposed = StartupProvenance {
+            reparented_to_init: true,
+            parent_pid: 1,
+            has_controlling_terminal: false,
+            override_active: false,
+            ptrace_policy: PtracePolicy::Permissive,
+        };
+
+        assert_eq!(exposed.trust_level(), TrustLevel::PtraceUnrestricted);
+        assert!(
+            !exposed.trust_level().allows_totp(),
+            "TOTP's whole guarantee is that the caller cannot read totp_secret from daemon memory"
+        );
+        assert!(
+            !exposed.is_fatal(),
+            "the daemon still works; what changes is what it may claim"
+        );
+
+        let warning = exposed
+            .warnings()
+            .into_iter()
+            .find(|w| w.contains("ptrace"))
+            .expect("the user has to be told, and told how to fix it");
+        assert!(
+            warning.contains("kernel.yama.ptrace_scope=1"),
+            "the remediation is one sysctl and the message should name it: {warning}"
+        );
+    }
+
+    /// An unreadable policy is not an excuse to promise anything.
+    #[test]
+    fn an_unknown_ptrace_policy_is_treated_as_open() {
+        let unknown = StartupProvenance {
+            reparented_to_init: true,
+            parent_pid: 1,
+            has_controlling_terminal: false,
+            override_active: false,
+            ptrace_policy: PtracePolicy::Unknown,
+        };
+        assert_eq!(unknown.trust_level(), TrustLevel::PtraceUnrestricted);
+    }
+
+    /// And with the policy in force, nothing changes.
+    #[test]
+    fn a_restricted_kernel_still_reports_independent() {
+        assert_eq!(
+            provenance(true, false).trust_level(),
+            TrustLevel::Independent
+        );
+        assert!(provenance(true, false).warnings().is_empty());
+    }
+
+    /// The sysctl values, as the kernel documents them.
+    #[test]
+    fn the_sysctl_values_are_read_the_way_yama_defines_them() {
+        assert_eq!(
+            PtracePolicy::from_sysctl_value("0\n"),
+            PtracePolicy::Permissive
+        );
+        assert_eq!(
+            PtracePolicy::from_sysctl_value("1\n"),
+            PtracePolicy::Restricted
+        );
+        // 2 = admin-only, 3 = no attach at all. Both stricter than 1.
+        assert_eq!(
+            PtracePolicy::from_sysctl_value("2"),
+            PtracePolicy::Restricted
+        );
+        assert_eq!(
+            PtracePolicy::from_sysctl_value("3"),
+            PtracePolicy::Restricted
+        );
+        assert_eq!(
+            PtracePolicy::from_sysctl_value("banana"),
+            PtracePolicy::Unknown
+        );
+        assert!(!PtracePolicy::Unknown.protects_non_descendants());
+    }
+
+    /// Being agent-parented is still reported as such — the new
+    /// variant must not swallow the older, worse case.
+    #[test]
+    fn an_agent_parented_daemon_still_says_so_on_an_open_kernel() {
+        let both_wrong = StartupProvenance {
+            reparented_to_init: false,
+            parent_pid: 4242,
+            has_controlling_terminal: false,
+            override_active: true,
+            ptrace_policy: PtracePolicy::Permissive,
+        };
+        assert_eq!(both_wrong.trust_level(), TrustLevel::AgentParented);
+    }
+
     #[test]
     fn trust_level_wire_names_are_stable() {
         assert_eq!(TrustLevel::SeparateUid.as_str(), "separate_uid");
@@ -517,12 +738,17 @@ mod tests {
         assert!(!TrustLevel::AgentParented.allows_totp());
     }
 
+    /// A daemon on a kernel that restricts ptrace, unless a test
+    /// says otherwise. Pinned rather than read from the host: these
+    /// tests must give the same answer on a developer's laptop and
+    /// inside a container where Yama is off.
     fn provenance(reparented: bool, override_active: bool) -> StartupProvenance {
         StartupProvenance {
             reparented_to_init: reparented,
             parent_pid: 4242,
             has_controlling_terminal: false,
             override_active,
+            ptrace_policy: PtracePolicy::Restricted,
         }
     }
 
@@ -572,6 +798,7 @@ mod tests {
             parent_pid: 1,
             has_controlling_terminal: true,
             override_active: false,
+            ptrace_policy: PtracePolicy::Restricted,
         };
         assert!(!p.is_fatal());
         assert!(

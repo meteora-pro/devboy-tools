@@ -257,6 +257,38 @@ fn profile_findings(config: &Config) -> Vec<Finding> {
     out
 }
 
+/// Plain-language note for a trust level the daemon reported.
+///
+/// The arms are keyed off [`TrustLevel::as_str`] rather than
+/// hand-written strings. They used to be literals with hyphens —
+/// `"agent-parented"`, `"separate-uid"` — while the daemon sends
+/// underscores, so those two arms never matched and the command
+/// whose whole job is "what am I actually getting" answered "the
+/// daemon did not report a recognised trust level" to the two
+/// people who most needed the explanation.
+fn trust_level_note(level: &str) -> &'static str {
+    use devboy_secrets_agent::provenance::TrustLevel::*;
+
+    if level == AgentParented.as_str() {
+        "the daemon was started by its caller, which can therefore trace it and read the vault \
+         key out of its memory. The TOTP path is disabled here because a code would prove nothing."
+    } else if level == PtraceUnrestricted.as_str() {
+        "the daemon runs outside its caller's process tree, but this kernel does not restrict \
+         ptrace between processes of the same user — so anything running as you can read its \
+         memory anyway. Fix with `sudo sysctl -w kernel.yama.ptrace_scope=1`. TOTP is disabled \
+         until then."
+    } else if level == Independent.as_str() {
+        "the daemon runs outside its caller's process tree and the kernel restricts ptrace to \
+         descendants, so the caller cannot trace it — but it still runs as your user, so anything \
+         that can read your files can read the vault file."
+    } else if level == SeparateUid.as_str() {
+        "the daemon runs under its own account, so the vault file is not readable by your user \
+         directly."
+    } else {
+        "the daemon did not report a recognised trust level"
+    }
+}
+
 /// Which §7 trust level is actually in force, and whether the
 /// prompt channel the level assumes exists.
 ///
@@ -287,20 +319,8 @@ fn trust_level_findings() -> Vec<Finding> {
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let mut out = vec![
-        Finding::new("trust level", level.to_owned()).with_note(match level {
-            "agent-parented" => {
-                "the daemon was started by its caller, which can therefore trace it and read the                  vault key out of its memory. The TOTP path is disabled here because a code would                  prove nothing."
-            }
-            "independent" => {
-                "the daemon runs outside its caller's process tree, so the caller cannot trace it                  — but it still runs as your user, so anything that can read your files can read                  the vault file."
-            }
-            "separate-uid" => {
-                "the daemon runs under its own account, so the vault file is not readable by your                  user directly."
-            }
-            _ => "the daemon did not report a recognised trust level",
-        }),
-    ];
+    let mut out =
+        vec![Finding::new("trust level", level.to_owned()).with_note(trust_level_note(level))];
 
     let mut channel_finding = Finding::new(
         "prompt channel",
@@ -721,6 +741,48 @@ mod tests {
     /// With no daemon running, the trust level is unknown rather
     /// than guessed — claiming a level nothing is enforcing would
     /// be exactly the misreporting this command exists to avoid.
+    /// Every level the daemon can report must get a real
+    /// explanation.
+    ///
+    /// The arms were once string literals with hyphens while the
+    /// daemon sends underscores, so `agent_parented` and
+    /// `separate_uid` silently fell through to "not a recognised
+    /// trust level". Driving the test from the enum means a level
+    /// added later fails here instead of shipping unexplained.
+    #[test]
+    fn every_trust_level_the_daemon_can_report_is_explained() {
+        use devboy_secrets_agent::provenance::TrustLevel;
+
+        for level in [
+            TrustLevel::SeparateUid,
+            TrustLevel::Independent,
+            TrustLevel::AgentParented,
+            TrustLevel::PtraceUnrestricted,
+        ] {
+            let note = trust_level_note(level.as_str());
+            assert!(
+                !note.contains("did not report a recognised"),
+                "`{}` falls through to the unknown arm",
+                level.as_str()
+            );
+        }
+
+        assert!(
+            trust_level_note("something-new").contains("did not report a recognised"),
+            "an unknown level should still be handled honestly"
+        );
+    }
+
+    /// The open-ptrace note has to carry the fix, since that is the
+    /// whole difference between it and `independent`.
+    #[test]
+    fn the_open_ptrace_note_names_the_sysctl() {
+        use devboy_secrets_agent::provenance::TrustLevel;
+
+        let note = trust_level_note(TrustLevel::PtraceUnrestricted.as_str());
+        assert!(note.contains("kernel.yama.ptrace_scope=1"), "{note}");
+    }
+
     #[test]
     fn trust_level_is_unknown_when_no_daemon_answers() {
         let findings = trust_level_findings();
