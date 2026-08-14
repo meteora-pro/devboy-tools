@@ -259,13 +259,15 @@ fn profile_findings(config: &Config) -> Vec<Finding> {
 
 /// Plain-language note for a trust level the daemon reported.
 ///
-/// The arms are keyed off [`TrustLevel::as_str`] rather than
+/// The arms are keyed off [`TrustLevel::as_str`][as_str] rather than
 /// hand-written strings. They used to be literals with hyphens —
 /// `"agent-parented"`, `"separate-uid"` — while the daemon sends
 /// underscores, so those two arms never matched and the command
 /// whose whole job is "what am I actually getting" answered "the
 /// daemon did not report a recognised trust level" to the two
 /// people who most needed the explanation.
+///
+/// [as_str]: devboy_secrets_agent::provenance::TrustLevel::as_str
 fn trust_level_note(level: &str) -> &'static str {
     use devboy_secrets_agent::provenance::TrustLevel::*;
 
