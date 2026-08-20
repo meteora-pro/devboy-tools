@@ -23,8 +23,8 @@
 //! - **Liveness** is opt-in, because it costs a network round trip
 //!   and shows up in the provider's audit log. It resolves the
 //!   value server-side, makes one cheap authenticated call, and
-//!   returns whether the credential was accepted. Not implemented
-//!   in the daemon yet: asking for it today gets `unsupported`.
+//!   returns whether the credential was accepted. A pattern that
+//!   declares no endpoint answers `unsupported`.
 //!
 //! # The rule is the daemon's, not the caller's
 //!
@@ -182,6 +182,22 @@ fn format_from_wire(word: Option<&str>) -> FormatVerdict {
     }
 }
 
+/// Translate the daemon's liveness word.
+///
+/// An unrecognised word becomes `Unreachable`, not `Ok` and not
+/// `Invalid`. "We could not establish anything" is the truthful
+/// reading of an answer this build cannot parse, and it is the one
+/// verdict that neither claims the credential is fine nor sends
+/// someone rotating it.
+fn liveness_from_wire(word: Option<&str>) -> LivenessVerdict {
+    match word {
+        Some("ok") => LivenessVerdict::Ok,
+        Some("invalid") => LivenessVerdict::Invalid,
+        Some("unsupported") => LivenessVerdict::Unsupported,
+        _ => LivenessVerdict::Unreachable,
+    }
+}
+
 /// Ask the daemon about a path.
 ///
 /// Note what is not sent: any rule. The daemon validates against
@@ -209,17 +225,15 @@ pub fn validate(args: &SecretsValidateArgs, ctx: &RemediationContext) -> Secrets
     let Some(client) = AgentClient::new() else {
         return unreachable();
     };
-    let Ok(result) = client.secret_validate(&args.path) else {
+    let Ok(result) = client.secret_validate(&args.path, args.liveness) else {
         return unreachable();
     };
 
     let format = format_from_wire(result.get("format").and_then(|v| v.as_str()));
 
-    // Liveness is not implemented in the daemon yet. Reporting it as
-    // `Unsupported` when it was asked for is the honest answer and
-    // the one the reply type was built for; silently omitting the
-    // field would tell the agent it never asked.
-    let liveness = args.liveness.then_some(LivenessVerdict::Unsupported);
+    let liveness = args
+        .liveness
+        .then(|| liveness_from_wire(result.get("liveness").and_then(|v| v.as_str())));
 
     let mut ctx = ctx.clone();
     if ctx.expires_at_hint.is_none() {
@@ -247,6 +261,34 @@ pub fn validate(args: &SecretsValidateArgs, ctx: &RemediationContext) -> Secrets
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Same rule as the format word, with a different safe default:
+    /// an unparseable liveness answer must neither bless the
+    /// credential nor condemn it.
+    #[test]
+    fn an_unrecognised_liveness_word_is_inconclusive() {
+        assert_eq!(liveness_from_wire(Some("ok")), LivenessVerdict::Ok);
+        assert_eq!(
+            liveness_from_wire(Some("invalid")),
+            LivenessVerdict::Invalid
+        );
+        assert_eq!(
+            liveness_from_wire(Some("unsupported")),
+            LivenessVerdict::Unsupported
+        );
+        assert_eq!(
+            liveness_from_wire(Some("unreachable")),
+            LivenessVerdict::Unreachable
+        );
+
+        for word in [Some("looks-fine"), None] {
+            assert_eq!(
+                liveness_from_wire(word),
+                LivenessVerdict::Unreachable,
+                "{word:?} was read as a verdict about the credential"
+            );
+        }
+    }
 
     /// The daemon's three words, and the rule for a fourth.
     #[test]

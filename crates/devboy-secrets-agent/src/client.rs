@@ -233,13 +233,18 @@ impl AgentClient {
 
     /// `secret.validate` for one path.
     ///
-    /// Sends the path and nothing else. There is deliberately no
-    /// way to pass a rule: the daemon validates against the
-    /// `pattern_id` it holds, because a caller-supplied regex would
-    /// make the method a value oracle. See
-    /// [`crate::server`]'s `handle_secret_validate`.
-    pub fn secret_validate(&self, path: &str) -> Result<Value, ClientError> {
-        self.call("secret.validate", json!({ "path": path }))
+    /// Sends the path and whether to probe, and nothing else. There
+    /// is deliberately no way to pass a rule: a caller-supplied
+    /// regex would make the method a value oracle, and a
+    /// caller-supplied endpoint would make it an exfiltration
+    /// channel. Both come from the catalogue instead — see
+    /// [`crate::server`]'s `handle_secret_validate` and
+    /// [`crate::liveness`].
+    pub fn secret_validate(&self, path: &str, liveness: bool) -> Result<Value, ClientError> {
+        self.call(
+            "secret.validate",
+            json!({ "path": path, "liveness": liveness }),
+        )
     }
 
     /// `vault.request_unlock`, lending the daemon this process's

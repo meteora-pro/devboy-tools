@@ -728,7 +728,7 @@ Check whether the secret stored at a path is the shape it is supposed to be (ADR
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
 | `path` | string | ✅ | Full ADR-020 path to check. |
-| `liveness` | boolean | — | Also ask the provider whether the credential still works. Costs a network round trip and appears in the provider's own audit log, so it is off by default. Not implemented yet — asking for it today returns `unsupported`. |
+| `liveness` | boolean | — | Also ask the provider whether the credential still works. Costs a network round trip and appears in the provider's own audit log, so it is off by default. Returns `unsupported` for a kind of secret that declares no check, and `unreachable` — never `invalid` — when the provider could not be asked, since a network failure is no evidence against the credential. |
 
 ### `secrets_status`
 

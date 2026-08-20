@@ -36,6 +36,7 @@ tracing.workspace = true
 secrecy.workspace = true
 dirs.workspace = true
 devboy-secret-patterns.workspace = true
+reqwest = { workspace = true }
 # Not unix-gated: `totp_session` holds the shared secret in a
 # `Zeroizing` buffer and compiles on every platform.
 zeroize = "1.8"
@@ -50,6 +51,8 @@ zeroize = "1.8"
 nix = { version = "0.30", default-features = false, features = ["user", "process", "term", "fs"] }
 
 [dev-dependencies]
+httpmock.workspace = true
+base64.workspace = true
 tempfile.workspace = true
 # Base32 for seeding the TOTP slot the way enrolment does.
 data-encoding.workspace = true

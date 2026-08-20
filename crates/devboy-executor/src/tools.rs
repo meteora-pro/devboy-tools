@@ -1082,8 +1082,10 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
                     PropertySchema::boolean(
                         "Also ask the provider whether the credential still works. Costs a \
                          network round trip and appears in the provider's own audit log, so it \
-                         is off by default. Not implemented yet — asking for it today returns \
-                         `unsupported`.",
+                         is off by default. Returns `unsupported` for a kind of secret that \
+                         declares no check, and `unreachable` — never `invalid` — when the \
+                         provider could not be asked, since a network failure is no evidence \
+                         against the credential.",
                     ),
                 );
                 s.set_required("path", true);

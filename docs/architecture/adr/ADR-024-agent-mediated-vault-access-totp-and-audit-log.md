@@ -423,11 +423,34 @@ secrets_status()
   // from this session" is materially different from "unlocked".
 
 secrets_validate(path: string, liveness?: boolean)
-  → { format: "ok" | "invalid", liveness?: "ok" | "invalid" | "unreachable", expires_at? }
+  → { format: "ok" | "invalid" | "unknown",
+      liveness?: "ok" | "invalid" | "unreachable" | "unsupported",
+      expires_at? }
   // Format check is offline. Liveness resolves the value server-side through
-  // the source's validate() / the pattern's LivenessSpec, makes the cheap
-  // authenticated call, and returns ONLY the verdict. The value never crosses
-  // the MCP wire.
+  // the pattern's LivenessSpec, makes the cheap authenticated call, and
+  // returns ONLY the verdict. The value never crosses the MCP wire.
+  //
+  // "unknown" is a third format answer, distinct from "ok": nobody declared a
+  // shape for that path. An agent that reads the two as the same reports
+  // confidence it has not earned.
+  //
+  // The caller supplies NEITHER rule. A caller-chosen format_regex makes this
+  // a value oracle — ask ^g.*, then ^gl.*, and read the secret out of a run
+  // of yes/no answers. A caller-chosen endpoint is worse: a probe is "send
+  // this secret to this URL", so anyone able to name the URL has the value
+  // outright. Both come from the catalogue the daemon holds.
+  //
+  // Consequently liveness endpoints are declared only by BUILT-IN patterns.
+  // A user pattern under <config>/secrets/patterns.d/ can declare a format
+  // (offline, harmless — an in-house token shape validates like any other)
+  // but not an endpoint, because that directory is writable by the agent
+  // itself. UserPattern leaves SecretPattern::liveness() at its None default
+  // and a test holds it there.
+  //
+  // A probe is https-only, follows no redirects, gets one attempt with a
+  // short timeout, and is recorded in the audit log as its own action: the
+  // trail has to distinguish "a value was read inside the daemon" from "a
+  // value left the machine, to here".
 ```
 
 #### Why relaying a TOTP through the agent is acceptable

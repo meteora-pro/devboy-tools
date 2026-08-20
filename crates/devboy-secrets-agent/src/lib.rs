@@ -19,6 +19,7 @@ pub mod client;
 #[cfg(unix)]
 pub mod client_terminal;
 pub mod idle;
+pub mod liveness;
 #[cfg(unix)]
 pub mod prompt;
 pub mod provenance;

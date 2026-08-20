@@ -40,6 +40,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use devboy_secret_patterns::SecretPattern;
 use devboy_vault_crypto::{
     EntryMetadata, RecoveryPhrase, UnlockMethod, Vault, VaultError, parse_recovery_phrase,
 };
@@ -439,7 +440,7 @@ impl VaultServer {
             "secret.put" => self.handle_secret_put(req).await,
             "secret.put_interactive" => self.handle_secret_put_interactive(req),
             "secret.rotate" => self.handle_secret_rotate(req).await,
-            "secret.validate" => self.handle_secret_validate(req),
+            "secret.validate" => self.handle_secret_validate(req).await,
             "metadata.update" => self.handle_metadata_update(req),
             other => JsonRpcResponse::err(
                 req.id,
@@ -833,9 +834,9 @@ impl VaultServer {
     /// never fire again. So it behaves like `vault.status`: it needs
     /// an unlock window that a human opened, and it cannot lengthen
     /// one. See [`is_user_activity`].
-    fn handle_secret_validate(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
+    async fn handle_secret_validate(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
         let id = req.id.clone();
-        let params: PathOnly = match serde_json::from_value(req.params) {
+        let params: ValidateParams = match serde_json::from_value(req.params) {
             Ok(p) => p,
             Err(e) => return invalid_params(id, e),
         };
@@ -882,7 +883,8 @@ impl VaultServer {
             .map(|(_, meta)| meta)
             .unwrap_or_default();
 
-        let verdict = format_verdict(&meta, value.expose_secret());
+        let pattern = resolved_pattern(&meta);
+        let verdict = format_verdict(pattern, value.expose_secret());
 
         // Reading the value is reading the value, whoever asked and
         // whatever we told them. An access that skipped the trail
@@ -890,10 +892,34 @@ impl VaultServer {
         // read a vault quietly.
         self.audit_with_detail("validate", &params.path, "agent", Some(verdict.as_str()));
 
+        let liveness = if params.liveness {
+            let spec = pattern.and_then(devboy_secret_patterns::SecretPattern::liveness);
+
+            // A separate record, and not a nicety. `validate` says a
+            // value was read inside this process; a probe says it
+            // left the machine. Someone reading the trail after an
+            // incident wants those distinguishable, and wants the
+            // destination.
+            if let Some(spec) = spec {
+                let devboy_secret_patterns::LivenessKind::Http { url, .. } = &spec.kind;
+                self.audit_with_detail(
+                    "liveness-probe",
+                    &params.path,
+                    "agent",
+                    Some(&format!("sending to {url}")),
+                );
+            }
+
+            Some(crate::liveness::probe(spec, value.expose_secret()).await)
+        } else {
+            None
+        };
+
         JsonRpcResponse::ok(
             id,
             json!({
                 "format": verdict.as_str(),
+                "liveness": liveness.map(crate::liveness::LivenessOutcome::as_str),
                 "pattern_id": meta.pattern_id,
                 "expires_at": meta.expires_at,
             }),
@@ -1259,6 +1285,20 @@ struct PathOnly {
     path: String,
 }
 
+/// Parameters for `secret.validate`.
+///
+/// Note what is absent: any way to supply the rule. A caller that
+/// could name the regex would have a value oracle, and one that
+/// could name the liveness endpoint would have an exfiltration
+/// channel. Both come from the catalogue instead.
+#[derive(Debug, Deserialize)]
+struct ValidateParams {
+    path: String,
+    /// Also ask the provider whether the credential still works.
+    #[serde(default)]
+    liveness: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct PutParams {
     path: String,
@@ -1488,18 +1528,23 @@ impl FormatVerdict {
 /// `Unknown` rather than `Invalid`. The value is not at fault for a
 /// typo in its metadata, and answering "invalid" would send someone
 /// rotating a perfectly good secret.
-fn format_verdict(meta: &EntryMetadata, value: &str) -> FormatVerdict {
-    let Some(id) = meta.pattern_id.as_deref() else {
-        return FormatVerdict::Unknown;
-    };
-    let Some(pattern) = devboy_secret_patterns::resolved::shared().find(id) else {
-        return FormatVerdict::Unknown;
-    };
-    if pattern.format_regex().is_match(value) {
-        FormatVerdict::Ok
-    } else {
-        FormatVerdict::Invalid
+fn format_verdict(pattern: Option<&'static dyn SecretPattern>, value: &str) -> FormatVerdict {
+    match pattern {
+        Some(p) if p.format_regex().is_match(value) => FormatVerdict::Ok,
+        Some(_) => FormatVerdict::Invalid,
+        None => FormatVerdict::Unknown,
     }
+}
+
+/// The catalogue pattern an entry's metadata points at, if any.
+///
+/// Resolved once per request and shared by the format check and the
+/// liveness probe, so the two can never disagree about which rule
+/// this entry is under.
+fn resolved_pattern(meta: &EntryMetadata) -> Option<&'static dyn SecretPattern> {
+    meta.pattern_id
+        .as_deref()
+        .and_then(|id| devboy_secret_patterns::resolved::shared().find(id))
 }
 
 /// Whether a method counts as "user activity" for the ADR-023 §3.3
@@ -3283,6 +3328,65 @@ mod tests {
             after.error.is_none(),
             "a listing should have refreshed the timer: {:?}",
             after.error
+        );
+    }
+
+    /// A pattern with no liveness endpoint answers `unsupported`
+    /// when a probe is asked for — not silence. An agent that asked
+    /// and got no `liveness` field back would read it as "not
+    /// requested" and never learn the check was unavailable.
+    #[tokio::test]
+    async fn asking_for_liveness_where_none_is_declared_says_so() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            GOOD_PAT,
+            Some("gitlab-pat"),
+        )
+        .await;
+
+        let result = validate(
+            &mut server,
+            json!({"path": "team/gitlab/token", "liveness": true}),
+        )
+        .await
+        .result
+        .unwrap();
+
+        assert_eq!(result["format"], "ok");
+        assert_eq!(result["liveness"], "unsupported");
+    }
+
+    /// The default. A probe costs a network round trip and a line in
+    /// the provider's own audit log; a caller that did not ask must
+    /// not pay for either.
+    #[tokio::test]
+    async fn liveness_is_not_probed_unless_asked_for() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            GOOD_PAT,
+            Some("gitlab-pat"),
+        )
+        .await;
+
+        let result = validate(&mut server, json!({"path": "team/gitlab/token"}))
+            .await
+            .result
+            .unwrap();
+
+        assert!(
+            result["liveness"].is_null(),
+            "a probe nobody asked for: {result}"
+        );
+
+        let key = server.vault.as_ref().unwrap().audit_key().unwrap();
+        let records = server.audit.as_ref().unwrap().read_all(&key).unwrap();
+        assert!(
+            !records.iter().any(|r| r.action == "liveness-probe"),
+            "the trail records a probe that should not have happened"
         );
     }
 

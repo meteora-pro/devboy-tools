@@ -1423,6 +1423,24 @@ impl core::marker::Unpin for devboy_mcp::secrets_validate::LivenessVerdict
 impl core::marker::UnsafeUnpin for devboy_mcp::secrets_validate::LivenessVerdict
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_validate::LivenessVerdict
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_validate::LivenessVerdict
+pub struct devboy_mcp::secrets_validate::SecretsValidateArgs
+pub devboy_mcp::secrets_validate::SecretsValidateArgs::liveness: bool
+pub devboy_mcp::secrets_validate::SecretsValidateArgs::path: alloc::string::String
+impl core::clone::Clone for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::clone(&self) -> devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::fmt::Debug for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::Send for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::Sync for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::Unpin for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_validate::SecretsValidateArgs
 pub struct devboy_mcp::secrets_validate::SecretsValidateReply
 pub devboy_mcp::secrets_validate::SecretsValidateReply::expires_at: core::option::Option<alloc::string::String>
 pub devboy_mcp::secrets_validate::SecretsValidateReply::format: devboy_mcp::secrets_validate::FormatVerdict
@@ -1452,6 +1470,7 @@ impl core::marker::Unpin for devboy_mcp::secrets_validate::SecretsValidateReply
 impl core::marker::UnsafeUnpin for devboy_mcp::secrets_validate::SecretsValidateReply
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_validate::SecretsValidateReply
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::validate(args: &devboy_mcp::secrets_validate::SecretsValidateArgs, ctx: &devboy_mcp::remediation::RemediationContext) -> devboy_mcp::secrets_validate::SecretsValidateReply
 pub mod devboy_mcp::server
 pub struct devboy_mcp::server::DeferredInit
 pub devboy_mcp::server::DeferredInit::builtin_tools_config: core::option::Option<devboy_core::config::BuiltinToolsConfig>
