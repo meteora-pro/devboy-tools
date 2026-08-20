@@ -24,7 +24,10 @@ use std::sync::{LazyLock, OnceLock};
 
 use regex::Regex;
 
-use crate::{LivenessSpec, PatternMetadata, RotationSpec, SecretPattern, Severity};
+use crate::{
+    HttpMethod, LivenessAuth, LivenessKind, LivenessSpec, PatternMetadata, RotationSpec,
+    SecretPattern, Severity,
+};
 
 /// Adapter struct that turns a static data row into a
 /// [`SecretPattern`] implementation. Each [`BUILTINS`] entry is a
@@ -190,7 +193,23 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
                 90,
             )),
             rotation: None,
-            liveness: None,
+            liveness: Some(LivenessSpec {
+                // GitHub's own token-introspection endpoint. 200 with
+                // the account, 401 once the token is revoked or has
+                // expired.
+                // https://docs.github.com/en/rest/users/users#get-the-authenticated-user
+                //
+                // api.github.com, fixed. A token issued by a GitHub
+                // Enterprise Server instance has the same shape and
+                // would be rejected here — see the module docs on
+                // what a fixed host costs.
+                kind: LivenessKind::Http {
+                    url: "https://api.github.com/user",
+                    method: HttpMethod::Get,
+                    auth: LivenessAuth::Bearer,
+                    expect_status: 200,
+                },
+            }),
         },
         Builtin {
             id: "github-fine-grained-pat",
@@ -206,7 +225,23 @@ pub static BUILTINS: LazyLock<Vec<Builtin>> = LazyLock::new(|| {
                 90,
             )),
             rotation: None,
-            liveness: None,
+            liveness: Some(LivenessSpec {
+                // GitHub's own token-introspection endpoint. 200 with
+                // the account, 401 once the token is revoked or has
+                // expired.
+                // https://docs.github.com/en/rest/users/users#get-the-authenticated-user
+                //
+                // api.github.com, fixed. A token issued by a GitHub
+                // Enterprise Server instance has the same shape and
+                // would be rejected here — see the module docs on
+                // what a fixed host costs.
+                kind: LivenessKind::Http {
+                    url: "https://api.github.com/user",
+                    method: HttpMethod::Get,
+                    auth: LivenessAuth::Bearer,
+                    expect_status: 200,
+                },
+            }),
         },
         // ── GitLab ──────────────────────────────────────────────────────────
         Builtin {
@@ -955,12 +990,52 @@ mod tests {
     }
 
     #[test]
-    fn rotation_and_liveness_are_unset_in_v1() {
-        // P2.4 (#23) wires inheritance into the global index; P9.x
-        // adds liveness probes. Both layers stay None for now.
+    fn rotation_is_unset_in_v1() {
+        // P2.4 (#23) wires inheritance into the global index. The
+        // rotation layer stays None for now.
         for b in BUILTINS.iter() {
-            assert!(b.rotation.is_none());
-            assert!(b.liveness.is_none());
+            assert!(b.rotation.is_none(), "{}", b.id);
         }
+    }
+
+    /// A liveness endpoint is a destination for a secret. A
+    /// plaintext one puts the credential on the wire in the clear.
+    ///
+    /// The daemon refuses `http://` at run time as well, but by then
+    /// the mistake is already shipped; this catches it in the
+    /// catalogue, where it was made.
+    #[test]
+    fn every_declared_liveness_endpoint_is_https() {
+        for b in BUILTINS.iter() {
+            let Some(spec) = &b.liveness else { continue };
+            let crate::LivenessKind::Http { url, .. } = &spec.kind;
+            assert!(
+                url.starts_with("https://"),
+                "{} would send a credential to {url} in the clear",
+                b.id
+            );
+        }
+    }
+
+    /// Which patterns probe, spelled out, so adding one is a
+    /// deliberate act rather than a line that slipped in.
+    ///
+    /// The set is small for a reason. The endpoint is a fixed host,
+    /// and most providers worth probing can also be self-hosted: a
+    /// GitLab PAT from a company's own instance has the same
+    /// `glpat-` shape as a gitlab.com one, and probing it against
+    /// gitlab.com would return 401 and report a perfectly good token
+    /// as revoked. Sending someone to rotate a working credential is
+    /// worse than not checking, so a provider gets an endpoint only
+    /// where a fixed host is a fair assumption.
+    #[test]
+    fn only_deliberately_chosen_patterns_declare_a_liveness_endpoint() {
+        let probing: Vec<&str> = BUILTINS
+            .iter()
+            .filter(|b| b.liveness.is_some())
+            .map(|b| b.id)
+            .collect();
+
+        assert_eq!(probing, vec!["github-pat", "github-fine-grained-pat"]);
     }
 }

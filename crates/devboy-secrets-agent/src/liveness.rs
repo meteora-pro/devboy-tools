@@ -47,6 +47,28 @@
 //!   provider that is rejecting the token is a good way to get an
 //!   account rate-limited.
 //!
+//! # What a fixed host costs
+//!
+//! An endpoint in the catalogue is one URL. Most providers worth
+//! probing can also be self-hosted, and a token from a company's own
+//! instance carries the same prefix as a cloud one — a self-hosted
+//! GitLab PAT is `glpat-…` exactly like a gitlab.com PAT. Probing it
+//! against gitlab.com returns 401, which reads as `Invalid`, which
+//! tells its owner to rotate a credential that was working
+//! perfectly.
+//!
+//! Sending someone to rotate a good token is worse than not checking
+//! at all, so the catalogue declares an endpoint only where a fixed
+//! host is a fair assumption, and the set is pinned by a test so
+//! that adding one is a deliberate act. Everything else answers
+//! `unsupported`, which is the truth: we have no way to know which
+//! instance issued the credential.
+//!
+//! The obvious fix — let the entry say which instance it belongs to
+//! — is the thing this module must not do. An instance URL is a
+//! destination for a secret, and the entry's metadata is writable by
+//! anything running as the user.
+//!
 //! # What a failure means
 //!
 //! [`LivenessOutcome::Unreachable`] is not
@@ -65,6 +87,13 @@ use devboy_secret_patterns::{HttpMethod, LivenessAuth, LivenessKind, LivenessSpe
 /// may be waiting on, and a provider that has not answered in five
 /// seconds is not going to tell us anything useful about the token.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Identifies the probe to the provider.
+///
+/// Some APIs — GitHub's among them — reject a request without a
+/// `User-Agent` outright, with a status indistinguishable from a
+/// rejected credential.
+const PROBE_USER_AGENT: &str = concat!("devboy-tools/", env!("CARGO_PKG_VERSION"));
 
 /// What the provider said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,6 +166,11 @@ async fn send(
 ) -> LivenessOutcome {
     let client = match reqwest::Client::builder()
         .timeout(PROBE_TIMEOUT)
+        // Not cosmetic. GitHub's API answers 403 to a request with
+        // no User-Agent, and 403 is how a revoked token looks — so
+        // omitting this would report every live GitHub token as
+        // dead, and send its owner to rotate it.
+        .user_agent(PROBE_USER_AGENT)
         // A redirect is an instruction to send this credential to a
         // host chosen by whoever answered. Never followed.
         .redirect(reqwest::redirect::Policy::none())
@@ -413,6 +447,31 @@ severity = "high"
             assert_eq!(outcome, LivenessOutcome::Ok, "{auth:?}");
             mock.assert_calls(1);
         }
+    }
+
+    /// A probe must identify itself. GitHub answers 403 without a
+    /// `User-Agent`, which this code reads as a rejected credential
+    /// — so a missing header would report every live GitHub token as
+    /// dead and send its owner to rotate a working one.
+    #[tokio::test]
+    async fn a_probe_identifies_itself() {
+        let server = MockServer::start_async().await;
+        let mock = server.mock(|when, then| {
+            when.method(GET).header_exists("user-agent");
+            then.status(200);
+        });
+
+        let outcome = send(
+            &server.url("/probe"),
+            &HttpMethod::Get,
+            &LivenessAuth::Bearer,
+            200,
+            "secret-value",
+        )
+        .await;
+
+        assert_eq!(outcome, LivenessOutcome::Ok);
+        mock.assert_calls(1);
     }
 
     /// A rejection has to come back as one, or the check is useless.
