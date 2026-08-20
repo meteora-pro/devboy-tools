@@ -825,8 +825,19 @@ mod capability_gate_tests {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
+/// Redaction guarantees that hold on every platform.
+///
+/// Deliberately its own module rather than an addition to the
+/// macOS-only one below: nothing here spawns a process, and a
+/// test that a secret never reaches a log string is worthless if
+/// it only runs on the platform none of us develop on. It was
+/// written into that module once, and neither the failure nor
+/// the missing import showed up until a macOS runner picked the
+/// job up days later.
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+    use crate::plugin_protocol::GetResult;
 
     /// A plugin that answers the handshake with a `get` reply must
     /// not write the user's secret into the error string.
@@ -878,6 +889,10 @@ mod tests {
             "the lease is not a secret and stays useful: {nested}"
         );
     }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
     use super::*;
     use crate::plugin_manifest::PluginManifest;
     use std::fs;
