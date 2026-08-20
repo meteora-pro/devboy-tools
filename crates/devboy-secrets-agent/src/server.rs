@@ -2,18 +2,22 @@
 //! §3.3.
 //!
 //! Wraps a [`devboy_vault_crypto::Vault`] (when unlocked) and routes
-//! the eight ADR-023 §3.3 methods against it:
+//! the ADR-023 §3.3 methods, plus the ADR-024 additions, against it:
 //!
-//! | Method            | State requirement | `fresh_unlock` |
-//! |-------------------|-------------------|----------------|
-//! | `vault.unlock`    | locked            | n/a            |
-//! | `vault.lock`      | unlocked          | no             |
-//! | `vault.status`    | any               | no             |
-//! | `secret.get`      | unlocked          | no (cached)    |
-//! | `secret.list`     | unlocked          | no (cached)    |
-//! | `secret.put`      | unlocked          | **yes**        |
-//! | `secret.rotate`   | unlocked          | **yes**        |
-//! | `metadata.update` | unlocked          | no (plaintext) |
+//! | Method                   | State requirement | `fresh_unlock`   | Extends the window |
+//! |--------------------------|-------------------|------------------|--------------------|
+//! | `vault.unlock`           | locked            | n/a              | opens it           |
+//! | `vault.request_unlock`   | locked            | daemon collects  | opens it           |
+//! | `totp.unlock`            | locked            | six-digit code   | opens it           |
+//! | `vault.lock`             | unlocked          | no               | closes it          |
+//! | `vault.status`           | any               | no               | no                 |
+//! | `secret.get`             | unlocked          | no (cached)      | yes                |
+//! | `secret.list`            | unlocked          | no (cached)      | yes                |
+//! | `secret.validate`        | unlocked          | no (cached)      | **no**             |
+//! | `secret.put`             | unlocked          | **yes**          | yes                |
+//! | `secret.put_interactive` | unlocked          | daemon collects  | yes                |
+//! | `secret.rotate`          | unlocked          | **yes**          | yes                |
+//! | `metadata.update`        | unlocked          | no (plaintext)   | yes                |
 //!
 //! `fresh_unlock` is the ADR's hybrid-mode requirement: write
 //! operations revalidate the user's unlock method on every call so
@@ -21,6 +25,12 @@
 //! Implementation: `VaultServer::verify_fresh_unlock` re-opens the
 //! vault file with the supplied unlock method and discards the
 //! resulting handle if the credentials check out.
+//!
+//! The last column is the idle timer of ADR-023 §3.3, kept by
+//! [`is_user_activity`]. `secret.validate` is the one value-touching
+//! method that does not refresh it, because it is the one an *agent*
+//! can reach: a method an agent may call in a loop must not be able
+//! to hold the vault open indefinitely.
 //!
 //! See also [`crate::rpc`] for the JSON-RPC framing and error codes
 //! the dispatcher returns.
@@ -429,6 +439,7 @@ impl VaultServer {
             "secret.put" => self.handle_secret_put(req).await,
             "secret.put_interactive" => self.handle_secret_put_interactive(req),
             "secret.rotate" => self.handle_secret_rotate(req).await,
+            "secret.validate" => self.handle_secret_validate(req),
             "metadata.update" => self.handle_metadata_update(req),
             other => JsonRpcResponse::err(
                 req.id,
@@ -789,6 +800,104 @@ impl VaultServer {
             ),
             Err(e) => JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
         }
+    }
+
+    /// `secret.validate` — is the stored value the right shape?
+    ///
+    /// The whole point is that the answer crosses the socket and the
+    /// value does not. An agent gets to know its freshly provisioned
+    /// token is well-formed without ever being trusted with it.
+    ///
+    /// # Why the caller may not supply the rule
+    ///
+    /// The obvious convenience — let the caller pass a `format_regex`
+    /// from the manifest it already holds — turns this method into a
+    /// value oracle. Anyone who can reach the socket asks
+    /// `^sk-a.*`, then `^sk-ab.*`, and reads the secret out one
+    /// character at a time from a sequence of yes/no answers. So the
+    /// rule comes from the `pattern_id` this daemon has stored
+    /// against the entry, resolved through this daemon's own
+    /// catalogue, and from nowhere else.
+    ///
+    /// What leaks is one bit against a shape that the manifest
+    /// already declares in the open. What would leak otherwise is
+    /// the secret.
+    ///
+    /// # Why it does not extend the unlock window
+    ///
+    /// This is the first value-touching method an *agent* can reach:
+    /// `secret.get` exists, but only the CLI calls it, because agents
+    /// are given aliases rather than values. If validating bumped the
+    /// activity timestamp, an agent calling it on a loop would hold
+    /// the vault open forever and auto-lock (ADR-023 §3.3) would
+    /// never fire again. So it behaves like `vault.status`: it needs
+    /// an unlock window that a human opened, and it cannot lengthen
+    /// one. See [`is_user_activity`].
+    fn handle_secret_validate(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
+        let id = req.id.clone();
+        let params: PathOnly = match serde_json::from_value(req.params) {
+            Ok(p) => p,
+            Err(e) => return invalid_params(id, e),
+        };
+        // Same silence as `secret.get`: the TOTP slot is not a
+        // caller's business, and "is the shared secret well-formed?"
+        // is not a question worth answering either.
+        if crate::totp_session::is_reserved(&params.path) {
+            return JsonRpcResponse::err(
+                id,
+                JsonRpcError::new(
+                    ENTRY_NOT_FOUND,
+                    format!("no entry for path '{}'", params.path),
+                ),
+            );
+        }
+
+        let Some(vault) = self.vault.as_ref() else {
+            return locked_response(id);
+        };
+
+        let value = match vault.get(&params.path) {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                return JsonRpcResponse::err(
+                    id,
+                    JsonRpcError::new(
+                        ENTRY_NOT_FOUND,
+                        format!("no entry for path '{}'", params.path),
+                    ),
+                );
+            }
+            Err(e) => return JsonRpcResponse::err(id, vault_error_to_rpc(&e)),
+        };
+
+        // `paths()` and `list()` walk the same iterator, so zipping
+        // them pairs each path with its own metadata. Same approach
+        // as `secret.list`, and it keeps the vault's public surface
+        // unchanged.
+        let meta = vault
+            .paths()
+            .map(str::to_owned)
+            .zip(vault.list())
+            .find(|(path, _)| path == &params.path)
+            .map(|(_, meta)| meta)
+            .unwrap_or_default();
+
+        let verdict = format_verdict(&meta, value.expose_secret());
+
+        // Reading the value is reading the value, whoever asked and
+        // whatever we told them. An access that skipped the trail
+        // because only a verdict came back would be the easy way to
+        // read a vault quietly.
+        self.audit_with_detail("validate", &params.path, "agent", Some(verdict.as_str()));
+
+        JsonRpcResponse::ok(
+            id,
+            json!({
+                "format": verdict.as_str(),
+                "pattern_id": meta.pattern_id,
+                "expires_at": meta.expires_at,
+            }),
+        )
     }
 
     fn handle_secret_list(&mut self, req: JsonRpcRequest) -> JsonRpcResponse {
@@ -1334,6 +1443,63 @@ fn locked_response(id: Value) -> JsonRpcResponse {
         id,
         JsonRpcError::new(VAULT_LOCKED, "vault is locked; call vault.unlock first"),
     )
+}
+
+/// The three answers `secret.validate` can give about a value's
+/// shape.
+///
+/// The wire names are the join with
+/// `devboy_mcp::secrets_validate::FormatVerdict`, which is the only
+/// consumer. Nothing in the type system holds those two together, so
+/// a test pins the strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FormatVerdict {
+    /// The value matches the declared shape.
+    Ok,
+    /// The value does not match.
+    Invalid,
+    /// Nothing was declared about this value's shape.
+    ///
+    /// Deliberately not `Ok`. "Checked and passed" and "nobody said
+    /// what this should look like" are different facts, and an agent
+    /// that conflates them reports confidence it has not earned.
+    Unknown,
+}
+
+impl FormatVerdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Invalid => "invalid",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Check a value against the rule this daemon holds for it.
+///
+/// The rule is the entry's own `pattern_id`, resolved through this
+/// process's catalogue — which includes whatever the user declared
+/// in `<config>/secrets/patterns.d/`, so an in-house token format
+/// is checkable here too, without anyone teaching the daemon about
+/// a particular vendor.
+///
+/// A `pattern_id` naming a pattern the catalogue does not have is
+/// `Unknown` rather than `Invalid`. The value is not at fault for a
+/// typo in its metadata, and answering "invalid" would send someone
+/// rotating a perfectly good secret.
+fn format_verdict(meta: &EntryMetadata, value: &str) -> FormatVerdict {
+    let Some(id) = meta.pattern_id.as_deref() else {
+        return FormatVerdict::Unknown;
+    };
+    let Some(pattern) = devboy_secret_patterns::resolved::shared().find(id) else {
+        return FormatVerdict::Unknown;
+    };
+    if pattern.format_regex().is_match(value) {
+        FormatVerdict::Ok
+    } else {
+        FormatVerdict::Invalid
+    }
 }
 
 /// Whether a method counts as "user activity" for the ADR-023 §3.3
@@ -2785,6 +2951,339 @@ mod tests {
         assert_eq!(resp.result.unwrap()["state"], "locked");
 
         server_handle.await.unwrap();
+    }
+
+    // -- secret.validate ---------------------------------------------------
+
+    /// A well-formed GitLab PAT. Long enough for the built-in
+    /// `^glpat-[A-Za-z0-9_-]{20,}$`.
+    const GOOD_PAT: &str = "glpat-ABCDEFGHIJKLMNOPQRSTU";
+
+    /// Unlock, then store `value` at `path` carrying `pattern_id`.
+    async fn seed(server: &mut VaultServer, path: &str, value: &str, pattern_id: Option<&str>) {
+        let unlocked = server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+        assert!(unlocked.error.is_none(), "{:?}", unlocked.error);
+
+        let meta = match pattern_id {
+            Some(id) => json!({"pattern_id": id}),
+            None => json!({}),
+        };
+        let put = server
+            .handle_request(req(
+                2,
+                "secret.put",
+                json!({
+                    "path": path,
+                    "value": value,
+                    "meta": meta,
+                    "fresh_unlock": {"kind": "passphrase", "secret": "p"}
+                }),
+            ))
+            .await;
+        assert!(put.error.is_none(), "{:?}", put.error);
+    }
+
+    async fn validate(server: &mut VaultServer, params: Value) -> JsonRpcResponse {
+        server
+            .handle_request(req(9, "secret.validate", params))
+            .await
+    }
+
+    /// The whole point of the method: the caller learns the value is
+    /// well-formed and does not learn the value.
+    #[tokio::test]
+    async fn a_verdict_comes_back_and_the_value_does_not() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            GOOD_PAT,
+            Some("gitlab-pat"),
+        )
+        .await;
+
+        let resp = validate(&mut server, json!({"path": "team/gitlab/token"})).await;
+
+        let result = resp.result.expect("a stored, well-formed value validates");
+        assert_eq!(result["format"], "ok");
+        assert_eq!(result["pattern_id"], "gitlab-pat");
+
+        let rendered = serde_json::to_string(&result).unwrap();
+        assert!(
+            !rendered.contains(GOOD_PAT),
+            "the value crossed the socket: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_value_of_the_wrong_shape_is_invalid() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            "not-a-gitlab-token",
+            Some("gitlab-pat"),
+        )
+        .await;
+
+        let resp = validate(&mut server, json!({"path": "team/gitlab/token"})).await;
+
+        assert_eq!(resp.result.unwrap()["format"], "invalid");
+    }
+
+    /// "Checked and passed" and "nobody said what this should look
+    /// like" are different facts. An agent that reads `unknown` as
+    /// `ok` reports confidence nobody earned.
+    #[tokio::test]
+    async fn an_entry_with_no_declared_shape_is_unknown_rather_than_ok() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(&mut server, "team/thing/token", "whatever", None).await;
+
+        let result = validate(&mut server, json!({"path": "team/thing/token"}))
+            .await
+            .result
+            .unwrap();
+
+        assert_eq!(result["format"], "unknown");
+        assert!(result["pattern_id"].is_null());
+    }
+
+    /// A `pattern_id` that resolves to nothing is a defect in the
+    /// metadata, not in the value. Answering `invalid` here would
+    /// send someone rotating a perfectly good secret because of a
+    /// typo.
+    #[tokio::test]
+    async fn a_dangling_pattern_id_is_unknown_rather_than_invalid() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(
+            &mut server,
+            "team/thing/token",
+            GOOD_PAT,
+            Some("no-such-pattern-was-ever-declared"),
+        )
+        .await;
+
+        let result = validate(&mut server, json!({"path": "team/thing/token"}))
+            .await
+            .result
+            .unwrap();
+
+        assert_eq!(result["format"], "unknown");
+    }
+
+    /// The attack this method has to survive.
+    ///
+    /// If the caller could hand in the rule, `secret.validate` would
+    /// be a value oracle: ask `^g.*`, then `^gl.*`, then `^gla.*`,
+    /// and read the secret out of a sequence of yes/no answers. The
+    /// rule therefore comes from the daemon's own metadata and from
+    /// nowhere else, and a `format_regex` in the request is inert.
+    ///
+    /// Checked in both directions, because a one-way test passes for
+    /// a parser that ignores the field *and* for one that ANDs it
+    /// with the real rule — and the second is still an oracle.
+    #[tokio::test]
+    async fn a_rule_supplied_by_the_caller_is_ignored() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            "not-a-gitlab-token",
+            Some("gitlab-pat"),
+        )
+        .await;
+
+        // A rule that matches anything must not turn a mismatch into
+        // a pass.
+        let permissive = validate(
+            &mut server,
+            json!({"path": "team/gitlab/token", "format_regex": "^.*$"}),
+        )
+        .await;
+        assert_eq!(
+            permissive.result.unwrap()["format"],
+            "invalid",
+            "the caller's regex decided the verdict"
+        );
+
+        // ...and one that matches nothing must not turn a pass into
+        // a mismatch. An implementation that ANDs the two would pass
+        // the first probe and fail here — and would still leak the
+        // value one character at a time.
+        let (_dir2, mut server2) = fresh_vault("p");
+        seed(
+            &mut server2,
+            "team/gitlab/token",
+            GOOD_PAT,
+            Some("gitlab-pat"),
+        )
+        .await;
+        let restrictive = validate(
+            &mut server2,
+            json!({"path": "team/gitlab/token", "format_regex": "^definitely-not-this$"}),
+        )
+        .await;
+        assert_eq!(
+            restrictive.result.unwrap()["format"],
+            "ok",
+            "the caller's regex decided the verdict"
+        );
+    }
+
+    /// Reading a value is reading a value, however little of it comes
+    /// back. A verdict-only reply that skipped the trail would be the
+    /// quiet way to walk a vault.
+    #[tokio::test]
+    async fn a_validation_is_written_to_the_audit_trail() {
+        let (_dir, mut server) = fresh_vault("p");
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            GOOD_PAT,
+            Some("gitlab-pat"),
+        )
+        .await;
+        validate(&mut server, json!({"path": "team/gitlab/token"})).await;
+
+        let key = server.vault.as_ref().unwrap().audit_key().unwrap();
+        let records = server.audit.as_ref().unwrap().read_all(&key).unwrap();
+
+        let record = records
+            .iter()
+            .find(|r| r.action == "validate")
+            .expect("a validation must be recorded");
+        assert_eq!(record.path, "team/gitlab/token");
+        assert_eq!(record.actor, "agent");
+        assert_eq!(
+            record.detail.as_deref(),
+            Some("ok"),
+            "the verdict is the useful part of the record"
+        );
+    }
+
+    /// Same silence as `secret.get`: an agent has no business
+    /// learning that the TOTP slot exists, and "is the shared secret
+    /// well-formed?" is not a question worth answering either.
+    #[tokio::test]
+    async fn the_totp_slot_cannot_be_probed() {
+        let (_dir, mut server) = fresh_vault("p");
+        server
+            .handle_request(req(
+                1,
+                "vault.unlock",
+                json!({"kind": "passphrase", "secret": "p"}),
+            ))
+            .await;
+
+        let resp = validate(
+            &mut server,
+            json!({"path": format!("{}shared", crate::totp_session::RESERVED_PREFIX)}),
+        )
+        .await;
+
+        assert_eq!(resp.error.unwrap().code, ENTRY_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_locked_vault_validates_nothing() {
+        let (_dir, mut server) = fresh_vault("p");
+
+        let resp = validate(&mut server, json!({"path": "team/gitlab/token"})).await;
+
+        assert_eq!(resp.error.unwrap().code, VAULT_LOCKED);
+    }
+
+    /// Validation must not extend the unlock window.
+    ///
+    /// This is the first value-touching method an agent can reach —
+    /// `secret.get` exists but only the CLI calls it, because agents
+    /// are handed aliases rather than values. An agent that could
+    /// refresh the timer by validating on a loop would keep the vault
+    /// open indefinitely and auto-lock (ADR-023 §3.3) would never
+    /// fire again.
+    ///
+    /// Two advances of 6s each against a 10s window: if validating
+    /// bumped the timestamp, only 6s would have elapsed since the
+    /// last activity and the vault would still be open.
+    #[tokio::test]
+    async fn validating_does_not_extend_the_unlock_window() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("vault.dvb");
+        let _outcome = Vault::create(&path, fast_init("p")).unwrap();
+        let clock = crate::idle::ManualClock::new(std::time::Instant::now());
+        let mut server = server_with_manual_clock(path, clock.clone());
+        server.pretend_to_have_no_terminal();
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            GOOD_PAT,
+            Some("gitlab-pat"),
+        )
+        .await;
+
+        clock.advance(std::time::Duration::from_secs(6));
+        let inside = validate(&mut server, json!({"path": "team/gitlab/token"})).await;
+        assert!(
+            inside.error.is_none(),
+            "still inside the window: {:?}",
+            inside.error
+        );
+
+        clock.advance(std::time::Duration::from_secs(6));
+        let after = validate(&mut server, json!({"path": "team/gitlab/token"})).await;
+
+        assert_eq!(
+            after.error.expect("the window must have closed").code,
+            VAULT_LOCKED,
+            "validating refreshed the idle timer"
+        );
+        assert!(!server.is_unlocked());
+    }
+
+    /// The control for the test above.
+    ///
+    /// Without it, `validating_does_not_extend_the_unlock_window`
+    /// would also pass on a build where *nothing* refreshes the timer
+    /// — where the window simply runs from the unlock. This proves
+    /// the harness can see a bump when one happens.
+    #[tokio::test]
+    async fn a_real_operation_does_extend_the_unlock_window() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("vault.dvb");
+        let _outcome = Vault::create(&path, fast_init("p")).unwrap();
+        let clock = crate::idle::ManualClock::new(std::time::Instant::now());
+        let mut server = server_with_manual_clock(path, clock.clone());
+        server.pretend_to_have_no_terminal();
+        seed(
+            &mut server,
+            "team/gitlab/token",
+            GOOD_PAT,
+            Some("gitlab-pat"),
+        )
+        .await;
+
+        clock.advance(std::time::Duration::from_secs(6));
+        let inside = server
+            .handle_request(req(20, "secret.list", json!({})))
+            .await;
+        assert!(inside.error.is_none(), "{:?}", inside.error);
+
+        clock.advance(std::time::Duration::from_secs(6));
+        let after = server
+            .handle_request(req(21, "secret.list", json!({})))
+            .await;
+
+        assert!(
+            after.error.is_none(),
+            "a listing should have refreshed the timer: {:?}",
+            after.error
+        );
     }
 
     // -- Idle-timeout integration -----------------------------------------
