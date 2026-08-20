@@ -1060,6 +1060,37 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
             },
         },
         McpOnlyTool {
+            name: "secrets_validate".into(),
+            description: "Check whether the secret stored at a path is the shape it \
+                is supposed to be (ADR-024 §3). Use it right after a value is \
+                provisioned or rotated, to catch the pasted-the-wrong-thing case \
+                before it fails somewhere confusing. Everything happens in the \
+                secret daemon and only a verdict comes back — you name the path, \
+                you never see the value. There is deliberately no way to supply \
+                your own pattern: the check runs against the rule recorded with \
+                the entry. A `format` of `unknown` means nobody declared a shape \
+                for that path, which is not the same as passing."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to check."),
+                );
+                s.add_property(
+                    "liveness",
+                    PropertySchema::boolean(
+                        "Also ask the provider whether the credential still works. Costs a \
+                         network round trip and appears in the provider's own audit log, so it \
+                         is off by default. Not implemented yet — asking for it today returns \
+                         `unsupported`.",
+                    ),
+                );
+                s.set_required("path", true);
+                s
+            },
+        },
+        McpOnlyTool {
             name: "secrets_status".into(),
             description: "What the vault will accept right now: whether it is \
                 unlocked, how long the current window has left, and which \
@@ -1220,6 +1251,7 @@ mod tests {
             "secrets_request_use_approval",
             "secrets_unlock",
             "secrets_status",
+            "secrets_validate",
         ] {
             assert!(
                 advertised.iter().any(|a| a == name),

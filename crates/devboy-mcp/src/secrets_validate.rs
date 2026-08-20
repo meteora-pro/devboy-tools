@@ -17,14 +17,25 @@
 //!
 //! Two independent checks:
 //!
-//! - **Format** is offline. It matches the stored value against
-//!   the entry's `format_regex`, or against the pattern its
-//!   `pattern_id` resolves to. Cheap, and catches the common
-//!   "pasted the wrong thing" case.
+//! - **Format** is offline. The daemon matches the stored value
+//!   against the pattern its `pattern_id` resolves to. Cheap, and
+//!   catches the common "pasted the wrong thing" case.
 //! - **Liveness** is opt-in, because it costs a network round trip
 //!   and shows up in the provider's audit log. It resolves the
 //!   value server-side, makes one cheap authenticated call, and
-//!   returns whether the credential was accepted.
+//!   returns whether the credential was accepted. Not implemented
+//!   in the daemon yet: asking for it today gets `unsupported`.
+//!
+//! # The rule is the daemon's, not the caller's
+//!
+//! There is no way to hand in a `format_regex`, and that is not an
+//! oversight. A method that answers yes/no about a secret against a
+//! rule the caller chooses is a value oracle: ask `^g.*`, then
+//! `^gl.*`, then `^gla.*`, and the secret comes out one character
+//! at a time. So the rule is the one the daemon stored with the
+//! entry — which includes any pattern the user declared in
+//! `<config>/secrets/patterns.d/`, so an in-house token shape is
+//! checkable here without anyone teaching the tool about a vendor.
 //!
 //! A liveness failure is reported as a verdict, not an error:
 //! "this token is no longer accepted" is a fact about the world,
@@ -142,9 +153,128 @@ impl SecretsValidateReply {
     }
 }
 
+/// Arguments for `secrets_validate`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SecretsValidateArgs {
+    /// The ADR-020 path to check.
+    pub path: String,
+    /// Also ask the provider whether the credential still works.
+    ///
+    /// Off by default: it costs a network round trip and leaves a
+    /// line in the provider's own audit log, neither of which an
+    /// agent should spend without meaning to.
+    #[serde(default)]
+    pub liveness: bool,
+}
+
+/// Translate the daemon's verdict word into the agent-facing enum.
+///
+/// Anything unrecognised becomes `Unknown`, never `Ok`. A daemon
+/// newer than this build could invent a fourth verdict, and the one
+/// reading it must not answer "fine" to a word it has never seen.
+/// Split out from [`validate`] so this can be checked without a
+/// running daemon.
+fn format_from_wire(word: Option<&str>) -> FormatVerdict {
+    match word {
+        Some("ok") => FormatVerdict::Ok,
+        Some("invalid") => FormatVerdict::Invalid,
+        _ => FormatVerdict::Unknown,
+    }
+}
+
+/// Ask the daemon about a path.
+///
+/// Note what is not sent: any rule. The daemon validates against
+/// the `pattern_id` it stored with the entry, because a
+/// caller-supplied regex would let anyone reading the socket
+/// extract the value one character at a time from a run of yes/no
+/// answers.
+///
+/// A daemon that is not running is reported as `Unknown` with the
+/// advice to start it, rather than as a bad secret — the agent's
+/// next move is to ask the user to start the daemon, not to rotate
+/// a credential that was never examined.
+#[cfg(unix)]
+pub fn validate(args: &SecretsValidateArgs, ctx: &RemediationContext) -> SecretsValidateReply {
+    use devboy_secrets_agent::AgentClient;
+
+    let unreachable = || SecretsValidateReply {
+        path: args.path.clone(),
+        format: FormatVerdict::Unknown,
+        liveness: None,
+        expires_at: None,
+        remediation: Some(SecretsErrorKind::DaemonNotRunning.remediation(ctx)),
+    };
+
+    let Some(client) = AgentClient::new() else {
+        return unreachable();
+    };
+    let Ok(result) = client.secret_validate(&args.path) else {
+        return unreachable();
+    };
+
+    let format = format_from_wire(result.get("format").and_then(|v| v.as_str()));
+
+    // Liveness is not implemented in the daemon yet. Reporting it as
+    // `Unsupported` when it was asked for is the honest answer and
+    // the one the reply type was built for; silently omitting the
+    // field would tell the agent it never asked.
+    let liveness = args.liveness.then_some(LivenessVerdict::Unsupported);
+
+    let mut ctx = ctx.clone();
+    if ctx.expires_at_hint.is_none() {
+        ctx.expires_at_hint = result
+            .get("expires_at")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+    }
+
+    SecretsValidateReply::new(args.path.clone(), format, liveness, &ctx)
+}
+
+/// Off UNIX there is no daemon socket, so there is nothing to ask.
+#[cfg(not(unix))]
+pub fn validate(args: &SecretsValidateArgs, ctx: &RemediationContext) -> SecretsValidateReply {
+    SecretsValidateReply {
+        path: args.path.clone(),
+        format: FormatVerdict::Unknown,
+        liveness: None,
+        expires_at: None,
+        remediation: Some(SecretsErrorKind::DaemonNotRunning.remediation(ctx)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The daemon's three words, and the rule for a fourth.
+    #[test]
+    fn a_verdict_word_this_build_does_not_know_is_never_a_pass() {
+        assert_eq!(format_from_wire(Some("ok")), FormatVerdict::Ok);
+        assert_eq!(format_from_wire(Some("invalid")), FormatVerdict::Invalid);
+        assert_eq!(format_from_wire(Some("unknown")), FormatVerdict::Unknown);
+
+        // A daemon newer than this build.
+        assert_eq!(
+            format_from_wire(Some("probably-fine")),
+            FormatVerdict::Unknown,
+            "an unrecognised verdict must not read as a pass"
+        );
+        assert_eq!(format_from_wire(None), FormatVerdict::Unknown);
+    }
+
+    /// The arguments an agent sends. `liveness` has to be optional,
+    /// or every caller is forced to opt out of a network call it
+    /// never wanted.
+    #[test]
+    fn liveness_is_off_unless_asked_for() {
+        let args: SecretsValidateArgs =
+            serde_json::from_value(serde_json::json!({"path": "team/gitlab/token"})).unwrap();
+
+        assert_eq!(args.path, "team/gitlab/token");
+        assert!(!args.liveness);
+    }
 
     fn ctx() -> RemediationContext {
         RemediationContext {

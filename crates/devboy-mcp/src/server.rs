@@ -790,6 +790,7 @@ impl McpServer {
             "secrets_list" => Some(self.handle_secrets_list(params)),
             "secrets_unlock" => Some(Self::handle_secrets_unlock(params)),
             "secrets_status" => Some(Self::handle_secrets_status()),
+            "secrets_validate" => Some(Self::handle_secrets_validate(params)),
             "secrets_describe" => Some(self.handle_secrets_describe(params)),
             "secrets_request_provision" => Some(self.handle_secrets_request_provision(params)),
             "secrets_request_rotation" => Some(self.handle_secrets_request_rotation(params)),
@@ -849,6 +850,37 @@ impl McpServer {
 
     #[cfg(not(unix))]
     fn handle_secrets_status() -> ToolCallResult {
+        ToolCallResult::error(
+            "the secret daemon is only reachable over UNIX domain sockets".to_string(),
+        )
+    }
+
+    /// `secrets_validate` — is the stored secret the right shape?
+    ///
+    /// Everything happens in the daemon; only a verdict comes back.
+    #[cfg(unix)]
+    fn handle_secrets_validate(params: &ToolCallParams) -> ToolCallResult {
+        use crate::remediation::RemediationContext;
+        use crate::secrets_validate::{self, SecretsValidateArgs};
+
+        let args: SecretsValidateArgs = match &params.arguments {
+            Some(a) => match serde_json::from_value(a.clone()) {
+                Ok(v) => v,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let ctx = RemediationContext::for_path(&args.path);
+        let reply = secrets_validate::validate(&args, &ctx);
+        match serde_json::to_string_pretty(&reply) {
+            Ok(json) => ToolCallResult::text(json),
+            Err(e) => ToolCallResult::error(format!("could not serialise the reply: {e}")),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn handle_secrets_validate(_params: &ToolCallParams) -> ToolCallResult {
         ToolCallResult::error(
             "the secret daemon is only reachable over UNIX domain sockets".to_string(),
         )
@@ -1559,6 +1591,11 @@ impl McpServer {
                 // reason the rest of the family is here.
                 | "secrets_unlock"
                 | "secrets_status"
+                // Validating reads the value and writes an audit
+                // record. A speculative run would put a read in the
+                // user's trail that nobody asked for, which is
+                // exactly the noise an audit log must not have.
+                | "secrets_validate"
                 | "secrets_describe"
                 | "secrets_request_provision"
                 | "secrets_request_rotation"
