@@ -1212,18 +1212,61 @@ async fn execute_get_merge_request(
     Ok(ToolOutput::SingleMergeRequest(Box::new(mr)))
 }
 
+/// Params for get_merge_request_discussions. The schema has always advertised
+/// `limit`/`offset`, but they were deserialized into [`KeyParam`] and silently
+/// dropped — advertised-but-ignored is worse than absent. `mrKey` alias
+/// matches [`CreateMrCommentParams`]: agents routinely send the camelCase key.
+#[derive(Deserialize)]
+struct DiscussionsParams {
+    #[serde(alias = "mrKey")]
+    key: String,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[serde(default)]
+    #[allow(dead_code)]
+    budget: Option<usize>,
+}
+
 async fn execute_get_merge_request_discussions(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: KeyParam = serde_json::from_value(args.clone())
+    let params: DiscussionsParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
     let result = provider.get_discussions(&params.key).await?;
+    let provider_has_more = result.pagination.as_ref().is_some_and(|p| p.has_more);
+    let total = result.items.len();
+
+    let offset = params.offset.unwrap_or(0);
+    let mut items = result.items;
+    if offset > 0 || params.limit.is_some() {
+        items = items
+            .into_iter()
+            .skip(offset)
+            .take(params.limit.unwrap_or(usize::MAX))
+            .collect();
+    }
+    // Slicing must be visible in the metadata: a page that looks complete but
+    // isn't is exactly the failure mode this tool had.
+    let pagination = if offset > 0 || params.limit.is_some() || provider_has_more {
+        Some(devboy_core::Pagination {
+            offset: offset as u32,
+            limit: items.len() as u32,
+            total: Some(total as u32),
+            has_more: provider_has_more || offset + items.len() < total,
+            next_cursor: None,
+        })
+    } else {
+        None
+    };
     let meta = ResultMeta {
-        pagination: result.pagination,
+        pagination,
         sort_info: result.sort_info,
     };
-    Ok(ToolOutput::Discussions(result.items, Some(meta)))
+    Ok(ToolOutput::Discussions(items, Some(meta)))
 }
 
 async fn execute_get_merge_request_diffs(
@@ -3424,6 +3467,61 @@ mod tests {
     async fn test_dispatch_get_merge_request_discussions() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "pr#1"});
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Discussions(v, _) if v.len() == 1));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_discussions_honors_advertised_limit_offset() {
+        // The schema has always advertised limit/offset; they used to be
+        // silently dropped (DEV-5447). Slicing must also be visible in
+        // pagination metadata — a sliced page must not look complete.
+        let provider = MockProvider;
+
+        // offset past the only item → empty page, total still reported
+        let args = serde_json::json!({"key": "pr#1", "offset": 1});
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Discussions(items, Some(meta)) => {
+                assert!(items.is_empty(), "offset=1 skips the single item");
+                let p = meta
+                    .pagination
+                    .expect("slicing must produce pagination meta");
+                assert_eq!(p.total, Some(1));
+                assert_eq!(p.offset, 1);
+                assert!(!p.has_more);
+            }
+            other => panic!("unexpected output: {other:?}"),
+        }
+
+        // limit larger than the set → everything returned, no has_more
+        let args = serde_json::json!({"key": "pr#1", "limit": 5});
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Discussions(items, Some(meta)) => {
+                assert_eq!(items.len(), 1);
+                let p = meta
+                    .pagination
+                    .expect("explicit limit must produce pagination meta");
+                assert_eq!(p.total, Some(1));
+                assert!(!p.has_more);
+            }
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_discussions_accepts_mr_key_alias() {
+        // Agents routinely send mrKey (the e2e suite does too); it used to
+        // fail with "missing field 'key'".
+        let provider = MockProvider;
+        let args = serde_json::json!({"mrKey": "pr#1"});
         let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
             .await
             .unwrap();
