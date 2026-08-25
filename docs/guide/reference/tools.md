@@ -313,7 +313,7 @@ Get discussions/review comments for a merge request with code positions.
 | Parameter | Type | Required | Description |
 |---|---|:---:|---|
 | `key` | string | ✅ | MR/PR key |
-| `limit` | integer | — | Max discussions (default: 20). Range: 1 – 100 |
+| `limit` | integer | — | Max discussions to return (default: all). Min: 1 |
 | `offset` | integer | — | Skip N discussions (default: 0). Min: 0 |
 
 ### `get_merge_requests`

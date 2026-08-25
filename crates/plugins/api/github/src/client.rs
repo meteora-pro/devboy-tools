@@ -96,6 +96,29 @@ impl GitHubClient {
         self.handle_response(response).await
     }
 
+    /// GET every page of a list endpoint. Without explicit paging GitHub
+    /// returns only the first 30 items and the result looks complete —
+    /// discussion threads past page 1 were silently invisible to callers.
+    /// A short page terminates the loop; the page cap is a runaway guard
+    /// (callers of multi-thousand-item endpoints should pass filters instead).
+    async fn get_all_pages<T: serde::de::DeserializeOwned>(&self, url: &str) -> Result<Vec<T>> {
+        const PER_PAGE: usize = 100;
+        const MAX_PAGES: usize = 30;
+
+        let sep = if url.contains('?') { '&' } else { '?' };
+        let mut items: Vec<T> = Vec::new();
+        for page in 1..=MAX_PAGES {
+            let paged_url = format!("{}{}per_page={}&page={}", url, sep, PER_PAGE, page);
+            let batch: Vec<T> = self.get(&paged_url).await?;
+            let last_page = batch.len() < PER_PAGE;
+            items.extend(batch);
+            if last_page {
+                break;
+            }
+        }
+        Ok(items)
+    }
+
     /// Make an authenticated POST request.
     async fn post<T: serde::de::DeserializeOwned, B: serde::Serialize>(
         &self,
@@ -591,9 +614,10 @@ impl MergeRequestProvider for GitHubClient {
         let review_comments_url = self.repo_url(&format!("/pulls/{}/comments", number));
         let issue_comments_url = self.repo_url(&format!("/issues/{}/comments", number));
 
-        let reviews: Vec<GitHubReview> = self.get(&reviews_url).await?;
-        let review_comments: Vec<GitHubReviewComment> = self.get(&review_comments_url).await?;
-        let issue_comments: Vec<GitHubComment> = self.get(&issue_comments_url).await?;
+        let reviews: Vec<GitHubReview> = self.get_all_pages(&reviews_url).await?;
+        let review_comments: Vec<GitHubReviewComment> =
+            self.get_all_pages(&review_comments_url).await?;
+        let issue_comments: Vec<GitHubComment> = self.get_all_pages(&issue_comments_url).await?;
 
         let mut discussions = Vec::new();
 
@@ -2526,6 +2550,56 @@ mod tests {
 
             // 1 review comment thread + 1 review + 1 general comment = 3
             assert_eq!(discussions.len(), 3);
+        }
+
+        #[tokio::test]
+        async fn test_get_discussions_pages_past_first_page() {
+            // Regression (DEV-5447): without per_page/page GitHub returns the
+            // first 30 items and the result LOOKS complete. A full page (100)
+            // must trigger fetching the next one.
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/repos/owner/repo/pulls/10/reviews");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+            let comment = |i: u64| {
+                serde_json::json!({
+                    "id": i,
+                    "body": format!("comment {i}"),
+                    "created_at": "2024-01-15T11:00:00Z",
+                    "path": "src/main.rs"
+                })
+            };
+            let page1: Vec<_> = (0..100).map(comment).collect();
+            let page2: Vec<_> = (100..105).map(comment).collect();
+            let m1 = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/pulls/10/comments")
+                    .query_param("per_page", "100")
+                    .query_param("page", "1");
+                then.status(200).json_body(serde_json::json!(page1));
+            });
+            let m2 = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/pulls/10/comments")
+                    .query_param("per_page", "100")
+                    .query_param("page", "2");
+                then.status(200).json_body(serde_json::json!(page2));
+            });
+            server.mock(|when, then| {
+                when.method(GET)
+                    .path("/repos/owner/repo/issues/10/comments");
+                then.status(200).json_body(serde_json::json!([]));
+            });
+
+            let client = create_test_client(&server);
+            let discussions = client.get_discussions("pr#10").await.unwrap().items;
+
+            // Comments have distinct ids and no in_reply_to → one thread each.
+            assert_eq!(discussions.len(), 105, "both pages merged");
+            m1.assert();
+            m2.assert();
         }
 
         #[tokio::test]

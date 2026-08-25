@@ -170,7 +170,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("MR/PR key"));
-                s.add_property("limit", PropertySchema::integer("Max discussions (default: 20)", Some(1.0), Some(100.0)));
+                s.add_property("limit", PropertySchema::integer("Max discussions to return (default: all)", Some(1.0), None));
                 s.add_property("offset", PropertySchema::integer("Skip N discussions (default: 0)", Some(0.0), None));
                 s.set_required("key", true);
                 s

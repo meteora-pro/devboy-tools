@@ -957,8 +957,33 @@ impl MergeRequestProvider for GitLabClient {
 
     async fn get_discussions(&self, mr_key: &str) -> Result<ProviderResult<Discussion>> {
         let iid = parse_mr_key(mr_key)?;
-        let url = self.project_url(&format!("/merge_requests/{}/discussions", iid));
-        let gl_discussions: Vec<GitLabDiscussion> = self.get(&url).await?;
+
+        // Without explicit paging GitLab silently returns only the first 20
+        // discussions — long review threads past page 1 were invisible to
+        // callers while the result looked complete. Page through everything;
+        // a short page terminates the loop. The page cap is a runaway guard
+        // for pathological MRs: hitting it is announced via
+        // `pagination.has_more`, never silent.
+        const PER_PAGE: usize = 100;
+        const MAX_PAGES: usize = 30;
+
+        let mut gl_discussions: Vec<GitLabDiscussion> = Vec::new();
+        let mut capped = false;
+        for page in 1..=MAX_PAGES {
+            let url = self.project_url(&format!(
+                "/merge_requests/{}/discussions?per_page={}&page={}",
+                iid, PER_PAGE, page
+            ));
+            let batch: Vec<GitLabDiscussion> = self.get(&url).await?;
+            let last_page = batch.len() < PER_PAGE;
+            gl_discussions.extend(batch);
+            if last_page {
+                break;
+            }
+            if page == MAX_PAGES {
+                capped = true;
+            }
+        }
 
         // Map and filter out empty discussions (all system notes)
         let discussions: Vec<Discussion> = gl_discussions
@@ -966,7 +991,18 @@ impl MergeRequestProvider for GitLabClient {
             .map(map_discussion)
             .filter(|d| !d.comments.is_empty())
             .collect();
-        Ok(discussions.into())
+        let mut result: ProviderResult<Discussion> = discussions.into();
+        if capped {
+            let fetched = result.items.len() as u32;
+            result.pagination = Some(devboy_core::Pagination {
+                offset: 0,
+                limit: fetched,
+                total: None,
+                has_more: true,
+                next_cursor: None,
+            });
+        }
+        Ok(result)
     }
 
     async fn get_diffs(&self, mr_key: &str) -> Result<ProviderResult<FileDiff>> {
@@ -2279,6 +2315,55 @@ mod tests {
             assert_eq!(discussions[0].comments.len(), 2);
             assert!(!discussions[0].resolved);
             assert!(discussions[0].position.is_some());
+        }
+
+        #[tokio::test]
+        async fn test_get_discussions_pages_past_first_page() {
+            // Regression (DEV-5447): without per_page/page GitLab returns the
+            // first 20 discussions and the result LOOKS complete. A full page
+            // (100 items) must trigger fetching the next one.
+            let server = MockServer::start();
+            let disc = |i: u32| {
+                serde_json::json!({
+                    "id": format!("disc-{i}"),
+                    "notes": [{
+                        "id": i,
+                        "body": format!("note {i}"),
+                        "author": {"id": 1, "username": "reviewer"},
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "system": false,
+                        "resolvable": true,
+                        "resolved": false
+                    }]
+                })
+            };
+            let page1: Vec<_> = (0..100).map(disc).collect();
+            let page2: Vec<_> = (100..117).map(disc).collect();
+            let m1 = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/merge_requests/50/discussions")
+                    .query_param("per_page", "100")
+                    .query_param("page", "1");
+                then.status(200).json_body(serde_json::json!(page1));
+            });
+            let m2 = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/merge_requests/50/discussions")
+                    .query_param("per_page", "100")
+                    .query_param("page", "2");
+                then.status(200).json_body(serde_json::json!(page2));
+            });
+
+            let client = create_test_client(&server);
+            let result = client.get_discussions("mr#50").await.unwrap();
+
+            assert_eq!(result.items.len(), 117, "both pages merged");
+            assert!(
+                result.pagination.is_none(),
+                "complete result must not claim has_more"
+            );
+            m1.assert();
+            m2.assert();
         }
 
         #[tokio::test]
