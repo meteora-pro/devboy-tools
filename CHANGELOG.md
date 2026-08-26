@@ -4,6 +4,24 @@ All notable changes to `devboy-tools` are recorded here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added — `proxy call` reads arguments from a file or stdin (#322)
+
+- `devboy proxy call` now accepts `--args-file <PATH>`, and `-` means stdin in
+  either source. A positional argument travels through argv, which the kernel
+  caps at `MAX_ARG_STRLEN` (128 KiB per argument on Linux), while upstream tools
+  accept far more — the artifact endpoint alone takes 5 MB. Payloads above the
+  argv cap failed with `Argument list too long` before the process even started,
+  so the transport, not the product, set the ceiling.
+- Passing both an inline argument and a file is an error rather than a silent
+  preference for one.
+
+### Changed — failed `proxy call` no longer exits 0 (#322)
+
+- Invalid JSON arguments used to print to stderr and return `Ok(())`, reporting a
+  failed call as a success. The error now propagates, so the exit code matches
+  what happened. Scripts that relied on the previous exit code will see a
+  non-zero status where the payload does not parse.
+
 ### Changed — crates.io publishing policy (#308)
 
 - crates.io now ships **only the reusable libraries**. `devboy-cli` (the app
