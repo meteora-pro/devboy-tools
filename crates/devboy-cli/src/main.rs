@@ -531,7 +531,8 @@ enum ProxyCommands {
         args: Option<String>,
         /// Read JSON arguments from a file instead of the positional argument.
         /// Use this for payloads above ~128 KiB: a positional argument travels
-        /// through argv, which the kernel caps per argument. Pass `-` for stdin.
+        /// through argv, which the kernel caps per argument. Pass `-` for stdin;
+        /// to read a file actually named `-`, spell it `./-`.
         #[arg(long, value_name = "PATH")]
         args_file: Option<PathBuf>,
     },
@@ -4045,7 +4046,13 @@ fn resolve_call_arguments(
 }
 
 fn read_stdin_arguments(stdin_is_terminal: bool) -> Result<String> {
-    use std::io::Read;
+    read_arguments_from(io::stdin().lock(), stdin_is_terminal)
+}
+
+/// Split out from `read_stdin_arguments` so the reading half is reachable from
+/// tests: with `io::stdin()` baked in, nothing could assert that piped bytes
+/// actually arrive — only that the terminal guard exists.
+fn read_arguments_from<R: std::io::Read>(mut reader: R, stdin_is_terminal: bool) -> Result<String> {
     // Reading a TTY blocks until the user presses Ctrl-D, with nothing on screen
     // to say why — indistinguishable from a CLI that hung. Refuse and name the
     // two ways out instead.
@@ -4056,7 +4063,7 @@ fn read_stdin_arguments(stdin_is_terminal: bool) -> Result<String> {
         );
     }
     let mut buf = String::new();
-    io::stdin()
+    reader
         .read_to_string(&mut buf)
         .context("Failed to read JSON arguments from stdin")?;
     Ok(buf)
@@ -4136,6 +4143,42 @@ mod call_arguments_tests {
         );
     }
 
+    /// The both-sources check sits ahead of the `-`-is-stdin arms, so this
+    /// combination must bail rather than quietly reading stdin. Untested until
+    /// review pointed out that the existing case only used a normal filename.
+    #[test]
+    fn both_sources_with_the_stdin_sentinel_still_bails() {
+        let err = resolve_call_arguments(Some("{}"), Some(Path::new("-")), false)
+            .expect_err("inline + `-` must be refused");
+        assert!(
+            err.to_string().contains("not both"),
+            "unexpected message: {err}"
+        );
+    }
+
+    /// `-` means stdin, so a file literally named `-` needs the `./-` spelling.
+    /// Documented on the flag; asserted here so the escape hatch cannot rot.
+    #[test]
+    fn a_file_actually_named_dash_is_reachable_as_dot_slash_dash() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("-"), r#"{"key":"DEV-3"}"#).expect("write");
+        let v = resolve_call_arguments(None, Some(&dir.path().join("./-")), false)
+            .expect("./- must read the file, not stdin");
+        assert_eq!(v["key"], "DEV-3");
+    }
+
+    /// Asserts that piped bytes actually arrive — the terminal guard being
+    /// present says nothing about the reading half working.
+    #[test]
+    fn piped_bytes_reach_the_parser() {
+        let raw = super::read_arguments_from(
+            std::io::Cursor::new(r#"{"key":"DEV-4"}"#.as_bytes()),
+            false,
+        )
+        .expect("piped stdin");
+        assert_eq!(raw, r#"{"key":"DEV-4"}"#);
+    }
+
     #[test]
     fn invalid_json_is_an_error() {
         let err = resolve_call_arguments(Some("{oops"), None, false).expect_err("invalid json");
@@ -4183,6 +4226,23 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
         }
         _ => {}
     }
+
+    // Resolve the payload before the config load and the connection attempt
+    // below. Both of them `return Ok(())` on their own, so validation placed
+    // after them is conditional on an upstream being reachable: a transient
+    // outage turned "your JSON is malformed" into exit 0 with a network
+    // message, and the CI scripts that gate on this exit code read that as a
+    // network problem rather than the argument bug it is.
+    let call_arguments = match &command {
+        ProxyCommands::Call {
+            args, args_file, ..
+        } => Some(resolve_call_arguments(
+            args.as_deref(),
+            args_file.as_deref(),
+            io::stdin().is_terminal(),
+        )?),
+        _ => None,
+    };
 
     let (config, _) = load_runtime_config()?;
     let store = get_credential_store();
@@ -4235,18 +4295,8 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
                 }
             }
         }
-        ProxyCommands::Call {
-            tool,
-            args,
-            args_file,
-        } => {
-            let arguments = Some(resolve_call_arguments(
-                args.as_deref(),
-                args_file.as_deref(),
-                io::stdin().is_terminal(),
-            )?);
-
-            match proxy_manager.try_call(&tool, arguments).await {
+        ProxyCommands::Call { tool, .. } => {
+            match proxy_manager.try_call(&tool, call_arguments).await {
                 Some(result) => {
                     let json = serde_json::to_string_pretty(&result)
                         .unwrap_or_else(|_| format!("{:?}", result));

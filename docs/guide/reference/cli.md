@@ -493,7 +493,7 @@ Call a tool on an upstream proxy server
 
 ###### **Options:**
 
-* `--args-file <PATH>` — Read JSON arguments from a file instead of the positional argument. Use this for payloads above ~128 KiB: a positional argument travels through argv, which the kernel caps per argument. Pass `-` for stdin
+* `--args-file <PATH>` — Read JSON arguments from a file instead of the positional argument. Use this for payloads above ~128 KiB: a positional argument travels through argv, which the kernel caps per argument. Pass `-` for stdin; to read a file actually named `-`, spell it `./-`
 
 
 
