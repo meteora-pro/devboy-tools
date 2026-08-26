@@ -4027,15 +4027,16 @@ fn start_telemetry_pipeline(
 fn resolve_call_arguments(
     args: Option<&str>,
     args_file: Option<&Path>,
+    stdin_is_terminal: bool,
 ) -> Result<serde_json::Value> {
     let raw = match (args, args_file) {
         (Some(_), Some(_)) => {
             bail!("Pass JSON arguments either positionally or via --args-file, not both")
         }
-        (_, Some(path)) if path == Path::new("-") => read_stdin_arguments()?,
+        (_, Some(path)) if path == Path::new("-") => read_stdin_arguments(stdin_is_terminal)?,
         (_, Some(path)) => std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read JSON arguments from {}", path.display()))?,
-        (Some("-"), None) => read_stdin_arguments()?,
+        (Some("-"), None) => read_stdin_arguments(stdin_is_terminal)?,
         (Some(inline), None) => inline.to_string(),
         (None, None) => "{}".to_string(),
     };
@@ -4043,8 +4044,17 @@ fn resolve_call_arguments(
     serde_json::from_str(&raw).context("Invalid JSON arguments")
 }
 
-fn read_stdin_arguments() -> Result<String> {
+fn read_stdin_arguments(stdin_is_terminal: bool) -> Result<String> {
     use std::io::Read;
+    // Reading a TTY blocks until the user presses Ctrl-D, with nothing on screen
+    // to say why — indistinguishable from a CLI that hung. Refuse and name the
+    // two ways out instead.
+    if stdin_is_terminal {
+        bail!(
+            "`-` reads JSON arguments from stdin, but stdin is a terminal — \
+             pipe the payload in, or pass --args-file <PATH>"
+        );
+    }
     let mut buf = String::new();
     io::stdin()
         .read_to_string(&mut buf)
@@ -4060,13 +4070,13 @@ mod call_arguments_tests {
 
     #[test]
     fn no_source_defaults_to_empty_object() {
-        let v = resolve_call_arguments(None, None).expect("defaults");
+        let v = resolve_call_arguments(None, None, false).expect("defaults");
         assert_eq!(v, serde_json::json!({}));
     }
 
     #[test]
     fn positional_argument_still_works() {
-        let v = resolve_call_arguments(Some(r#"{"key":"DEV-1"}"#), None).expect("inline");
+        let v = resolve_call_arguments(Some(r#"{"key":"DEV-1"}"#), None, false).expect("inline");
         assert_eq!(v["key"], "DEV-1");
     }
 
@@ -4075,7 +4085,7 @@ mod call_arguments_tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("payload.json");
         std::fs::write(&path, r#"{"key":"DEV-2"}"#).expect("write");
-        let v = resolve_call_arguments(None, Some(&path)).expect("file");
+        let v = resolve_call_arguments(None, Some(&path), false).expect("file");
         assert_eq!(v["key"], "DEV-2");
     }
 
@@ -4092,13 +4102,33 @@ mod call_arguments_tests {
         drop(f);
 
         assert!(std::fs::metadata(&path).expect("stat").len() > 128 * 1024);
-        let v = resolve_call_arguments(None, Some(&path)).expect("large file");
+        let v = resolve_call_arguments(None, Some(&path), false).expect("large file");
         assert_eq!(v["content"].as_str().map(str::len), Some(300 * 1024));
+    }
+
+    /// Without this guard `devboy proxy call <tool> -` in an interactive shell
+    /// blocks on `read_to_string` until Ctrl-D, printing nothing — the user sees
+    /// a hung CLI, not a usage error.
+    #[test]
+    fn stdin_sentinel_on_a_terminal_is_refused_instead_of_hanging() {
+        let err = resolve_call_arguments(Some("-"), None, true)
+            .expect_err("a terminal stdin must be refused");
+        assert!(
+            err.to_string().contains("stdin is a terminal"),
+            "unexpected message: {err}"
+        );
+
+        let err = resolve_call_arguments(None, Some(Path::new("-")), true)
+            .expect_err("--args-file - must be refused too");
+        assert!(
+            err.to_string().contains("stdin is a terminal"),
+            "unexpected message: {err}"
+        );
     }
 
     #[test]
     fn both_sources_is_an_error_not_a_silent_preference() {
-        let err = resolve_call_arguments(Some("{}"), Some(Path::new("payload.json")))
+        let err = resolve_call_arguments(Some("{}"), Some(Path::new("payload.json")), false)
             .expect_err("conflicting sources must fail");
         assert!(
             err.to_string().contains("not both"),
@@ -4108,7 +4138,7 @@ mod call_arguments_tests {
 
     #[test]
     fn invalid_json_is_an_error() {
-        let err = resolve_call_arguments(Some("{oops"), None).expect_err("invalid json");
+        let err = resolve_call_arguments(Some("{oops"), None, false).expect_err("invalid json");
         assert!(
             err.to_string().contains("Invalid JSON arguments"),
             "unexpected message: {err}"
@@ -4117,7 +4147,7 @@ mod call_arguments_tests {
 
     #[test]
     fn missing_file_names_the_path() {
-        let err = resolve_call_arguments(None, Some(Path::new("/nope/missing.json")))
+        let err = resolve_call_arguments(None, Some(Path::new("/nope/missing.json")), false)
             .expect_err("missing file");
         assert!(
             err.to_string().contains("missing.json"),
@@ -4213,6 +4243,7 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
             let arguments = Some(resolve_call_arguments(
                 args.as_deref(),
                 args_file.as_deref(),
+                io::stdin().is_terminal(),
             )?);
 
             match proxy_manager.try_call(&tool, arguments).await {
