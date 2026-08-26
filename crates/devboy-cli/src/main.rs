@@ -17,11 +17,11 @@ mod update_check;
 mod upgrade;
 
 use std::io::{self, IsTerminal};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use devboy_clickup::ClickUpClient;
 use devboy_confluence::{ConfluenceAuth, ConfluenceClient};
@@ -527,9 +527,13 @@ enum ProxyCommands {
     Call {
         /// Tool name (e.g., devboy-cloud__get_issues)
         tool: String,
-        /// JSON arguments (optional)
-        #[arg(default_value = "{}")]
-        args: String,
+        /// JSON arguments (optional, defaults to `{}`). Pass `-` to read stdin.
+        args: Option<String>,
+        /// Read JSON arguments from a file instead of the positional argument.
+        /// Use this for payloads above ~128 KiB: a positional argument travels
+        /// through argv, which the kernel caps per argument. Pass `-` for stdin.
+        #[arg(long, value_name = "PATH")]
+        args_file: Option<PathBuf>,
     },
 
     /// Inspect transparent-routing status: matched tools, overrides, schema issues
@@ -4010,6 +4014,118 @@ fn start_telemetry_pipeline(
 // Proxy Command
 // =============================================================================
 
+/// Resolves the JSON payload for `proxy call` from exactly one source.
+///
+/// A positional argument travels through argv, which the kernel caps at
+/// `MAX_ARG_STRLEN` (128 KiB per argument on Linux) — well below what upstream
+/// tools accept, so large payloads fail with `Argument list too long` before the
+/// process even starts. `--args-file` and stdin bypass argv entirely.
+///
+/// Supplying both sources is an error rather than a silent preference: guessing
+/// which one the caller meant is how a stale file gets published without anyone
+/// noticing.
+fn resolve_call_arguments(
+    args: Option<&str>,
+    args_file: Option<&Path>,
+) -> Result<serde_json::Value> {
+    let raw = match (args, args_file) {
+        (Some(_), Some(_)) => {
+            bail!("Pass JSON arguments either positionally or via --args-file, not both")
+        }
+        (_, Some(path)) if path == Path::new("-") => read_stdin_arguments()?,
+        (_, Some(path)) => std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read JSON arguments from {}", path.display()))?,
+        (Some("-"), None) => read_stdin_arguments()?,
+        (Some(inline), None) => inline.to_string(),
+        (None, None) => "{}".to_string(),
+    };
+
+    serde_json::from_str(&raw).context("Invalid JSON arguments")
+}
+
+fn read_stdin_arguments() -> Result<String> {
+    use std::io::Read;
+    let mut buf = String::new();
+    io::stdin()
+        .read_to_string(&mut buf)
+        .context("Failed to read JSON arguments from stdin")?;
+    Ok(buf)
+}
+
+#[cfg(test)]
+mod call_arguments_tests {
+    use super::resolve_call_arguments;
+    use std::io::Write;
+    use std::path::Path;
+
+    #[test]
+    fn no_source_defaults_to_empty_object() {
+        let v = resolve_call_arguments(None, None).expect("defaults");
+        assert_eq!(v, serde_json::json!({}));
+    }
+
+    #[test]
+    fn positional_argument_still_works() {
+        let v = resolve_call_arguments(Some(r#"{"key":"DEV-1"}"#), None).expect("inline");
+        assert_eq!(v["key"], "DEV-1");
+    }
+
+    #[test]
+    fn file_source_is_read() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("payload.json");
+        std::fs::write(&path, r#"{"key":"DEV-2"}"#).expect("write");
+        let v = resolve_call_arguments(None, Some(&path)).expect("file");
+        assert_eq!(v["key"], "DEV-2");
+    }
+
+    /// The reason this flag exists: argv caps a single argument at
+    /// MAX_ARG_STRLEN (128 KiB on Linux), while upstream tools accept megabytes.
+    /// A payload this size cannot reach the process positionally at all.
+    #[test]
+    fn file_source_carries_payload_larger_than_argv_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("big.json");
+        let blob = "x".repeat(300 * 1024);
+        let mut f = std::fs::File::create(&path).expect("create");
+        write!(f, "{}", serde_json::json!({ "content": blob })).expect("write");
+        drop(f);
+
+        assert!(std::fs::metadata(&path).expect("stat").len() > 128 * 1024);
+        let v = resolve_call_arguments(None, Some(&path)).expect("large file");
+        assert_eq!(v["content"].as_str().map(str::len), Some(300 * 1024));
+    }
+
+    #[test]
+    fn both_sources_is_an_error_not_a_silent_preference() {
+        let err = resolve_call_arguments(Some("{}"), Some(Path::new("payload.json")))
+            .expect_err("conflicting sources must fail");
+        assert!(
+            err.to_string().contains("not both"),
+            "unexpected message: {err}"
+        );
+    }
+
+    #[test]
+    fn invalid_json_is_an_error() {
+        let err = resolve_call_arguments(Some("{oops"), None).expect_err("invalid json");
+        assert!(
+            err.to_string().contains("Invalid JSON arguments"),
+            "unexpected message: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_file_names_the_path() {
+        let err = resolve_call_arguments(None, Some(Path::new("/nope/missing.json")))
+            .expect_err("missing file");
+        assert!(
+            err.to_string().contains("missing.json"),
+            "unexpected message: {err}"
+        );
+    }
+}
+
 async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
     // Handle Add and Remove commands first (they don't require existing config)
     match &command {
@@ -4089,14 +4205,15 @@ async fn handle_proxy_command(command: ProxyCommands) -> Result<()> {
                 }
             }
         }
-        ProxyCommands::Call { tool, args } => {
-            let arguments: Option<serde_json::Value> = match serde_json::from_str(&args) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    eprintln!("Invalid JSON arguments: {}", e);
-                    return Ok(());
-                }
-            };
+        ProxyCommands::Call {
+            tool,
+            args,
+            args_file,
+        } => {
+            let arguments = Some(resolve_call_arguments(
+                args.as_deref(),
+                args_file.as_deref(),
+            )?);
 
             match proxy_manager.try_call(&tool, arguments).await {
                 Some(result) => {
