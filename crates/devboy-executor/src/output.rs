@@ -2,8 +2,8 @@ use devboy_core::{
     Comment, CustomFieldDescriptor, Discussion, FileDiff, ForestModifyResult, Issue,
     IssueRelations, IssueStatus, JobLogOutput, KbPage, KbPageContent, KbSpace, MeetingNote,
     MeetingTranscript, MergeRequest, MessengerChat, MessengerMessage, Pagination, PipelineInfo,
-    ProjectVersion, SortInfo, Sprint, Structure, StructureForest, StructureValues, StructureView,
-    User,
+    ProjectVersion, RunPipelineJobResult, SortInfo, Sprint, Structure, StructureForest,
+    StructureValues, StructureView, User,
 };
 
 /// Metadata from provider result (pagination + sort info).
@@ -32,6 +32,8 @@ pub enum ToolOutput {
     Comments(Vec<Comment>, Option<ResultMeta>),
     /// CI/CD pipeline status with jobs
     Pipeline(Box<PipelineInfo>),
+    /// Manual CI/CD job successfully started.
+    PipelineJobRun(Box<RunPipelineJobResult>),
     JobLog(Box<JobLogOutput>),
     Statuses(Vec<IssueStatus>, Option<ResultMeta>),
     Users(Vec<User>, Option<ResultMeta>),
@@ -127,6 +129,7 @@ impl ToolOutput {
             Self::SingleMergeRequest(_)
             | Self::SingleIssue(_)
             | Self::Pipeline(_)
+            | Self::PipelineJobRun(_)
             | Self::JobLog(_)
             | Self::MeetingTranscript(_)
             | Self::KnowledgeBasePageSummary(_)
@@ -155,6 +158,7 @@ impl ToolOutput {
             Self::SingleIssue(_) => "issue",
             Self::Comments(..) => "comments",
             Self::Pipeline(_) => "pipeline",
+            Self::PipelineJobRun(_) => "pipeline_job_run",
             Self::JobLog(_) => "job_log",
             Self::Statuses(..) => "statuses",
             Self::Users(..) => "users",
@@ -328,6 +332,20 @@ mod tests {
             1
         );
         assert_eq!(
+            ToolOutput::PipelineJobRun(Box::new(devboy_core::RunPipelineJobResult {
+                pipeline_id: "1".into(),
+                job: devboy_core::PipelineJob {
+                    id: "2".into(),
+                    name: "deploy".into(),
+                    status: devboy_core::PipelineStatus::Pending,
+                    url: None,
+                    duration: None,
+                },
+            }))
+            .item_count(),
+            1
+        );
+        assert_eq!(
             ToolOutput::Statuses(
                 vec![IssueStatus {
                     id: "1".into(),
@@ -452,6 +470,20 @@ mod tests {
             }))
             .type_name(),
             "job_log"
+        );
+        assert_eq!(
+            ToolOutput::PipelineJobRun(Box::new(devboy_core::RunPipelineJobResult {
+                pipeline_id: "1".into(),
+                job: devboy_core::PipelineJob {
+                    id: "2".into(),
+                    name: "deploy".into(),
+                    status: devboy_core::PipelineStatus::Pending,
+                    url: None,
+                    duration: None,
+                },
+            }))
+            .type_name(),
+            "pipeline_job_run"
         );
         assert_eq!(ToolOutput::Statuses(vec![], None).type_name(), "statuses");
         assert_eq!(ToolOutput::Users(vec![], None).type_name(), "users");

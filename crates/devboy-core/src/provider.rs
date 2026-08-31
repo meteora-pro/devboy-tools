@@ -18,11 +18,11 @@ use crate::types::{
     KbPage, KbPageContent, KbSpace, ListCustomFieldsParams, ListPagesParams,
     ListProjectVersionsParams, MeetingFilter, MeetingNote, MeetingTranscript, MergeRequest,
     MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, PipelineInfo,
-    ProjectVersion, ProviderResult, Release, SaveStructureViewInput, SearchKbParams,
-    SearchMessagesParams, SendMessageParams, Sprint, SprintState, Structure, StructureForest,
-    StructureGenerator, StructureValues, StructureView, SyncStructureGeneratorInput,
-    UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams, UpdateStructureAutomationInput,
-    UpsertProjectVersionInput, User,
+    ProjectVersion, ProviderResult, Release, RunPipelineJobInput, RunPipelineJobResult,
+    SaveStructureViewInput, SearchKbParams, SearchMessagesParams, SendMessageParams, Sprint,
+    SprintState, Structure, StructureForest, StructureGenerator, StructureValues, StructureView,
+    SyncStructureGeneratorInput, UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams,
+    UpdateStructureAutomationInput, UpsertProjectVersionInput, User,
 };
 
 /// Provider for working with issues.
@@ -553,6 +553,14 @@ pub trait PipelineProvider: Send + Sync {
             operation: "get_job_logs".to_string(),
         })
     }
+
+    /// Start an existing manual job after verifying its pipeline and state.
+    async fn run_pipeline_job(&self, _input: RunPipelineJobInput) -> Result<RunPipelineJobResult> {
+        Err(Error::ProviderUnsupported {
+            provider: self.provider_name().to_string(),
+            operation: "run_pipeline_job".to_string(),
+        })
+    }
 }
 
 /// Combined provider trait for services that support issues, merge requests, and pipelines.
@@ -835,6 +843,16 @@ mod tests {
             )
             .await,
             "get_job_logs",
+        );
+        assert_unsupported(
+            p.run_pipeline_job(RunPipelineJobInput {
+                pipeline_id: "1".into(),
+                job_id: "2".into(),
+                variables: Default::default(),
+                job_inputs: Default::default(),
+            })
+            .await,
+            "run_pipeline_job",
         );
     }
 }

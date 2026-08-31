@@ -1179,6 +1179,7 @@ pub fn devboy_core::enricher::PropertySchema::array(items: devboy_core::enricher
 pub fn devboy_core::enricher::PropertySchema::boolean(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::integer(description: &str, min: core::option::Option<f64>, max: core::option::Option<f64>) -> Self
 pub fn devboy_core::enricher::PropertySchema::number(description: &str) -> Self
+pub fn devboy_core::enricher::PropertySchema::object(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::string(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::string_enum(values: &[&str], description: &str) -> Self
 impl core::clone::Clone for devboy_core::enricher::PropertySchema
@@ -1569,6 +1570,7 @@ pub trait devboy_core::provider::PipelineProvider: core::marker::Send + core::ma
 pub fn devboy_core::provider::PipelineProvider::get_job_logs<'life0, 'life1, 'async_trait>(&'life0 self, _job_id: &'life1 str, _options: devboy_core::types::JobLogOptions) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::JobLogOutput>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_core::provider::PipelineProvider::get_pipeline<'life0, 'async_trait>(&'life0 self, _input: devboy_core::types::GetPipelineInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::PipelineInfo>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::provider::PipelineProvider::provider_name(&self) -> &'static str
+pub fn devboy_core::provider::PipelineProvider::run_pipeline_job<'life0, 'async_trait>(&'life0 self, _input: devboy_core::types::RunPipelineJobInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::RunPipelineJobResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub trait devboy_core::provider::Provider: devboy_core::provider::IssueProvider + devboy_core::provider::MergeRequestProvider + devboy_core::provider::PipelineProvider
 pub fn devboy_core::provider::Provider::get_current_user<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::User>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub trait devboy_core::provider::UserProvider: core::marker::Send + core::marker::Sync
@@ -1910,6 +1912,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::JobLogMode
 pub enum devboy_core::types::PipelineStatus
 pub devboy_core::types::PipelineStatus::Canceled
 pub devboy_core::types::PipelineStatus::Failed
+pub devboy_core::types::PipelineStatus::Manual
 pub devboy_core::types::PipelineStatus::Pending
 pub devboy_core::types::PipelineStatus::Running
 pub devboy_core::types::PipelineStatus::Skipped
@@ -3232,6 +3235,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::PipelineStage
 pub struct devboy_core::types::PipelineSummary
 pub devboy_core::types::PipelineSummary::canceled: u32
 pub devboy_core::types::PipelineSummary::failed: u32
+pub devboy_core::types::PipelineSummary::manual: u32
 pub devboy_core::types::PipelineSummary::pending: u32
 pub devboy_core::types::PipelineSummary::running: u32
 pub devboy_core::types::PipelineSummary::skipped: u32
@@ -3359,6 +3363,40 @@ impl core::marker::Unpin for devboy_core::types::ReleaseAsset
 impl core::marker::UnsafeUnpin for devboy_core::types::ReleaseAsset
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::ReleaseAsset
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::ReleaseAsset
+pub struct devboy_core::types::RunPipelineJobInput
+pub devboy_core::types::RunPipelineJobInput::job_id: alloc::string::String
+pub devboy_core::types::RunPipelineJobInput::job_inputs: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub devboy_core::types::RunPipelineJobInput::pipeline_id: alloc::string::String
+pub devboy_core::types::RunPipelineJobInput::variables: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+impl core::clone::Clone for devboy_core::types::RunPipelineJobInput
+pub fn devboy_core::types::RunPipelineJobInput::clone(&self) -> devboy_core::types::RunPipelineJobInput
+impl core::fmt::Debug for devboy_core::types::RunPipelineJobInput
+pub fn devboy_core::types::RunPipelineJobInput::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::types::RunPipelineJobInput
+impl core::marker::Send for devboy_core::types::RunPipelineJobInput
+impl core::marker::Sync for devboy_core::types::RunPipelineJobInput
+impl core::marker::Unpin for devboy_core::types::RunPipelineJobInput
+impl core::marker::UnsafeUnpin for devboy_core::types::RunPipelineJobInput
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::RunPipelineJobInput
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::RunPipelineJobInput
+pub struct devboy_core::types::RunPipelineJobResult
+pub devboy_core::types::RunPipelineJobResult::job: devboy_core::types::PipelineJob
+pub devboy_core::types::RunPipelineJobResult::pipeline_id: alloc::string::String
+impl core::clone::Clone for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::clone(&self) -> devboy_core::types::RunPipelineJobResult
+impl core::fmt::Debug for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::types::RunPipelineJobResult
+impl core::marker::Send for devboy_core::types::RunPipelineJobResult
+impl core::marker::Sync for devboy_core::types::RunPipelineJobResult
+impl core::marker::Unpin for devboy_core::types::RunPipelineJobResult
+impl core::marker::UnsafeUnpin for devboy_core::types::RunPipelineJobResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::RunPipelineJobResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::RunPipelineJobResult
 pub struct devboy_core::types::SaveStructureViewInput
 pub devboy_core::types::SaveStructureViewInput::columns: core::option::Option<alloc::vec::Vec<devboy_core::types::StructureViewColumn>>
 pub devboy_core::types::SaveStructureViewInput::filter: core::option::Option<alloc::string::String>
@@ -4148,6 +4186,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::liveness::LivenessSta
 pub enum devboy_core::PipelineStatus
 pub devboy_core::PipelineStatus::Canceled
 pub devboy_core::PipelineStatus::Failed
+pub devboy_core::PipelineStatus::Manual
 pub devboy_core::PipelineStatus::Pending
 pub devboy_core::PipelineStatus::Running
 pub devboy_core::PipelineStatus::Skipped
@@ -6120,6 +6159,7 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::PipelineStage
 pub struct devboy_core::PipelineSummary
 pub devboy_core::PipelineSummary::canceled: u32
 pub devboy_core::PipelineSummary::failed: u32
+pub devboy_core::PipelineSummary::manual: u32
 pub devboy_core::PipelineSummary::pending: u32
 pub devboy_core::PipelineSummary::running: u32
 pub devboy_core::PipelineSummary::skipped: u32
@@ -6191,6 +6231,7 @@ pub fn devboy_core::enricher::PropertySchema::array(items: devboy_core::enricher
 pub fn devboy_core::enricher::PropertySchema::boolean(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::integer(description: &str, min: core::option::Option<f64>, max: core::option::Option<f64>) -> Self
 pub fn devboy_core::enricher::PropertySchema::number(description: &str) -> Self
+pub fn devboy_core::enricher::PropertySchema::object(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::string(description: &str) -> Self
 pub fn devboy_core::enricher::PropertySchema::string_enum(values: &[&str], description: &str) -> Self
 impl core::clone::Clone for devboy_core::enricher::PropertySchema
@@ -6479,6 +6520,40 @@ impl core::marker::Unpin for devboy_core::config::RemoteConfigSettings
 impl core::marker::UnsafeUnpin for devboy_core::config::RemoteConfigSettings
 impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::config::RemoteConfigSettings
 impl core::panic::unwind_safe::UnwindSafe for devboy_core::config::RemoteConfigSettings
+pub struct devboy_core::RunPipelineJobInput
+pub devboy_core::RunPipelineJobInput::job_id: alloc::string::String
+pub devboy_core::RunPipelineJobInput::job_inputs: alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>
+pub devboy_core::RunPipelineJobInput::pipeline_id: alloc::string::String
+pub devboy_core::RunPipelineJobInput::variables: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
+impl core::clone::Clone for devboy_core::types::RunPipelineJobInput
+pub fn devboy_core::types::RunPipelineJobInput::clone(&self) -> devboy_core::types::RunPipelineJobInput
+impl core::fmt::Debug for devboy_core::types::RunPipelineJobInput
+pub fn devboy_core::types::RunPipelineJobInput::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_core::types::RunPipelineJobInput
+impl core::marker::Send for devboy_core::types::RunPipelineJobInput
+impl core::marker::Sync for devboy_core::types::RunPipelineJobInput
+impl core::marker::Unpin for devboy_core::types::RunPipelineJobInput
+impl core::marker::UnsafeUnpin for devboy_core::types::RunPipelineJobInput
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::RunPipelineJobInput
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::RunPipelineJobInput
+pub struct devboy_core::RunPipelineJobResult
+pub devboy_core::RunPipelineJobResult::job: devboy_core::types::PipelineJob
+pub devboy_core::RunPipelineJobResult::pipeline_id: alloc::string::String
+impl core::clone::Clone for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::clone(&self) -> devboy_core::types::RunPipelineJobResult
+impl core::fmt::Debug for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_core::types::RunPipelineJobResult
+pub fn devboy_core::types::RunPipelineJobResult::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_core::types::RunPipelineJobResult
+impl core::marker::Send for devboy_core::types::RunPipelineJobResult
+impl core::marker::Sync for devboy_core::types::RunPipelineJobResult
+impl core::marker::Unpin for devboy_core::types::RunPipelineJobResult
+impl core::marker::UnsafeUnpin for devboy_core::types::RunPipelineJobResult
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_core::types::RunPipelineJobResult
+impl core::panic::unwind_safe::UnwindSafe for devboy_core::types::RunPipelineJobResult
 pub struct devboy_core::SaveStructureViewInput
 pub devboy_core::SaveStructureViewInput::columns: core::option::Option<alloc::vec::Vec<devboy_core::types::StructureViewColumn>>
 pub devboy_core::SaveStructureViewInput::filter: core::option::Option<alloc::string::String>
@@ -7261,6 +7336,7 @@ pub trait devboy_core::PipelineProvider: core::marker::Send + core::marker::Sync
 pub fn devboy_core::PipelineProvider::get_job_logs<'life0, 'life1, 'async_trait>(&'life0 self, _job_id: &'life1 str, _options: devboy_core::types::JobLogOptions) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::JobLogOutput>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait, 'life1: 'async_trait
 pub fn devboy_core::PipelineProvider::get_pipeline<'life0, 'async_trait>(&'life0 self, _input: devboy_core::types::GetPipelineInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::PipelineInfo>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub fn devboy_core::PipelineProvider::provider_name(&self) -> &'static str
+pub fn devboy_core::PipelineProvider::run_pipeline_job<'life0, 'async_trait>(&'life0 self, _input: devboy_core::types::RunPipelineJobInput) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::RunPipelineJobResult>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub trait devboy_core::Provider: devboy_core::provider::IssueProvider + devboy_core::provider::MergeRequestProvider + devboy_core::provider::PipelineProvider
 pub fn devboy_core::Provider::get_current_user<'life0, 'async_trait>(&'life0 self) -> core::pin::Pin<alloc::boxed::Box<(dyn core::future::future::Future<Output = devboy_core::error::Result<devboy_core::types::User>> + core::marker::Send + 'async_trait)>> where Self: 'async_trait, 'life0: 'async_trait
 pub trait devboy_core::ToolEnricher: core::marker::Send + core::marker::Sync
