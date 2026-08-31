@@ -309,6 +309,9 @@ pub fn format_output(
             provider_sort,
         )),
         ToolOutput::Pipeline(info) => Ok(text_result(format_pipeline(&info), None, None)),
+        ToolOutput::PipelineJobRun(result) => {
+            Ok(text_result(format_run_pipeline_job(&result), None, None))
+        }
         ToolOutput::JobLog(log) => Ok(text_result(format_job_log(&log), None, None)),
         ToolOutput::Statuses(statuses, _) => Ok(text_result(
             format_statuses(&statuses),
@@ -996,6 +999,7 @@ fn format_pipeline(info: &devboy_core::PipelineInfo) -> String {
         devboy_core::PipelineStatus::Failed => "❌",
         devboy_core::PipelineStatus::Running => "🔄",
         devboy_core::PipelineStatus::Pending => "⏳",
+        devboy_core::PipelineStatus::Manual => "⏯️",
         devboy_core::PipelineStatus::Canceled => "🚫",
         _ => "❓",
     };
@@ -1025,8 +1029,8 @@ fn format_pipeline(info: &devboy_core::PipelineInfo) -> String {
     // Summary
     let s = &info.summary;
     output.push_str(&format!(
-        "\n\n**Summary:** {} total | ✅ {} | ❌ {} | 🔄 {} | ⏳ {} | 🚫 {} | ⏭️ {}",
-        s.total, s.success, s.failed, s.running, s.pending, s.canceled, s.skipped
+        "\n\n**Summary:** {} total | ✅ {} | ❌ {} | 🔄 {} | ⏳ {} | ⏯️ {} | 🚫 {} | ⏭️ {}",
+        s.total, s.success, s.failed, s.running, s.pending, s.manual, s.canceled, s.skipped
     ));
 
     // Stages/jobs
@@ -1038,10 +1042,18 @@ fn format_pipeline(info: &devboy_core::PipelineInfo) -> String {
                 devboy_core::PipelineStatus::Failed => "❌",
                 devboy_core::PipelineStatus::Running => "🔄",
                 devboy_core::PipelineStatus::Pending => "⏳",
+                devboy_core::PipelineStatus::Manual => "⏯️",
                 _ => "❓",
             };
             let dur = job.duration.map(|d| format!(" ({d}s)")).unwrap_or_default();
-            output.push_str(&format!("\n{} **{}**{}", job_icon, job.name, dur));
+            output.push_str(&format!(
+                "\n{} **{}**{} — {} · job `{}`",
+                job_icon,
+                job.name,
+                dur,
+                job.status.as_str(),
+                job.id
+            ));
             if let Some(url) = &job.url {
                 output.push_str(&format!(" — [logs]({url})"));
             }
@@ -1059,6 +1071,21 @@ fn format_pipeline(info: &devboy_core::PipelineInfo) -> String {
         }
     }
 
+    output
+}
+
+/// Format the result of starting a manual pipeline job as markdown.
+fn format_run_pipeline_job(result: &devboy_core::RunPipelineJobResult) -> String {
+    let mut output = format!(
+        "▶️ Started **{}** — {}\n\n**Pipeline:** `{}`\n**Job:** `{}`",
+        result.job.name,
+        result.job.status.as_str(),
+        result.pipeline_id,
+        result.job.id
+    );
+    if let Some(url) = &result.job.url {
+        output.push_str(&format!("\n**URL:** {url}"));
+    }
     output
 }
 
@@ -1435,7 +1462,61 @@ mod tests {
         assert!(result.contains("main"));
         assert!(result.contains("120s"));
         assert!(result.contains("compile"));
+        assert!(result.contains("job `1`"));
         assert!(result.contains("error: test failed"));
+    }
+
+    #[test]
+    fn test_format_run_pipeline_job() {
+        let output = ToolOutput::PipelineJobRun(Box::new(devboy_core::RunPipelineJobResult {
+            pipeline_id: "501".into(),
+            job: devboy_core::PipelineJob {
+                id: "701".into(),
+                name: "deploy_test".into(),
+                status: devboy_core::PipelineStatus::Pending,
+                url: Some("https://gitlab.example/jobs/701".into()),
+                duration: None,
+            },
+        }));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("Started **deploy_test**"));
+        assert!(result.contains("pending"));
+        assert!(result.contains("Pipeline:** `501`"));
+        assert!(result.contains("Job:** `701`"));
+        assert!(result.contains("https://gitlab.example/jobs/701"));
+    }
+
+    #[test]
+    fn test_format_pipeline_manual_job_and_summary() {
+        let output = ToolOutput::Pipeline(Box::new(devboy_core::PipelineInfo {
+            id: "500".into(),
+            status: devboy_core::PipelineStatus::Running,
+            reference: "main".into(),
+            sha: "abcdef1234567".into(),
+            url: None,
+            duration: None,
+            coverage: None,
+            summary: devboy_core::PipelineSummary {
+                total: 1,
+                manual: 1,
+                ..Default::default()
+            },
+            stages: vec![devboy_core::PipelineStage {
+                name: "deploy".into(),
+                jobs: vec![devboy_core::PipelineJob {
+                    id: "701".into(),
+                    name: "deploy_test".into(),
+                    status: devboy_core::PipelineStatus::Manual,
+                    url: None,
+                    duration: None,
+                }],
+            }],
+            failed_jobs: vec![],
+        }));
+        let result = format_output(output, None, None, None).unwrap().content;
+        assert!(result.contains("⏯️ 1"));
+        assert!(result.contains("deploy_test"));
+        assert!(result.contains("manual · job `701`"));
     }
 
     #[test]

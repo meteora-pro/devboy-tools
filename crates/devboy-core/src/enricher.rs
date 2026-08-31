@@ -181,6 +181,15 @@ impl PropertySchema {
         }
     }
 
+    /// Create an object property.
+    pub fn object(description: &str) -> Self {
+        Self {
+            schema_type: "object".into(),
+            description: Some(description.into()),
+            ..Default::default()
+        }
+    }
+
     /// Create an array property with items schema.
     pub fn array(items: PropertySchema, description: &str) -> Self {
         Self {
@@ -413,6 +422,9 @@ mod tests {
 
         let b = PropertySchema::boolean("Flag");
         assert_eq!(b.schema_type, "boolean");
+
+        let o = PropertySchema::object("Values by key");
+        assert_eq!(o.schema_type, "object");
 
         let a = PropertySchema::array(PropertySchema::string("item"), "List");
         assert_eq!(a.schema_type, "array");

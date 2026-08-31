@@ -248,6 +248,9 @@ const MR_TOOLS: &[&str] = &[
     "get_merge_request_discussions",
     "get_merge_request_diffs",
     "create_merge_request_comment",
+    "get_pipeline",
+    "get_job_logs",
+    "run_pipeline_job",
 ];
 
 /// Helper to get tool names from server.
