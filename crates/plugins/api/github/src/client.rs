@@ -1297,6 +1297,7 @@ impl PipelineProvider for GitHubClient {
                 }
                 PipelineStatus::Running => summary.running += 1,
                 PipelineStatus::Pending => summary.pending += 1,
+                PipelineStatus::Manual => summary.manual += 1,
                 PipelineStatus::Canceled => summary.canceled += 1,
                 PipelineStatus::Skipped => summary.skipped += 1,
                 PipelineStatus::Unknown => {}
@@ -2106,6 +2107,28 @@ mod tests {
         let client = GitHubClient::new("owner", "repo", token("token"));
         assert_eq!(IssueProvider::provider_name(&client), "github");
         assert_eq!(MergeRequestProvider::provider_name(&client), "github");
+    }
+
+    #[tokio::test]
+    async fn test_run_pipeline_job_is_explicitly_unsupported() {
+        let client = GitHubClient::new("owner", "repo", token("token"));
+        let error = client
+            .run_pipeline_job(devboy_core::RunPipelineJobInput {
+                pipeline_id: "1".into(),
+                job_id: "2".into(),
+                variables: Default::default(),
+                job_inputs: Default::default(),
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Error::ProviderUnsupported {
+                ref provider,
+                ref operation
+            } if provider == "github" && operation == "run_pipeline_job"
+        ));
     }
 
     // =========================================================================
