@@ -3,7 +3,7 @@
 Authoritative checklist for cutting a `devboy-tools` release. Reflects [ADR-022](https://github.com/meteora-pro/devboy-tools/blob/main/docs/architecture/adr/ADR-022-crates-io-publishing.md) — the workspace ships through **two** channels:
 
 - **npm** — `@devboy-tools/cli` and per-platform binary subpackages. Primary user-facing channel; this is what `devboy onboard` and the agent plugins assume.
-- **crates.io** — every workspace library + the `devboy-cli` binary (`cargo install devboy-cli`). Secondary channel for downstream Rust projects that want to embed devboy components without vendoring source.
+- **crates.io** — reusable workspace libraries with `publish != false`. Application binaries (`devboy-cli`, `devboy-mcp`, `devboy-secrets-ui-bin`) and internal secret-source plugins are intentionally excluded; the CLI ships through npm and GitHub Release binaries.
 
 Both channels publish from the **same `v*` git tag**, in parallel: pushing the tag fans out to two GitHub Actions workflows (`.github/workflows/release.yml` for npm, `.github/workflows/release-crates-io.yml` for crates.io).
 
@@ -13,7 +13,7 @@ Two repo secrets drive the two channels. Set both at https://github.com/meteora-
 
 | Secret | Channel | What it is | Scopes |
 |---|---|---|---|
-| `NPM_TOKEN` | npm | npm automation token | `automation` |
+| `DEVBOY_TOOLS_NPM_TOKEN` | npm | npm automation token | `automation` |
 | `CARGO_REGISTRY_TOKEN` | crates.io | crates.io API token | `publish-update` (every release after first); add `publish-new` until each crate has had its first publish |
 
 The `CARGO_REGISTRY_TOKEN` env var is read by `cargo publish` natively — no `cargo login` step is needed in CI. Generate the token at https://crates.io/settings/tokens, scope it to "All crates" (or an explicit `devboy-*` allowlist), pick an expiry you're willing to rotate, and paste it into the repo secret.
@@ -24,15 +24,25 @@ The `CARGO_REGISTRY_TOKEN` env var is read by `cargo publish` natively — no `c
 - Confirm `main` is green: CI, tests, plugin manifest drift check, and `cargo publish --dry-run -p devboy-core` all passed on the merge commit.
 - Confirm you have:
   - Push access to the `meteora-pro/devboy-tools` git remote (both release pipelines trigger from `v*` tags).
-  - Both `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` set as repo secrets (see the table at the top of this doc).
+  - Both `DEVBOY_TOOLS_NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` set as repo secrets (see the table at the top of this doc).
 
 ## Step 1 — Bump the version
 
 1. Update `[workspace.package].version` in the root `Cargo.toml`. Every member crate inherits it.
 2. Update every `[workspace.dependencies] devboy-* = { version = "X.Y.Z", path = "..." }` to the new version. Local builds keep resolving via `path`; published consumers resolve via `version`.
-3. Run `cargo check --workspace --all-targets` and `cargo test --workspace` locally.
-4. Commit: `chore(release): bump workspace to X.Y.Z`.
-5. Open a PR. Wait for CI. Merge.
+3. Run `scripts/release/sync-plugin-version.sh` so the Claude/Codex plugin manifests match the workspace version.
+4. Regenerate the committed references:
+
+   ```bash
+   cargo run -p devboy-cli --quiet -- tools docs \
+     --output docs/guide/reference/tools.md
+   cargo run -p devboy-cli --quiet -- docs cli \
+     --output docs/guide/reference/cli.md
+   ```
+
+5. Run `cargo check --workspace --all-targets`, `cargo test --workspace`, and `scripts/release/sync-plugin-version.sh --check` locally.
+6. Commit: `chore(release): bump workspace to X.Y.Z`.
+7. Open a PR. Wait for CI. Merge.
 
 ## Step 2 — Tag
 
@@ -56,7 +66,7 @@ Once both workflows are green:
 
 - [npm page](https://www.npmjs.com/package/@devboy-tools/cli) — new version visible
 - GitHub Releases — tag with platform binaries attached
-- `https://crates.io/crates/<name>` — every devboy-* crate at the new version
+- `https://crates.io/crates/<name>` — every crate printed by `python3 scripts/release/crates-publish-order.py` is at the new version
 - `https://docs.rs/<name>` — docs build green (5–10 min)
 
 If a docs.rs build is red, ship a patch version with the doc fix (you can't re-upload the same version).
@@ -68,32 +78,13 @@ The first ever crates.io release (0.27.0) was run by hand because each crate had
 ```bash
 git checkout vX.Y.Z
 
-# Layer 1 — leaf
-cargo publish -p devboy-core
-
-# Layer 2 — depend only on devboy-core (publish in any order)
-cargo publish -p devboy-storage
-cargo publish -p devboy-assets
-cargo publish -p devboy-format-pipeline
-cargo publish -p devboy-gitlab
-cargo publish -p devboy-github
-cargo publish -p devboy-jira
-cargo publish -p devboy-clickup
-cargo publish -p devboy-confluence
-cargo publish -p devboy-fireflies
-cargo publish -p devboy-slack
-
-# Layer 3 — depends on layer 1 + 2
-cargo publish -p devboy-executor
-
-# Layer 4 — depends on layer 3
-cargo publish -p devboy-mcp
-
-# Layer 5 — depends on devboy-core (independent of the executor/mcp chain)
-cargo publish -p devboy-skills
-
-# Layer 6 — binary, depends on everything above
-cargo publish -p devboy-cli
+# The script derives a topological order from cargo metadata and excludes every
+# package with `publish = false`, matching the release workflow.
+while read -r crate; do
+  [ -z "$crate" ] && continue
+  cargo publish -p "$crate"
+  sleep 15
+done < <(python3 scripts/release/crates-publish-order.py)
 ```
 
 `cargo login` once with a token that has `publish-new` + `publish-update` (or just rely on `CARGO_REGISTRY_TOKEN` env var if you'd rather not persist the token).
