@@ -131,9 +131,13 @@ impl DiagnosticCheck for LegacyKeysCheck {
             (
                 CheckStatus::Warning,
                 format!(
-                    "{} legacy keychain entr{} need to migrate to the ADR-020 path convention",
-                    findings.len(),
-                    if findings.len() == 1 { "y" } else { "ies" }
+                    "{n} secret{s} resolve only through the read-only legacy keychain fallback, \
+                     which is removed in {removed} — migrate {them} to the ADR-020 path \
+                     convention",
+                    n = findings.len(),
+                    s = if findings.len() == 1 { "" } else { "s" },
+                    them = if findings.len() == 1 { "it" } else { "them" },
+                    removed = devboy_storage::legacy_keychain::FALLBACK_REMOVED_IN,
                 ),
             )
         };
@@ -272,6 +276,7 @@ mod tests {
         Config {
             secrets: Some(SecretsConfig {
                 migration_complete: complete,
+                ..SecretsConfig::default()
             }),
             ..Config::default()
         }
@@ -352,7 +357,21 @@ mod tests {
         let ctx = ctx_with_store(Arc::new(store));
         let r = LegacyKeysCheck.run(&ctx).await;
         assert_eq!(r.status, CheckStatus::Warning);
-        assert!(r.message.contains("2 legacy keychain"));
+        assert!(r.message.contains("2 secrets"), "{}", r.message);
+        // The warning has to say what the user is standing on and
+        // when it goes away. Without the version this reads as a
+        // tidiness nag and gets deferred indefinitely.
+        assert!(
+            r.message.contains("legacy keychain fallback"),
+            "{}",
+            r.message
+        );
+        assert!(
+            r.message
+                .contains(devboy_storage::legacy_keychain::FALLBACK_REMOVED_IN),
+            "{}",
+            r.message
+        );
         let details = r.details.unwrap();
         let entries = details["findings"].as_array().unwrap();
         assert_eq!(entries.len(), 2);

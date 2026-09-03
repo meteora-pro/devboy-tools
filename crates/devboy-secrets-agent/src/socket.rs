@@ -111,6 +111,22 @@ pub enum AgentError {
         peer: u32,
     },
 
+    /// ADR-024 §7 check A: the connecting client is an ancestor of
+    /// this daemon and can therefore `ptrace` it.
+    ///
+    /// The stream is carried out of the accept path **still open**
+    /// so the caller can send a `DaemonUntrusted` reply with its
+    /// remediation before closing. Handing a client a dropped
+    /// socket teaches it only that something broke; telling it why
+    /// lets it stop and relay a specific command to the user.
+    #[error("caller (pid {peer_pid}) is an ancestor of this daemon and could ptrace it")]
+    CallerIsAncestor {
+        /// The connecting client's PID.
+        peer_pid: u32,
+        /// The still-open stream, for sending the refusal.
+        stream: UnixStream,
+    },
+
     /// Non-Unix targets (currently Windows). The v1 daemon only
     /// supports Unix per ADR-023 §3.3; a future named-pipe transport
     /// will surface through a different module.
@@ -227,6 +243,39 @@ impl AgentListener {
                 peer: peer_uid,
             });
         }
+
+        // ADR-024 §7 check A: a caller that is an ancestor of this
+        // daemon can `ptrace` it, so every guarantee resting on
+        // daemon memory being private is void for that caller.
+        //
+        // The caller is NOT dropped here. It gets a
+        // `DaemonUntrusted` reply with its remediation first — a
+        // client handed a dropped socket learns only that
+        // something broke and will retry or improvise, whereas one
+        // told why can stop and relay a specific command to the
+        // user.
+        if let Some(client_pid) = cred.pid() {
+            let verdict = crate::provenance::check_connection(client_pid as u32);
+            if verdict == crate::provenance::ConnectionVerdict::Undetermined {
+                // Allowed through — see `should_refuse` for why the
+                // platforms that land here are the ones where
+                // ancestry grants nothing. Logged because a check
+                // that silently does not run is worse than one that
+                // is honestly absent.
+                tracing::warn!(
+                    peer_pid = client_pid,
+                    "could not read this daemon's parent chain far enough to tell whether the \
+                     caller is an ancestor; check A did not run for this connection"
+                );
+            }
+            if verdict.should_refuse(crate::provenance::insecure_override_active()) {
+                return Err(AgentError::CallerIsAncestor {
+                    peer_pid: client_pid as u32,
+                    stream,
+                });
+            }
+        }
+
         Ok(stream)
     }
 

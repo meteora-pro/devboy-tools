@@ -54,6 +54,61 @@ pub const BAD_UNLOCK: i32 = -32002;
 pub const NO_MATCHING_ENVELOPE: i32 = -32003;
 /// Underlying I/O error talking to the vault file.
 pub const IO_ERROR: i32 = -32004;
+/// ADR-024 §7 check A: the caller is an ancestor of this daemon
+/// and could `ptrace` it, so the connection is refused.
+///
+/// Sent *before* the socket closes so the caller receives an
+/// instruction rather than a dropped connection.
+pub const DAEMON_UNTRUSTED: i32 = -32005;
+
+/// ADR-024 §7: the daemon was asked to collect a passphrase itself
+/// but has nowhere to ask.
+///
+/// Distinct from a failed unlock because the fix is completely
+/// different — nothing about the passphrase is wrong, the daemon
+/// simply has no channel to the human.
+///
+/// A properly daemonised process has no controlling terminal by
+/// construction, so this used to be the *expected* answer. Since Ф14
+/// a caller can lend one, and this code now means both channels were
+/// unavailable: the daemon has no terminal and the caller offered
+/// none, or offered something that is not a terminal. The message
+/// says which.
+pub const NO_PROMPT_SURFACE: i32 = -32006;
+
+/// What to say when neither the daemon nor the caller has a terminal.
+///
+/// A constant rather than an inline string because it is asserted on
+/// from both the daemon's tests and the CLI's, and a message that
+/// drifts between the two is a message nobody trusts.
+pub const NO_TERMINAL_AT_ALL: &str = "this daemon has no terminal to ask on, and the caller offered none. Run `devboy secrets \
+     agent unlock` from a terminal, or export DEVBOY_VAULT_PASSPHRASE for an unattended start.";
+
+/// ADR-024 §1: no TOTP secret is resident, so a code cannot be
+/// checked at all.
+///
+/// The daemon has not been unlocked with a passphrase this boot, or
+/// none is enrolled. Distinct from a wrong code because retrying
+/// cannot help — the caller needs a passphrase unlock first.
+pub const TOTP_UNAVAILABLE: i32 = -32007;
+
+/// The code did not verify.
+pub const BAD_TOTP: i32 = -32008;
+
+/// The code verified but its time step was already used
+/// (RFC 6238 §5.2).
+///
+/// Separate from [`BAD_TOTP`] because the caller's situation is
+/// different: the code was real, and waiting for the next step will
+/// work. A shared "bad code" would have an agent retrying the same
+/// value.
+pub const REPLAYED_TOTP: i32 = -32009;
+
+/// Too many attempts; the TOTP path is shut for a cooldown.
+///
+/// Carries `retry_after_seconds` in the error data so a caller can
+/// wait the right amount rather than guessing.
+pub const TOTP_RATE_LIMITED: i32 = -32010;
 
 // =============================================================================
 // Wire types

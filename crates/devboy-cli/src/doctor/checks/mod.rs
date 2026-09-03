@@ -1,3 +1,4 @@
+pub mod approve_on_use;
 pub mod config;
 pub mod context_secrets;
 pub mod credentials;
@@ -7,6 +8,7 @@ pub mod mcp;
 pub mod providers;
 pub mod proxy;
 pub mod rotation;
+pub mod secrets_mode;
 pub mod sources;
 
 use crate::doctor::DiagnosticContext;

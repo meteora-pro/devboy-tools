@@ -15,6 +15,41 @@ First-run setup of the secret framework on a new machine or in a new repository.
 
 ---
 
+## For operators: short-lived setup commands
+
+*Skip this section unless you run a config server that hands people a `devboy init` command to paste.*
+
+A setup command carries a token, and every copy of it — shell history, chat, a screen share, a support ticket — is a live credential for as long as that token is valid. Devboy can trade the pasted token for a durable one at install time, so what got copied is worthless within minutes.
+
+Opt in by adding one field to the TOML your config endpoint already serves:
+
+```toml
+[remote_config]
+token_exchange_url = "https://config.example.com/api/config/exchange"
+```
+
+`devboy init` then makes one request:
+
+```text
+POST <token_exchange_url>
+Authorization: Bearer <the pasted token>
+Accept: application/json
+
+→ 200 {"token": "<durable token>", "expires_at": "2027-01-01T00:00:00Z"}
+```
+
+`expires_at` is optional and advisory — it is shown to the user, not enforced.
+
+Three rules the client applies, so you can design the server around them:
+
+- **The exchange URL must share an origin with the config URL.** Acting on a URL that arrived in a response means posting a live credential to wherever it points; devboy will only do that against the host the user already chose to trust. Host your exchange endpoint on the same origin, or do not declare one.
+- **The client exchanges once and does not retry.** A bootstrap token is expected to be consumed by the first successful exchange. Whether it is truly single-use, and what a replay is recorded as, is yours to decide — the client will not paper over a failure by trying again.
+- **A failed exchange fails `init`.** Storing a token that dies in minutes would produce an install that looks finished and stops working. The user is told to ask for a fresh setup command while the old one is still on screen.
+
+Declaring nothing keeps the old behaviour exactly: the token supplied on the command line is stored as-is. Nothing here is required to use devboy.
+
+---
+
 ## Step 1. Install and verify the CLI
 
 If `devboy` is already on `PATH`, skip this step.
@@ -262,6 +297,48 @@ A green run means:
 - Daemon is running (only if you actually use `secrets ui` or the MCP tools).
 
 If anything is red, `doctor` prints the exact code and suggests a fix command. Next stops: the `repair` skill or the [Doctor](../configuration/doctor.md) section.
+
+## Optional. Teach it your own secret shapes
+
+The built-in catalogue knows the public formats — `ghp_…`, `glpat-…`,
+`sk-…`, PEM blocks. It does not know your company's internal token,
+which is exactly the credential most likely to end up in a log nobody
+audits.
+
+Drop a TOML file into `<config>/secrets/patterns.d/` (that is
+`~/.config/devboy/secrets/patterns.d/` by default, and honours
+`DEVBOY_CONFIG_DIR`):
+
+```toml
+# ~/.config/devboy/secrets/patterns.d/acme.toml
+[[pattern]]
+id = "acme-deploy-key"
+display_name = "ACME deploy key"
+format_regex = "^acme_deploy_[A-Za-z0-9]{20}$"
+severity = "high"
+
+# Optional, and worth filling in — these drive rotation:
+provider_id = "acme"
+retrieval_url_template = "https://acme.example/settings/tokens"
+default_expiry_days = 90
+```
+
+Every `.toml` file in that directory is read, in filename order. A
+pattern with the same `id` as a built-in replaces it, and you are told
+so at startup.
+
+Once loaded, the pattern is used everywhere shapes matter: format
+validation in `devboy secrets validate`, the rotation flow, redaction
+in the audit log, and redaction of proxied tool results before they
+reach the agent.
+
+Two things worth knowing:
+
+- The files are read **once, at process start**. Edit one and restart
+  whatever is running — the daemon, the MCP server, your shell.
+- A malformed file is never fatal. Devboy warns, names the file and
+  the reason, and continues with the built-ins alone. Read the warning:
+  it means the pattern you wrote is *not* in force.
 
 ## What's next
 

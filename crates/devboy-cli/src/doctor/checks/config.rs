@@ -444,6 +444,7 @@ mod tests {
             remote_config: Some(RemoteConfigSettings {
                 url: Some("https://example.com/api/config/mcp".to_string()),
                 token_key: Some("remote_config.token".to_string()),
+                token_exchange_url: None,
             }),
             ..Default::default()
         };

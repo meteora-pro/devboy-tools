@@ -203,15 +203,68 @@ fn test_chain_store_delete_from_memory() {
 }
 
 #[test]
-fn test_chain_store_ci_mode_no_keychain() {
+fn test_chain_store_ci_mode_reads_from_env() {
     temp_env::with_var("DEVBOY_CI_MODE_TOKEN", Some("ci_value"), || {
         let chain = ChainStore::ci_chain();
         let result = chain.get("ci.mode.token").unwrap();
         assert_secret_eq(result, Some("ci_value"));
-
-        chain.store("ci.write.key", &secret("written")).unwrap();
-        assert_secret_eq(chain.get("ci.write.key").unwrap(), Some("written"));
     });
+}
+
+/// ADR-024 §6: a write in CI must fail loudly.
+///
+/// The CI chain used to pair the env store with `MemoryStore`, so
+/// a write appeared to succeed and then vanished at process exit
+/// — silent data loss, fine as a test shim and wrong as CI
+/// behaviour. It now has no writable member at all.
+#[test]
+fn test_chain_store_ci_mode_refuses_writes() {
+    let chain = ChainStore::ci_chain();
+
+    let err = chain
+        .store("ci.write.key", &secret("written"))
+        .expect_err("writing in CI mode must fail rather than silently vanish");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("ci.write.key"),
+        "error should name the key that could not be stored, got: {message}"
+    );
+    assert!(
+        message.contains("environment variable"),
+        "error should point at the one thing that does work in CI, got: {message}"
+    );
+
+    // And the value really is not readable afterwards.
+    assert_secret_eq(chain.get("ci.write.key").unwrap(), None);
+}
+
+/// ADR-024 §6: the OS keychain is no longer part of the default
+/// chain, and the local vault took its place. If this ever flips
+/// back, the default posture changed.
+///
+/// Asserted through writability rather than a member count: the
+/// vault store is skipped on a machine with no derivable config
+/// directory, so the count is legitimately 1 or 2, while the
+/// posture — nothing in the default chain accepts a write, and
+/// enabling the keychain restores one — holds on every machine.
+#[test]
+fn test_default_chain_excludes_keychain() {
+    let default_chain = ChainStore::default_chain();
+    assert!(
+        !default_chain.is_writable(),
+        "the default chain must have no writable member after ADR-024 §6"
+    );
+
+    let with_keychain = ChainStore::with_keychain();
+    assert!(
+        with_keychain.is_writable(),
+        "opting the keychain in must restore a write target"
+    );
+    assert!(
+        with_keychain.len() > default_chain.len(),
+        "opting in should add the keychain to the chain, not replace it"
+    );
 }
 
 // =============================================================================

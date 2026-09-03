@@ -14,18 +14,31 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit_writer;
+pub mod client;
+#[cfg(unix)]
+pub mod client_terminal;
 pub mod idle;
+pub mod liveness;
+#[cfg(unix)]
+pub mod prompt;
+pub mod provenance;
 pub mod rpc;
 #[cfg(unix)]
 pub mod server;
 #[cfg(unix)]
 pub mod socket;
+pub mod totp_session;
 
+pub use audit_writer::{AuditWriter, ScrubbedDetail};
+pub use client::{AgentClient, ClientError};
 #[cfg(unix)]
 pub use idle::{
     DEFAULT_IDLE_TIMEOUT, IdleClock, IdleTracker, ManualClock, SIGTERM_GRACE, SystemClock,
     install_sigterm_handler,
 };
+#[cfg(unix)]
+pub use prompt::{TtyPrompt, echo_enabled};
 pub use rpc::{
     BAD_UNLOCK, ENTRY_NOT_FOUND, FramingError, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST,
     IO_ERROR, JSONRPC_VERSION, JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_NOT_FOUND,
@@ -39,6 +52,7 @@ pub use socket::{
     AgentError, AgentListener, SECRETS_SUBDIR, SOCKET_FILENAME, SOCKET_MODE,
     SOCKET_PARENT_DIR_MODE, SOCKET_PATH_ENV, default_socket_path,
 };
+pub use totp_session::{TOTP_SECRET_PATH, TotpDenial, TotpSession, is_reserved};
 
 // Cross-platform stubs for the items downstream crates
 // (`devboy-secret-local-vault`) need to import unconditionally.

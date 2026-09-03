@@ -40,6 +40,7 @@ pub use liveness::{LivenessProbe, LivenessResult, LivenessStatus};
 pub mod remote_config;
 #[cfg(feature = "sentry")]
 pub mod sentry_integration;
+pub mod token_exchange;
 pub mod tool_category;
 pub mod tool_value_model;
 pub mod types;

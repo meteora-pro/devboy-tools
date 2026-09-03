@@ -1063,6 +1063,78 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
             },
         },
         McpOnlyTool {
+            name: "secrets_unlock".into(),
+            description: "Re-open the secret vault with a six-digit code from the \
+                user's authenticator (ADR-024 §1). Use this when a secret \
+                resolve failed because the vault is locked: ask the user for \
+                the current code, relay it here, then retry the original \
+                call. The code proves a human approved the re-unlock — you \
+                cannot derive one yourself."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "totp",
+                    PropertySchema::string(
+                        "The six-digit code the user reads from their authenticator.",
+                    ),
+                );
+                s.add_property(
+                    "duration_seconds",
+                    PropertySchema::number(
+                        "How long the unlock should last. The daemon clamps this to the user's \
+                         configured ceiling, so asking for more than they allowed does not widen it.",
+                    ),
+                );
+                s.set_required("totp", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_validate".into(),
+            description: "Check whether the secret stored at a path is the shape it \
+                is supposed to be (ADR-024 §3). Use it right after a value is \
+                provisioned or rotated, to catch the pasted-the-wrong-thing case \
+                before it fails somewhere confusing. Everything happens in the \
+                secret daemon and only a verdict comes back — you name the path, \
+                you never see the value. There is deliberately no way to supply \
+                your own pattern: the check runs against the rule recorded with \
+                the entry. A `format` of `unknown` means nobody declared a shape \
+                for that path, which is not the same as passing."
+                .into(),
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "path",
+                    PropertySchema::string("Full ADR-020 path to check."),
+                );
+                s.add_property(
+                    "liveness",
+                    PropertySchema::boolean(
+                        "Also ask the provider whether the credential still works. Costs a \
+                         network round trip and appears in the provider's own audit log, so it \
+                         is off by default. Returns `unsupported` for a kind of secret that \
+                         declares no check, and `unreachable` — never `invalid` — when the \
+                         provider could not be asked, since a network failure is no evidence \
+                         against the credential.",
+                    ),
+                );
+                s.set_required("path", true);
+                s
+            },
+        },
+        McpOnlyTool {
+            name: "secrets_status".into(),
+            description: "What the vault will accept right now: whether it is \
+                unlocked, how long the current window has left, and which \
+                unlock methods are available. Check this before asking the \
+                user for anything — it is the difference between \
+                \"the vault is locked, give me a code\" and asking for a code \
+                nobody needs to type."
+                .into(),
+            input_schema: ToolSchema::new(),
+        },
+        McpOnlyTool {
             name: "secrets_request_rotation".into(),
             description: "Open the rotation UI dialog for the given ADR-020 \
                 path. Same lifecycle as `secrets_request_provision` but the \
@@ -1187,6 +1259,39 @@ pub fn mcp_only_tools() -> Vec<McpOnlyTool> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Every secrets tool the MCP server dispatches must also be
+    /// advertised here.
+    ///
+    /// An MCP client only ever calls tools it was handed in
+    /// `tools/list`, so a tool that is dispatched but not listed is
+    /// dead — the agent has no way to learn it exists. That is not
+    /// hypothetical: `secrets_unlock` and `secrets_status` shipped
+    /// dispatched-and-unlisted, while the remediation text told
+    /// agents to "relay it to `secrets_unlock`" — a tool they had
+    /// never been shown. The suite stayed green because its tests
+    /// call the handlers directly.
+    #[test]
+    fn every_dispatched_secrets_tool_is_advertised() {
+        let advertised: Vec<String> = mcp_only_tools().into_iter().map(|t| t.name).collect();
+
+        for name in [
+            "secrets_list",
+            "secrets_describe",
+            "secrets_request_provision",
+            "secrets_poll_status",
+            "secrets_request_rotation",
+            "secrets_request_use_approval",
+            "secrets_unlock",
+            "secrets_status",
+            "secrets_validate",
+        ] {
+            assert!(
+                advertised.iter().any(|a| a == name),
+                "`{name}` is dispatched by the MCP server but not advertised in tools/list, so                  no agent can ever call it. Advertised: {advertised:?}"
+            );
+        }
+    }
     use super::*;
 
     #[test]

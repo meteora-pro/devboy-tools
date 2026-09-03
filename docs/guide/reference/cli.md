@@ -59,6 +59,7 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets agent start`↴](#devboy-secrets-agent-start)
 * [`devboy secrets agent install`↴](#devboy-secrets-agent-install)
 * [`devboy secrets agent uninstall`↴](#devboy-secrets-agent-uninstall)
+* [`devboy secrets agent unlock`↴](#devboy-secrets-agent-unlock)
 * [`devboy secrets ui`↴](#devboy-secrets-ui)
 * [`devboy secrets rotate`↴](#devboy-secrets-rotate)
 * [`devboy secrets catalog`↴](#devboy-secrets-catalog)
@@ -70,6 +71,15 @@ This document contains the help content for the `devboy` command-line program.
 * [`devboy secrets catalog pin`↴](#devboy-secrets-catalog-pin)
 * [`devboy secrets catalog validate`↴](#devboy-secrets-catalog-validate)
 * [`devboy secrets setup`↴](#devboy-secrets-setup)
+* [`devboy secrets selftest`↴](#devboy-secrets-selftest)
+* [`devboy secrets add-totp`↴](#devboy-secrets-add-totp)
+* [`devboy secrets keyfile`↴](#devboy-secrets-keyfile)
+* [`devboy secrets keyfile add`↴](#devboy-secrets-keyfile-add)
+* [`devboy secrets keyfile status`↴](#devboy-secrets-keyfile-status)
+* [`devboy secrets keyfile remove`↴](#devboy-secrets-keyfile-remove)
+* [`devboy secrets versions`↴](#devboy-secrets-versions)
+* [`devboy secrets restore`↴](#devboy-secrets-restore)
+* [`devboy secrets purge`↴](#devboy-secrets-purge)
 * [`devboy secrets kdbx`↴](#devboy-secrets-kdbx)
 * [`devboy secrets kdbx peek`↴](#devboy-secrets-kdbx-peek)
 * [`devboy secrets kdbx describe-metadata`↴](#devboy-secrets-kdbx-describe-metadata)
@@ -798,6 +808,12 @@ Discover and inspect declared secrets (metadata only — values are never shown)
 * `rotate` — Rotate a secret: open the provider URL in the browser, destructive-confirm, read the new value, format-validate, and record `last_rotated_at`. See ADR-023 §3.4
 * `catalog` — Manage the token catalog (provider procedure files the `secrets ui` form binds to). See ADR-023 §3.4
 * `setup` — Run the setup-secrets wizard against the current directory. Default mode is `--scan-only` — read-only preview of what the wizard would propose. Pass `--write-manifest` to commit the proposals to `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`
+* `selftest` — Report which security posture is actually in force, and where it is weaker than it looks (ADR-024). `doctor` asks "is anything broken"; this asks "what am I actually getting"
+* `add-totp` — Enrol an authenticator app so the vault can be re-unlocked with a six-digit code instead of the passphrase (ADR-024 §1)
+* `keyfile` — Manage the keyfile that lets the vault open with no human present (ADR-024 §6)
+* `versions` — Show the write history of a secret (ADR-024 §5)
+* `restore` — Undo a write by bringing an earlier version back
+* `purge` — Permanently destroy a secret's ciphertext (ADR-024 §5)
 * `kdbx` — Work with KDBX 4 (KeePass) files as a SecretSource. The passphrase is prompted from stdin with no echo; the decrypted body lives only inside this process and is dropped on exit. See ADR-021 §8 + `crates/plugins/secrets/kdbx/`
 
 
@@ -882,6 +898,7 @@ Manage the local secret-store agent daemon (ADR-023 §3.3)
 * `start` — Spawn the agent if it isn't already running. Idempotent — no-op when the socket is already live
 * `install` — Install a per-user service unit so the daemon starts at login and respawns on failure. macOS writes a launchd plist at `~/Library/LaunchAgents/dev.devboy.secrets.plist`; Linux writes a systemd-user unit at `~/.config/systemd/user/devboy-secrets-agent.service`. After install: verify with `launchctl print gui/$(id -u)/dev.devboy.secrets` (macOS) or `systemctl --user status devboy-secrets-agent.service` (Linux)
 * `uninstall` — Stop the user service (if loaded) and remove the unit file written by `install`. Idempotent — running it twice is fine
+* `unlock` — Ask the daemon to unlock itself (ADR-024 §7)
 
 
 
@@ -934,6 +951,20 @@ Stop the user service (if loaded) and remove the unit file written by `install`.
 * `--no-unload` — Skip the platform service-manager teardown step (just remove the unit file). The next reboot will pick up the removal anyway
 
   Default value: `false`
+
+
+
+## `devboy secrets agent unlock`
+
+Ask the daemon to unlock itself (ADR-024 §7).
+
+This command never sees the passphrase. It sends a request carrying no secret material, the daemon collects the passphrase on a channel of its own, and this side polls until the vault opens. A process the agent can tamper with is a poor place to type a passphrase, so it does not.
+
+**Usage:** `devboy secrets agent unlock [OPTIONS]`
+
+###### **Options:**
+
+* `--timeout-secs <TIMEOUT_SECS>` — How long to wait for the unlock, in seconds. Defaults to 120 — long enough to find a phone, short enough not to hang a script forever
 
 
 
@@ -1100,6 +1131,137 @@ Run the setup-secrets wizard against the current directory. Default mode is `--s
 * `--force` — Allow `--write-manifest` to overwrite an existing `<root>/.devboy/secrets.toml`. No-op without `--write-manifest`
 * `--resume` — Resume the wizard from the recorded state file (`~/.devboy/secrets/setup-state.toml`). Skips phases already marked `done` / `skipped`. Implies a full wizard run, not just the scan preview
 * `--json` — Emit JSON-lines events to stdout instead of human prose. One event per line with shape `{"phase":"scan","status":"completed","message":"…"}` — designed for the AI agent driving the skill. The `message` key is optional: only `PhaseProgress`, `PhaseCompleted`, `PhaseSkipped`, and `PhaseFailed` carry a body; `PhaseStarted` and the terminal `wizard-completed` event omit it
+
+
+
+## `devboy secrets selftest`
+
+Report which security posture is actually in force, and where it is weaker than it looks (ADR-024). `doctor` asks "is anything broken"; this asks "what am I actually getting"
+
+**Usage:** `devboy secrets selftest [OPTIONS]`
+
+###### **Options:**
+
+* `--json` — Emit JSON instead of the human-readable table
+* `--path <PATH>` — Check the environment variables that would satisfy this path, under both naming conventions
+
+
+
+## `devboy secrets add-totp`
+
+Enrol an authenticator app so the vault can be re-unlocked with a six-digit code instead of the passphrase (ADR-024 §1).
+
+The shared secret is displayed once and never again — it is stored in a reserved vault slot that nothing can read back, which is precisely what makes a code from it evidence that a human was present.
+
+**Usage:** `devboy secrets add-totp [OPTIONS]`
+
+###### **Options:**
+
+* `--issuer <ISSUER>` — Label shown in the authenticator app
+
+  Default value: `devboy`
+* `--account <ACCOUNT>` — Account name shown in the authenticator app. Defaults to the current user
+* `--no-qr` — Print the `otpauth://` URI and secret without drawing a QR code. Useful over SSH, in a pipe, or when the terminal mangles block characters
+
+
+
+## `devboy secrets keyfile`
+
+Manage the keyfile that lets the vault open with no human present (ADR-024 §6).
+
+The keyfile is a second door opened from inside: enrolling one requires unlocking the vault first, so it records a new way to reach access you already had rather than granting any.
+
+Where a stable machine identifier exists, the enrolment is bound to this host — the same two files will not open the vault anywhere else.
+
+**Usage:** `devboy secrets keyfile <COMMAND>`
+
+###### **Subcommands:**
+
+* `add` — Generate a keyfile and enrol it, so the vault can open with no human present
+* `status` — Report whether a keyfile is enrolled and usable
+* `remove` — Un-enrol the keyfile. The file on disk is left alone
+
+
+
+## `devboy secrets keyfile add`
+
+Generate a keyfile and enrol it, so the vault can open with no human present
+
+**Usage:** `devboy secrets keyfile add [OPTIONS]`
+
+###### **Options:**
+
+* `--path <PATH>` — Where to write the keyfile. Defaults to the platform state directory, deliberately outside the config tree that holds the vault
+* `--use-existing` — Enrol an existing file instead of generating one. Use this when the key comes from somewhere else — a secrets mount, a hardware-backed file, an orchestrator
+
+
+
+## `devboy secrets keyfile status`
+
+Report whether a keyfile is enrolled and usable
+
+**Usage:** `devboy secrets keyfile status`
+
+
+
+## `devboy secrets keyfile remove`
+
+Un-enrol the keyfile. The file on disk is left alone
+
+**Usage:** `devboy secrets keyfile remove`
+
+
+
+## `devboy secrets versions`
+
+Show the write history of a secret (ADR-024 §5).
+
+Every write appends a version and keeps the previous ciphertext, so a wrong value is recoverable. Values are never printed here.
+
+**Usage:** `devboy secrets versions <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path whose history to show
+
+
+
+## `devboy secrets restore`
+
+Undo a write by bringing an earlier version back.
+
+Restoring appends a new version rather than rewriting history, so the value being replaced stays recoverable in turn.
+
+Deliberately a person's command and not an agent's: an agent that can undo its own writes can also undo a human's correction of them.
+
+**Usage:** `devboy secrets restore <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path to restore
+
+###### **Options:**
+
+* `--version <VERSION>` — Version to bring back. Omit to restore the one before the current version, which is what "undo that last write" means
+
+
+
+## `devboy secrets purge`
+
+Permanently destroy a secret's ciphertext (ADR-024 §5).
+
+The only operation here that cannot be undone: every other write appends a version and leaves the old one recoverable. User-only by design — no agent-facing tool purges anything.
+
+**Usage:** `devboy secrets purge [OPTIONS] <PATH>`
+
+###### **Arguments:**
+
+* `<PATH>` — ADR-020 path to purge. Accepts the `path@version` form the ADR names, as well as `--version`
+
+###### **Options:**
+
+* `--version <VERSION>` — Purge only this version. Omit to purge every version of the path — including the current one
+* `--yes` — Required when there is no terminal to confirm on
 
 
 

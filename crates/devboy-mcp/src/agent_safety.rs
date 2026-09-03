@@ -63,4 +63,12 @@ fn _audit_compile_fence() {
     assert_safe::<crate::secrets_tool::SecretsDescribeReply>();
     assert_safe::<crate::secrets_provision::ProvisionStatusReply>();
     assert_safe::<crate::secrets_provision::RequestIdReply>();
+    // ADR-024 §8: remediation rides along on every error reply,
+    // so it is subject to the same audit as the replies
+    // themselves. It carries manifest metadata and fixed text —
+    // never a value.
+    assert_safe::<crate::remediation::Remediation>();
+    assert_safe::<crate::secrets_validate::SecretsValidateReply>();
+    assert_safe::<crate::secrets_unlock::SecretsUnlockReply>();
+    assert_safe::<crate::secrets_unlock::SecretsStatusReply>();
 }

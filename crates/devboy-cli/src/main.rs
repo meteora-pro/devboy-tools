@@ -7,11 +7,15 @@ mod onboard_cmd;
 mod secrets_agent;
 mod secrets_agent_service;
 mod secrets_cmd;
+mod secrets_keyfile;
 mod secrets_migrate;
 mod secrets_rotate;
+mod secrets_selftest;
 mod secrets_setup;
+mod secrets_totp;
 mod secrets_ui;
 mod secrets_validate;
+mod secrets_versions;
 mod skills_cmd;
 mod update_check;
 mod upgrade;
@@ -833,28 +837,243 @@ const SKIP_KEYCHAIN_ENV: &str = "DEVBOY_SKIP_KEYCHAIN";
 /// When set to "1" or "true", MCP server uses only environment variables.
 const NO_CONFIG_ENV: &str = "DEVBOY_NO_CONFIG";
 
-/// Get credential store using the appropriate chain.
+/// Build the credential chain this process should use.
 ///
-/// When `DEVBOY_SKIP_KEYCHAIN=1` is set:
-/// - Uses CI chain (env vars + memory, no keychain access)
 ///
-/// Otherwise uses the default chain which resolves credentials in this order:
+/// Resolution order after ADR-024 §6:
 /// 1. Environment variables (`DEVBOY_{PROVIDER}_TOKEN`, then `{PROVIDER}_TOKEN`)
-/// 2. OS Keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service)
+/// 2. The local vault, via the secret daemon
+/// 3. OS Keychain — **only** when the user opted in with
+///    `[secrets.keychain] enabled = true`
 ///
-/// This allows CI/CD pipelines to use environment variables while local development
-/// uses the keychain seamlessly.
-fn get_credential_store() -> Box<dyn CredentialStore> {
-    if is_skip_keychain_enabled() {
-        tracing::info!("Using CI credential chain (env vars only, keychain disabled)");
-        Box::new(ChainStore::ci_chain())
+/// The keychain left the default chain because it only exceeds the protection
+/// of a `0600` file on macOS, while costing a D-Bus dependency, a daemon that
+/// is absent in CI and containers, and prompt failures on locked-down
+/// machines. The vault took its place as the durable store.
+///
+/// The chain is assembled *here* rather than in `devboy-storage` because
+/// reaching the vault means talking to the daemon, and `devboy-storage` is
+/// published to crates.io while the daemon crate is not — a published crate
+/// cannot depend on an unpublished one. So the library offers a daemon-free
+/// chain and the application adds the vault, which is the right split anyway:
+/// a library consumer gets something that works with no services running.
+///
+/// CI / env-only mode drops both the vault and the keychain: a container has
+/// neither daemon, and reaching for one is a hang waiting to happen.
+pub(crate) fn credential_chain() -> ChainStore {
+    let config = load_config_for_store();
+
+    if is_env_only_mode(&config) {
+        tracing::info!("env-only credential chain (CI mode: environment variables only)");
+        return ChainStore::ci_chain();
+    }
+
+    let mut stores: Vec<Box<dyn CredentialStore>> =
+        vec![Box::new(devboy_storage::EnvVarStore::new())];
+
+    match devboy_secret_local_vault::VaultStore::new() {
+        Some(vault) => stores.push(Box::new(vault)),
+        // No derivable config directory means no socket path, so
+        // there is nothing to talk to. Not an error — the chain
+        // simply has one fewer member.
+        None => tracing::debug!("local vault omitted: no socket path could be derived"),
+    }
+
+    if config.is_keychain_enabled() {
+        tracing::debug!("credential chain: env vars -> local vault -> OS keychain (opted in)");
+        stores.push(Box::new(devboy_storage::KeychainStore::new()));
     } else {
-        tracing::debug!("Using default credential chain (env vars -> keychain)");
-        Box::new(ChainStore::default_chain())
+        tracing::debug!("credential chain: env vars -> local vault");
+    }
+
+    // Last resort, and only until the user has migrated: an
+    // install that predates ADR-024 §6 keeps every secret in the
+    // OS keychain, and dropping the keychain from the chain turns
+    // all of them into "no such secret" at once. Read-only, so
+    // nothing new comes to depend on the keychain, and loud, so
+    // the fallback does not become permanent. `secrets migrate`
+    // sets the flag and this stops being appended.
+    //
+    // CI never reaches here — `ci_chain()` returned above.
+    if !config.is_secrets_migration_complete() {
+        tracing::debug!("credential chain: appending the read-only legacy keychain fallback");
+        stores.push(Box::new(
+            devboy_storage::legacy_keychain::LegacyKeychainStore::new(),
+        ));
+    }
+
+    ChainStore::new(stores)
+}
+
+/// Boxed form of [`credential_chain`], for the many call sites that
+/// just want a store.
+fn get_credential_store() -> Box<dyn CredentialStore> {
+    Box::new(credential_chain())
+}
+
+/// Load config for credential-chain construction, tolerating a
+/// missing or unreadable file.
+///
+/// A broken config must not make secrets unresolvable — it
+/// degrades to defaults, which after ADR-024 §6 means
+/// environment-only. `DEVBOY_NO_CONFIG=1` skips the file
+/// entirely.
+fn load_config_for_store() -> devboy_core::config::Config {
+    if is_no_config_enabled() {
+        return devboy_core::config::Config::default();
+    }
+    devboy_core::config::Config::load().unwrap_or_default()
+}
+
+/// Whether the process runs in CI / env-only mode (ADR-024 §6).
+///
+/// Three explicit signals, highest priority first: `--ci` (handled
+/// by the caller that owns the parsed CLI), `DEVBOY_CI`, and
+/// `[runtime] ci`. The long-standing `DEVBOY_SKIP_KEYCHAIN` is
+/// honoured as a fourth for backwards compatibility.
+///
+/// Heuristic variables (`CI`, `GITLAB_CI`, …) deliberately do
+/// **not** appear here: they raise a doctor notice instead,
+/// because a security posture must not change because an
+/// unrelated tool exported `CI=1`.
+/// The `DEVBOY_`-prefixed environment variable that satisfies a
+/// legacy credential key.
+///
+/// `EnvVarStore` uppercases the key and replaces `.` with `_`, so
+/// `proxy.my-server.token` is served by
+/// `DEVBOY_PROXY_MY_SERVER_TOKEN`. Used to tell the user what to
+/// set when nothing in the chain accepts writes.
+/// How a secret reached this process.
+///
+/// The distinction is not cosmetic. A value passed as a
+/// command-line argument is written to the shell's history file
+/// and is readable from `/proc/<pid>/cmdline` by any other user
+/// on the box while the command runs. Dotfiles — history included
+/// — get committed to repositories routinely, so a token handed
+/// over this way outlives the terminal it was typed in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SecretInput {
+    /// A literal on the command line. Leaks as described above.
+    Argv,
+    /// `-`, meaning "read it from stdin". Never in the process
+    /// table, never in a history file.
+    Stdin,
+    /// From the environment. Also visible to the process itself
+    /// and its children, but not recorded by the shell.
+    Env,
+    /// Not supplied at all.
+    Absent,
+}
+
+/// Decide where a secret is coming from.
+///
+/// Split from the reading so the rule is testable without a
+/// terminal, an environment, or a real secret.
+pub(crate) fn classify_secret_input(flag: Option<&str>, env_present: bool) -> SecretInput {
+    match flag {
+        Some("-") => SecretInput::Stdin,
+        Some(_) => SecretInput::Argv,
+        None if env_present => SecretInput::Env,
+        None => SecretInput::Absent,
     }
 }
 
-/// Check if keychain should be skipped (for CI/containers).
+/// What to tell someone who just put a secret in their shell
+/// history, without repeating the secret back at them.
+pub(crate) fn argv_leak_warning(flag_name: &str, env_var: &str) -> String {
+    format!(
+        "warning: the value of `{flag_name}` was passed on the command line, so your shell has \
+         recorded it in its history file and it was visible in the process list while this ran. \
+         Treat it as disclosed and rotate it if it matters. Next time pass `{flag_name} -` to \
+         read it from stdin, or set {env_var}."
+    )
+}
+
+/// Resolve a secret-bearing flag from argv, stdin or the
+/// environment, warning when it arrived the leaky way.
+fn resolve_secret_arg(
+    flag: Option<String>,
+    env_var: &str,
+    flag_name: &str,
+) -> Result<Option<String>> {
+    let env_value = std::env::var(env_var).ok().filter(|v| !v.trim().is_empty());
+
+    match classify_secret_input(flag.as_deref(), env_value.is_some()) {
+        SecretInput::Stdin => {
+            if io::stdin().is_terminal() {
+                eprintln!("reading the value for `{flag_name}` from stdin; end with Enter");
+            }
+            let mut line = String::new();
+            io::stdin().read_line(&mut line).with_context(|| {
+                format!("failed to read the value for `{flag_name}` from stdin")
+            })?;
+            let value = line.trim().to_owned();
+            if value.is_empty() {
+                anyhow::bail!("`{flag_name} -` was given but stdin held no value");
+            }
+            Ok(Some(value))
+        }
+        SecretInput::Argv => {
+            eprintln!("{}", argv_leak_warning(flag_name, env_var));
+            Ok(flag)
+        }
+        SecretInput::Env => Ok(env_value),
+        SecretInput::Absent => Ok(None),
+    }
+}
+
+fn env_var_name_for_key(key: &str) -> String {
+    let body: String = key
+        .chars()
+        .map(|c| match c {
+            '.' | '-' => '_',
+            other => other.to_ascii_uppercase(),
+        })
+        .collect();
+    format!("DEVBOY_{body}")
+}
+
+/// Whether `--ci` was passed on the command line.
+///
+/// A process-global rather than a threaded parameter because
+/// [`is_env_only_mode`] is reached from a dozen places that have a
+/// `Config` and no access to the parsed CLI. Set once, at startup,
+/// from `cli.ci`.
+///
+/// It exists because the flag used to go nowhere: `is_env_only_mode`
+/// passed a hard-coded `false` where the flag belonged, so `--ci`
+/// only ever produced a `doctor` notice. A CI job that passed it and
+/// then hit an interactive prompt hung waiting for a human — the
+/// exact failure the flag is for, and the refusal that would have
+/// caught it names `--ci` in its own error text.
+static CI_FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Record the `--ci` flag for the rest of the process.
+pub(crate) fn set_ci_flag(active: bool) {
+    let _ = CI_FLAG.set(active);
+}
+
+/// Whether `--ci` was given.
+fn ci_flag() -> bool {
+    *CI_FLAG.get().unwrap_or(&false)
+}
+
+pub(crate) fn is_env_only_mode(config: &devboy_core::config::Config) -> bool {
+    env_only_with_flag(ci_flag(), config)
+}
+
+/// The decision itself, with the flag passed in.
+///
+/// Separated so a test can exercise it without setting the
+/// process-global — which is a `OnceLock` and would leak `--ci` into
+/// every other test sharing the binary.
+fn env_only_with_flag(ci_flag: bool, config: &devboy_core::config::Config) -> bool {
+    devboy_storage::detect_ci_mode(ci_flag, Some(config.is_ci_forced())).active
+        || is_skip_keychain_enabled()
+}
+
+/// Check if keychain should be skipped (legacy switch, kept for
+/// backwards compatibility with existing CI configs).
 fn is_skip_keychain_enabled() -> bool {
     env_is_truthy(SKIP_KEYCHAIN_ENV)
 }
@@ -909,6 +1128,9 @@ async fn main() -> Result<()> {
     // (`CI`, `GITLAB_CI`, …) only emit a notice — they never
     // flip routing on their own. The notice goes to stderr so
     // it does not pollute scriptable subcommands' stdout.
+    // Before anything can consult the posture: `is_env_only_mode`
+    // reads this, and it is reached from paths that never see `cli`.
+    set_ci_flag(cli.ci);
     let ci_detection = devboy_storage::detect_ci_mode(cli.ci, None);
     if let Some(notice) = ci_detection.doctor_notice() {
         eprintln!("warning: {notice}");
@@ -1216,6 +1438,16 @@ async fn handle_init_command(
     remote_config_token: Option<String>,
     detect_git: bool,
 ) -> Result<()> {
+    // Secrets first: a value that arrived through argv is already
+    // in the shell's history, and the user deserves to hear that
+    // before anything else scrolls it away.
+    let remote_config_token = resolve_secret_arg(
+        remote_config_token,
+        "DEVBOY_REMOTE_CONFIG_TOKEN",
+        "--remote-config-token",
+    )?;
+    let proxy_token = resolve_secret_arg(proxy_token, "DEVBOY_PROXY_TOKEN", "--proxy-token")?;
+
     let config_path = PathBuf::from(INIT_CONFIG_FILE);
     let is_tty = io::stdin().is_terminal();
 
@@ -1324,6 +1556,32 @@ async fn handle_init_command(
 
     // Add remote config settings if provided
     if let Some(url) = remote_config_url {
+        // One fetch, carrying both of the things a config server can
+        // tell a fresh install: the posture to start from, and
+        // whether the token it was given should be traded in.
+        let onboarding = fetch_onboarding_hints(&url, remote_config_token.as_deref()).await;
+
+        if let Some((secrets, applied)) = onboarding
+            .as_ref()
+            .and_then(|o| operator_secrets_posture(&o.secrets))
+        {
+            apply_operator_secrets_posture(secrets, &applied, dry_run)?;
+        }
+
+        // Trade a short-lived onboarding token for a durable one,
+        // where the server offers that.
+        let remote_config_token = match (
+            remote_config_token,
+            onboarding
+                .as_ref()
+                .and_then(|o| o.token_exchange_url.clone()),
+        ) {
+            (Some(bootstrap), Some(exchange_url)) => {
+                Some(exchange_onboarding_token(&url, &exchange_url, bootstrap, dry_run).await?)
+            }
+            (token, _) => token,
+        };
+
         let token_key = if let Some(token_value) = remote_config_token {
             let key = "remote_config.token".to_string();
             options.tokens.push((key.clone(), token_value));
@@ -1334,6 +1592,11 @@ async fn handle_init_command(
         options.remote_config = Some(devboy_core::RemoteConfigSettings {
             url: Some(url),
             token_key,
+            // Not written into the local config: the exchange
+            // endpoint is something the server declares in its
+            // response, per install, and a stale copy on disk would
+            // be a place for the two to disagree.
+            token_exchange_url: None,
         });
     }
 
@@ -1417,15 +1680,37 @@ async fn handle_init_command(
     std::fs::write(&config_path, &toml_content).context("Failed to write configuration file")?;
     println!("Created: {}", config_path.display());
 
-    // Store tokens in keychain
+    // Persist tokens, or explain why we cannot.
+    //
+    // After ADR-024 §6 the default chain is environment-only and
+    // therefore read-only, so `init --proxy-token` has nowhere to
+    // write unless the user opted the keychain back in. Failing
+    // the whole `init` over that would be wrong — the config file
+    // is still worth writing — so we finish the job and tell the
+    // user exactly which environment variable to set instead.
     if !options.tokens.is_empty() {
         let store = get_credential_store_for_init();
-        for (key, value) in &options.tokens {
-            let secret = SecretString::from(value.clone());
-            store
-                .store(key, &secret)
-                .with_context(|| format!("Failed to store {} in keychain", key))?;
-            println!("Stored {} in keychain", key);
+        if store.is_writable() {
+            for (key, value) in &options.tokens {
+                let secret = SecretString::from(value.clone());
+                store
+                    .store(key, &secret)
+                    .with_context(|| format!("Failed to store {} in keychain", key))?;
+                println!("Stored {} in keychain", key);
+            }
+        } else {
+            println!(
+                "\nNote: no writable credential store is configured, so the token was not \
+                 persisted."
+            );
+            println!(
+                "The OS keychain is off by default (ADR-024 §6). Either enable it with \
+                 `devboy config set secrets.keychain.enabled true` and re-run, or supply the \
+                 token through the environment:"
+            );
+            for (key, _) in &options.tokens {
+                println!("  {}", env_var_name_for_key(key));
+            }
         }
     }
 
@@ -1902,6 +2187,195 @@ fn minimal_devboy_toml_template() -> String {
 }
 
 /// Build Config from collected options.
+/// Ask the config server for the secrets posture a fresh install
+/// should start from, and turn it into a `SecretsConfig`.
+///
+/// Returns `None` when there is nothing to apply — including when
+/// the server cannot be reached. Setting up a machine must not
+/// depend on a config server being up: without it the built-in
+/// defaults apply, which is a working install, just not the one
+/// the operator had in mind. The warning says which happened.
+///
+/// The posture is written into the local config **once**, at
+/// init. It is deliberately not re-fetched: a value that changed
+/// under the user on every invocation would be a security setting
+/// they cannot see in any file they own.
+async fn fetch_onboarding_hints(
+    url: &str,
+    token: Option<&str>,
+) -> Option<devboy_core::remote_config::RemoteOnboarding> {
+    match devboy_core::remote_config::fetch_onboarding(url, token).await {
+        Ok(o) => Some(o),
+        Err(e) => {
+            eprintln!(
+                "warning: could not read the remote config: {e}\n  continuing with the built-in \
+                 defaults — change them later with `devboy config set secrets.<field> <value>`"
+            );
+            None
+        }
+    }
+}
+
+/// Turn declared defaults into a posture, or `None` when the server
+/// stated nothing.
+fn operator_secrets_posture(
+    defaults: &devboy_core::remote_config::RemoteSecretsDefaults,
+) -> Option<(devboy_core::config::SecretsConfig, Vec<String>)> {
+    if defaults.is_empty() {
+        return None;
+    }
+    Some((secrets_config_from_defaults(defaults), defaults.describe()))
+}
+
+/// Trade the onboarding token for a durable one.
+///
+/// # Why a failure here stops `init`
+///
+/// A bootstrap token is expected to be consumed by the first
+/// successful exchange, and to expire in minutes either way. Storing
+/// it after a failed exchange would produce an install that looks
+/// finished and stops working before the user has finished reading
+/// the output, with nothing pointing back at this moment. Better to
+/// say what went wrong while the command they pasted is still on
+/// screen.
+///
+/// The exception is a server that never offered an exchange: that is
+/// not a failure and never reaches this function.
+async fn exchange_onboarding_token(
+    config_url: &str,
+    exchange_url: &str,
+    bootstrap: String,
+    dry_run: bool,
+) -> Result<String> {
+    use devboy_core::token_exchange;
+
+    if dry_run {
+        // Never spend a single-use token to preview an install.
+        println!(
+            "[dry-run] Would exchange the onboarding token at {} for a durable one",
+            devboy_core::remote_config::redact_url_for_display(exchange_url)
+        );
+        return Ok(bootstrap);
+    }
+
+    match token_exchange::exchange(config_url, exchange_url, &bootstrap).await {
+        Ok(exchanged) => {
+            println!("Exchanged the onboarding token: {}", exchanged.describe());
+            // Exposed only here, at the boundary with the existing
+            // `options.tokens` plumbing, which predates this and
+            // carries plain strings.
+            Ok(exchanged.token.expose_secret().to_owned())
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "{e}\n\nThe token you pasted is short-lived and is now of no further use. Ask for a \
+             fresh setup command and run `devboy init` again."
+        )),
+    }
+}
+
+/// Write an operator-supplied posture into the config that the
+/// daemon and the credential chain actually read.
+///
+/// # Why the global config and not `.devboy.toml`
+///
+/// `.devboy.toml` is the project file, and for providers and
+/// contexts it wins over the global one. The secrets posture is
+/// not project-scoped: the daemon holding the vault key is one
+/// per user and reads `Config::load()` — the global path — at
+/// startup, and so does the credential chain. A `[secrets]` block
+/// in a project file changes neither. Writing it there would have
+/// produced a file that says `profile = "strict"` on a machine
+/// running the convenient profile, which is worse than not
+/// writing it at all.
+///
+/// # Why an existing posture is left alone
+///
+/// A `[secrets]` section that differs from the defaults is a
+/// decision someone made on this machine. An operator default is
+/// the *starting* posture for a fresh install, not a standing
+/// instruction, so it yields — and says what it would have set,
+/// so adopting it stays one command away.
+fn apply_operator_secrets_posture(
+    secrets: devboy_core::config::SecretsConfig,
+    applied: &[String],
+    dry_run: bool,
+) -> Result<()> {
+    let path = devboy_core::config::Config::config_path()
+        .context("Failed to determine the config path")?;
+    let mut config = devboy_core::config::Config::load().unwrap_or_default();
+
+    let existing_is_customised = config
+        .secrets
+        .as_ref()
+        .is_some_and(|s| *s != devboy_core::config::SecretsConfig::default());
+
+    if existing_is_customised {
+        println!("The remote config suggests these secrets defaults:");
+        for line in applied {
+            println!("  {line}");
+        }
+        println!(
+            "Leaving your existing [secrets] in {} as it is — set them yourself with `devboy \
+             config set <field> <value>` if you want them.",
+            path.display()
+        );
+        return Ok(());
+    }
+
+    if dry_run {
+        println!("[dry-run] Would apply the secrets defaults from the remote config:");
+        for line in applied {
+            println!("  {line}");
+        }
+        println!("[dry-run] Would write them to {}", path.display());
+        return Ok(());
+    }
+
+    config.secrets = Some(secrets);
+    config
+        .save()
+        .context("Failed to save the secrets defaults from the remote config")?;
+
+    println!("Applied the secrets defaults from the remote config:");
+    for line in applied {
+        println!("  {line}");
+    }
+    println!(
+        "  written to {} — they are not re-fetched, edit them there",
+        path.display()
+    );
+    Ok(())
+}
+
+/// Turn an operator-supplied posture into the config section
+/// `init` writes out.
+///
+/// Split from the fetch so the mapping is testable without a
+/// server: the interesting property is not that the HTTP call
+/// works, it is that the two fields the remote side must never
+/// set stay at their local defaults no matter what came back.
+fn secrets_config_from_defaults(
+    defaults: &devboy_core::remote_config::RemoteSecretsDefaults,
+) -> devboy_core::config::SecretsConfig {
+    // Starting from `default()` is the load-bearing part:
+    // `keyfile_path` and `migration_complete` are simply never
+    // assigned here, so no future field on the wire can reach
+    // them by accident.
+    let mut secrets = devboy_core::config::SecretsConfig::default();
+
+    if let Some(p) = defaults.profile {
+        secrets.profile = p;
+    }
+    secrets.unlock_ttl_seconds = defaults.unlock_ttl_seconds;
+    secrets.max_unlock_ttl_seconds = defaults.max_unlock_ttl_seconds;
+    secrets.idle_relock_seconds = defaults.idle_relock_seconds;
+    if let Some(enabled) = defaults.keychain_enabled {
+        secrets.keychain.enabled = enabled;
+    }
+
+    secrets
+}
+
 fn build_config(options: &InitOptions) -> Config {
     let mut config = Config::default();
 
@@ -3909,6 +4383,17 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
             client_secret,
             store_client_secret,
         } => {
+            let refresh_token = resolve_secret_arg(
+                refresh_token,
+                "DEVBOY_CONFLUENCE_REFRESH_TOKEN",
+                "--refresh-token",
+            )?;
+            let client_secret = resolve_secret_arg(
+                client_secret,
+                "DEVBOY_CONFLUENCE_CLIENT_SECRET",
+                "--client-secret",
+            )?;
+
             let (config, _) = load_runtime_config()?;
             let store = get_credential_store();
             let target = resolve_confluence_oauth_target(&config, context.as_deref())?;
@@ -3962,18 +4447,30 @@ async fn handle_confluence_oauth_command(command: ConfluenceOauthCommands) -> Re
     Ok(())
 }
 
-/// Credential store factory for the MCP command — wraps the default chain in a TTL
+/// Credential store factory for the MCP command — wraps the chain in a TTL
 /// cache when the user enabled it.
+///
+/// Applies the same ADR-024 §6 policy as [`get_credential_store`]: environment
+/// first, then the local vault, and the OS keychain only when explicitly
+/// enabled. CI / env-only mode drops both daemons unconditionally.
+///
+/// The MCP server is the reason the vault store speaks the socket
+/// synchronously: this chain is consulted from inside a running tokio runtime,
+/// where blocking on a nested runtime would panic.
 fn build_mcp_store(cache_ttl_secs: u64) -> Box<dyn CredentialStore> {
-    if is_skip_keychain_enabled() {
-        tracing::info!("Using CI credential chain (env vars only, keychain disabled)");
-        return wrap_with_cache(ChainStore::ci_chain(), cache_ttl_secs);
-    }
+    let config = load_config_for_store();
+    let ci = is_env_only_mode(&config);
+
     tracing::debug!(
         cache_ttl_secs,
-        "Using default credential chain (env vars -> keychain) with TTL cache"
+        ci_mode = ci,
+        keychain = config.is_keychain_enabled(),
+        "building MCP credential chain"
     );
-    wrap_with_cache(ChainStore::default_chain(), cache_ttl_secs)
+
+    // Share one composer with the CLI path so the two cannot drift
+    // into resolving a token differently.
+    wrap_with_cache(credential_chain(), cache_ttl_secs)
 }
 
 /// Configure and launch the telemetry pipeline. Returns `None` when telemetry is
@@ -4415,6 +4912,8 @@ fn handle_proxy_add(
     auth_type: Option<AuthType>,
     force: bool,
 ) -> Result<()> {
+    let token = resolve_secret_arg(token, "DEVBOY_PROXY_TOKEN", "--token")?;
+
     let (mut config, config_path) = load_runtime_config()?;
 
     // Check if proxy with same name exists
@@ -4466,15 +4965,29 @@ fn handle_proxy_add(
         .save_to(&config_path)
         .context("Failed to save config")?;
 
-    // Store token in keychain if provided
+    // Persist the token if one was supplied.
+    //
+    // Failing here must not fail the command. The proxy entry is
+    // already saved, and this is the copy-paste path from the
+    // dashboard: leaving the user with a half-written config and a
+    // non-zero exit teaches them nothing about what to do next.
+    // Since ADR-024 §6 the default chain has no writable member, so
+    // "no store" is the ordinary case rather than an anomaly — the
+    // command reports the exact variable to export instead.
+    let mut token_stored = false;
     if let Some(token_value) = token {
         let key = final_token_key.as_ref().unwrap();
         let store = get_credential_store_for_init();
         let secret = SecretString::from(token_value);
-        store
-            .store(key, &secret)
-            .with_context(|| format!("Failed to store token in keychain as '{}'", key))?;
-        println!("Stored token in keychain as '{}'", key);
+        match store.store(key, &secret) {
+            Ok(()) => {
+                token_stored = true;
+                println!("Stored token as '{}'", key);
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "no writable credential store for the proxy token");
+            }
+        }
     }
 
     println!("Added proxy '{}' -> {}", name, url);
@@ -4485,6 +4998,24 @@ fn handle_proxy_add(
     }
     println!();
     println!("Config saved to: {}", config_path.display());
+
+    // The token had nowhere to go, so say where to put it. Naming
+    // the exact variable is the difference between a user who
+    // finishes in ten seconds and one who reads the docs.
+    if let Some(key) = &final_token_key
+        && !token_stored
+    {
+        println!();
+        println!("The token was not persisted — no writable credential store is configured.");
+        println!("Export it instead:");
+        println!();
+        println!("  export {}=<token>", env_var_name_for_key(key));
+        println!();
+        println!(
+            "Or enable a store first: `devboy config set secrets.keychain.enabled true`, or \
+             start the vault daemon with `devboy secrets agent start`."
+        );
+    }
 
     Ok(())
 }
@@ -6212,6 +6743,145 @@ fn detect_data_type(value: &serde_json::Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use devboy_core::config::SecretsProfile;
+    use devboy_core::remote_config::RemoteSecretsDefaults;
+
+    use super::secrets_config_from_defaults;
+
+    // ===========================================================
+    // Секрет в argv — история шелла и /proc
+    // ===========================================================
+
+    use super::{SecretInput, argv_leak_warning, classify_secret_input};
+
+    #[test]
+    fn a_literal_on_the_command_line_is_recognised_as_the_leaky_path() {
+        assert_eq!(
+            classify_secret_input(Some("ghp_realtokenvalue"), false),
+            SecretInput::Argv
+        );
+    }
+
+    /// `-` is the escape hatch and must never be mistaken for a
+    /// one-character secret.
+    #[test]
+    fn a_lone_dash_means_stdin_not_a_value() {
+        assert_eq!(classify_secret_input(Some("-"), false), SecretInput::Stdin);
+    }
+
+    /// The flag wins over the environment: someone who passes both
+    /// meant the one they just typed, and still needs the warning.
+    #[test]
+    fn the_flag_wins_over_the_environment_and_still_warns() {
+        assert_eq!(
+            classify_secret_input(Some("value"), true),
+            SecretInput::Argv
+        );
+    }
+
+    #[test]
+    fn the_environment_is_used_when_no_flag_is_given() {
+        assert_eq!(classify_secret_input(None, true), SecretInput::Env);
+        assert_eq!(classify_secret_input(None, false), SecretInput::Absent);
+    }
+
+    /// The warning has one job beyond scolding: tell the person
+    /// what to do instead, and never repeat the value back — it
+    /// would land in the same history it is warning about.
+    /// The flag has to reach the posture, not just the report.
+    ///
+    /// It used to go nowhere: `is_env_only_mode` passed a hard-coded
+    /// `false` where the flag belonged, so a CI job that passed
+    /// `--ci` and then hit an interactive prompt hung waiting for a
+    /// human — while the refusal that would have caught it names
+    /// `--ci` in its own error text.
+    #[test]
+    fn the_ci_flag_reaches_the_env_only_decision() {
+        let config = devboy_core::config::Config::default();
+
+        assert!(
+            env_only_with_flag(true, &config),
+            "with `--ci` given, the posture must be env-only — it used to be dropped on the \
+             floor, and a CI job that passed it hung on the first interactive prompt"
+        );
+    }
+
+    #[test]
+    fn the_warning_names_both_escapes_and_carries_no_value() {
+        let w = argv_leak_warning("--remote-config-token", "DEVBOY_REMOTE_CONFIG_TOKEN");
+
+        assert!(w.contains("--remote-config-token -"), "{w}");
+        assert!(w.contains("DEVBOY_REMOTE_CONFIG_TOKEN"), "{w}");
+        assert!(
+            w.contains("history"),
+            "the reason has to be stated or it reads as noise: {w}"
+        );
+        assert!(
+            w.contains("rotate"),
+            "a disclosed secret needs an action, not just a notice: {w}"
+        );
+    }
+
+    // ===========================================================
+    // Ф13 — the posture an operator hands a fresh install
+    // ===========================================================
+
+    #[test]
+    fn an_operator_posture_lands_in_the_config_init_writes() {
+        let secrets = secrets_config_from_defaults(&RemoteSecretsDefaults {
+            profile: Some(SecretsProfile::Strict),
+            unlock_ttl_seconds: Some(900),
+            max_unlock_ttl_seconds: Some(3600),
+            idle_relock_seconds: Some(300),
+            keychain_enabled: Some(true),
+        });
+
+        assert_eq!(secrets.profile, SecretsProfile::Strict);
+        assert_eq!(secrets.unlock_ttl_seconds, Some(900));
+        assert_eq!(secrets.max_unlock_ttl_seconds, Some(3600));
+        assert_eq!(secrets.idle_relock_seconds, Some(300));
+        assert!(secrets.keychain.enabled);
+    }
+
+    /// The two fields a config server must never reach. Both
+    /// would be dangerous in the same quiet way: `keyfile_path`
+    /// picks which file on this machine is read as key material,
+    /// and `migration_complete` switches off the read-only legacy
+    /// keychain fallback on a machine that may still need it.
+    ///
+    /// Asserted here as well as at the parsing boundary because
+    /// this is the last point before the values reach a file:
+    /// a field added to `RemoteSecretsDefaults` later would have
+    /// to pass through this function to do any harm.
+    #[test]
+    fn a_remote_posture_cannot_reach_the_keyfile_path_or_the_migration_flag() {
+        let secrets = secrets_config_from_defaults(&RemoteSecretsDefaults {
+            profile: Some(SecretsProfile::Strict),
+            unlock_ttl_seconds: Some(900),
+            max_unlock_ttl_seconds: Some(3600),
+            idle_relock_seconds: Some(300),
+            keychain_enabled: Some(true),
+        });
+
+        assert!(
+            secrets.keyfile_path.is_none(),
+            "the remote side chose which file is read as key material"
+        );
+        assert!(
+            !secrets.migration_complete,
+            "the remote side switched off the legacy keychain fallback"
+        );
+    }
+
+    /// An operator who pins nothing gets the built-in defaults —
+    /// not zeroes, and not a half-filled section.
+    #[test]
+    fn an_empty_posture_maps_to_the_built_in_defaults() {
+        let secrets = secrets_config_from_defaults(&RemoteSecretsDefaults::default());
+
+        assert_eq!(secrets, devboy_core::config::SecretsConfig::default());
+    }
+
     use super::*;
     use devboy_core::ConfluenceConfig;
     use devboy_storage::MemoryStore;

@@ -273,7 +273,8 @@ pub fn unwrap_recovery(
         Envelope::Passphrase { .. } => {
             return Err(RecoveryError::WrongKind { kind: "passphrase" });
         }
-        Envelope::Keychain { .. } => return Err(RecoveryError::WrongKind { kind: "keychain" }),
+        Envelope::Totp { .. } => return Err(RecoveryError::WrongKind { kind: "totp" }),
+        Envelope::Keyfile { .. } => return Err(RecoveryError::WrongKind { kind: "keyfile" }),
     };
 
     let salt_bytes = b64_decode(bip39_salt)?;
@@ -503,14 +504,14 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_rejects_keychain_envelope() {
-        let env = Envelope::Keychain {
-            keychain_account: "x".to_owned(),
+    fn unwrap_rejects_totp_envelope() {
+        let env = Envelope::Totp {
+            totp_salt: b64_encode(&[0; 32]),
             wrapped_key: b64_encode(&[0; 64]),
         };
         assert!(matches!(
             unwrap_recovery(&env, &sample_phrase()).unwrap_err(),
-            RecoveryError::WrongKind { kind: "keychain" }
+            RecoveryError::WrongKind { kind: "totp" }
         ));
     }
 

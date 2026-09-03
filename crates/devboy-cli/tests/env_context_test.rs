@@ -256,14 +256,31 @@ fn test_ci_chain_context_tokens() {
     );
 }
 
+/// ADR-024 §6: the CI chain has no writable member.
+///
+/// It used to pair the env store with `MemoryStore`, so this test
+/// asserted that a write "worked" — but the value only lived until
+/// process exit. Silent data loss is fine as a test shim and wrong
+/// as CI behaviour, so the write now fails and the value stays
+/// unreadable.
 #[test]
-fn test_ci_chain_write_to_memory() {
+fn test_ci_chain_refuses_writes() {
     let chain = ChainStore::ci_chain();
-    chain
+
+    let err = chain
         .store("ci.context.test.key", &secret("test_value"))
-        .expect("Should be able to write in CI chain");
-    let result = chain.get("ci.context.test.key").unwrap();
-    assert_secret_eq(result, Some("test_value"));
+        .expect_err("writes must fail in CI rather than vanish at process exit");
+    let message = err.to_string();
+    assert!(
+        message.contains("ci.context.test.key"),
+        "error should name the key that could not be stored, got: {message}"
+    );
+    assert!(
+        message.contains("environment variable"),
+        "error should point at the one mechanism that works in CI, got: {message}"
+    );
+
+    assert_secret_eq(chain.get("ci.context.test.key").unwrap(), None);
 }
 
 // =============================================================================

@@ -11,10 +11,14 @@ pub use devboy_mcp::ToolOutput
 pub use devboy_mcp::ToolSchema
 pub mod devboy_mcp::agent_safety
 pub trait devboy_mcp::agent_safety::AgentSafeReply: serde_core::ser::Serialize
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::remediation::Remediation
 impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_provision::ProvisionStatusReply
 impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_provision::RequestIdReply
 impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_tool::SecretsDescribeReply
 impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_tool::SecretsListItem
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_validate::SecretsValidateReply
 pub mod devboy_mcp::handlers
 pub const devboy_mcp::handlers::KNOWN_BUILTIN_TOOLS: &[&str]
 pub mod devboy_mcp::layered
@@ -601,6 +605,174 @@ impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::proxy_secrets::Rewr
 impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::proxy_secrets::RewriteOutcome
 pub const devboy_mcp::proxy_secrets::WHITELISTED_HEADERS: &[&str]
 pub fn devboy_mcp::proxy_secrets::rewrite_outgoing_headers<R, F>(headers: &mut http::header::map::HeaderMap, resolver: &devboy_core::secret_approval::ApprovalGatedResolver<R, F>) -> core::result::Result<devboy_mcp::proxy_secrets::RewriteOutcome, devboy_mcp::proxy_secrets::ProxyHeaderError> where R: devboy_core::alias::SecretResolver, F: core::ops::function::Fn(&str) -> devboy_core::secret_approval::ApproveOnUsePolicy + core::marker::Send + core::marker::Sync
+pub mod devboy_mcp::remediation
+pub enum devboy_mcp::remediation::RemediationAction
+pub devboy_mcp::remediation::RemediationAction::AskUserToApprove
+pub devboy_mcp::remediation::RemediationAction::AskUserToProvision
+pub devboy_mcp::remediation::RemediationAction::AskUserToRestartDaemon
+pub devboy_mcp::remediation::RemediationAction::AskUserToRotate
+pub devboy_mcp::remediation::RemediationAction::AskUserToStartDaemon
+pub devboy_mcp::remediation::RemediationAction::AskUserToUnlock
+pub devboy_mcp::remediation::RemediationAction::None
+pub devboy_mcp::remediation::RemediationAction::RequestFreshTotp
+pub devboy_mcp::remediation::RemediationAction::RequestTotp
+pub devboy_mcp::remediation::RemediationAction::RetryAfter
+pub devboy_mcp::remediation::RemediationAction::SetEnvVar
+impl core::clone::Clone for devboy_mcp::remediation::RemediationAction
+pub fn devboy_mcp::remediation::RemediationAction::clone(&self) -> devboy_mcp::remediation::RemediationAction
+impl core::cmp::Eq for devboy_mcp::remediation::RemediationAction
+impl core::cmp::PartialEq for devboy_mcp::remediation::RemediationAction
+pub fn devboy_mcp::remediation::RemediationAction::eq(&self, other: &devboy_mcp::remediation::RemediationAction) -> bool
+impl core::fmt::Debug for devboy_mcp::remediation::RemediationAction
+pub fn devboy_mcp::remediation::RemediationAction::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::remediation::RemediationAction
+impl core::marker::StructuralPartialEq for devboy_mcp::remediation::RemediationAction
+impl serde_core::ser::Serialize for devboy_mcp::remediation::RemediationAction
+pub fn devboy_mcp::remediation::RemediationAction::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::remediation::RemediationAction
+pub fn devboy_mcp::remediation::RemediationAction::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::remediation::RemediationAction
+impl core::marker::Send for devboy_mcp::remediation::RemediationAction
+impl core::marker::Sync for devboy_mcp::remediation::RemediationAction
+impl core::marker::Unpin for devboy_mcp::remediation::RemediationAction
+impl core::marker::UnsafeUnpin for devboy_mcp::remediation::RemediationAction
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::remediation::RemediationAction
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::remediation::RemediationAction
+pub enum devboy_mcp::remediation::RemediationActor
+pub devboy_mcp::remediation::RemediationActor::Agent
+pub devboy_mcp::remediation::RemediationActor::User
+impl core::clone::Clone for devboy_mcp::remediation::RemediationActor
+pub fn devboy_mcp::remediation::RemediationActor::clone(&self) -> devboy_mcp::remediation::RemediationActor
+impl core::cmp::Eq for devboy_mcp::remediation::RemediationActor
+impl core::cmp::PartialEq for devboy_mcp::remediation::RemediationActor
+pub fn devboy_mcp::remediation::RemediationActor::eq(&self, other: &devboy_mcp::remediation::RemediationActor) -> bool
+impl core::fmt::Debug for devboy_mcp::remediation::RemediationActor
+pub fn devboy_mcp::remediation::RemediationActor::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::remediation::RemediationActor
+impl core::marker::StructuralPartialEq for devboy_mcp::remediation::RemediationActor
+impl serde_core::ser::Serialize for devboy_mcp::remediation::RemediationActor
+pub fn devboy_mcp::remediation::RemediationActor::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::remediation::RemediationActor
+pub fn devboy_mcp::remediation::RemediationActor::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::remediation::RemediationActor
+impl core::marker::Send for devboy_mcp::remediation::RemediationActor
+impl core::marker::Sync for devboy_mcp::remediation::RemediationActor
+impl core::marker::Unpin for devboy_mcp::remediation::RemediationActor
+impl core::marker::UnsafeUnpin for devboy_mcp::remediation::RemediationActor
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::remediation::RemediationActor
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::remediation::RemediationActor
+pub enum devboy_mcp::remediation::SecretsErrorKind
+pub devboy_mcp::remediation::SecretsErrorKind::ApprovalDenied
+pub devboy_mcp::remediation::SecretsErrorKind::ApprovalRequired
+pub devboy_mcp::remediation::SecretsErrorKind::BadTotp
+pub devboy_mcp::remediation::SecretsErrorKind::DaemonNotRunning
+pub devboy_mcp::remediation::SecretsErrorKind::DaemonUntrusted
+pub devboy_mcp::remediation::SecretsErrorKind::LivenessFailed
+pub devboy_mcp::remediation::SecretsErrorKind::LockedTotpAvailable
+pub devboy_mcp::remediation::SecretsErrorKind::NotAvailableInCiMode
+pub devboy_mcp::remediation::SecretsErrorKind::NotProvisioned
+pub devboy_mcp::remediation::SecretsErrorKind::RateLimited
+pub devboy_mcp::remediation::SecretsErrorKind::ReplayedCode
+pub devboy_mcp::remediation::SecretsErrorKind::TotpUnavailable
+impl devboy_mcp::remediation::SecretsErrorKind
+pub fn devboy_mcp::remediation::SecretsErrorKind::as_str(self) -> &'static str
+pub fn devboy_mcp::remediation::SecretsErrorKind::remediation(self, ctx: &devboy_mcp::remediation::RemediationContext) -> devboy_mcp::remediation::Remediation
+impl core::clone::Clone for devboy_mcp::remediation::SecretsErrorKind
+pub fn devboy_mcp::remediation::SecretsErrorKind::clone(&self) -> devboy_mcp::remediation::SecretsErrorKind
+impl core::cmp::Eq for devboy_mcp::remediation::SecretsErrorKind
+impl core::cmp::PartialEq for devboy_mcp::remediation::SecretsErrorKind
+pub fn devboy_mcp::remediation::SecretsErrorKind::eq(&self, other: &devboy_mcp::remediation::SecretsErrorKind) -> bool
+impl core::fmt::Debug for devboy_mcp::remediation::SecretsErrorKind
+pub fn devboy_mcp::remediation::SecretsErrorKind::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::remediation::SecretsErrorKind
+impl core::marker::StructuralPartialEq for devboy_mcp::remediation::SecretsErrorKind
+impl serde_core::ser::Serialize for devboy_mcp::remediation::SecretsErrorKind
+pub fn devboy_mcp::remediation::SecretsErrorKind::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::remediation::SecretsErrorKind
+pub fn devboy_mcp::remediation::SecretsErrorKind::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::remediation::SecretsErrorKind
+impl core::marker::Send for devboy_mcp::remediation::SecretsErrorKind
+impl core::marker::Sync for devboy_mcp::remediation::SecretsErrorKind
+impl core::marker::Unpin for devboy_mcp::remediation::SecretsErrorKind
+impl core::marker::UnsafeUnpin for devboy_mcp::remediation::SecretsErrorKind
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::remediation::SecretsErrorKind
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::remediation::SecretsErrorKind
+pub struct devboy_mcp::remediation::Remediation
+pub devboy_mcp::remediation::Remediation::action: devboy_mcp::remediation::RemediationAction
+pub devboy_mcp::remediation::Remediation::actor: devboy_mcp::remediation::RemediationActor
+pub devboy_mcp::remediation::Remediation::retry_after_seconds: core::option::Option<u64>
+pub devboy_mcp::remediation::Remediation::retryable: bool
+pub devboy_mcp::remediation::Remediation::user_message: alloc::string::String
+impl core::clone::Clone for devboy_mcp::remediation::Remediation
+pub fn devboy_mcp::remediation::Remediation::clone(&self) -> devboy_mcp::remediation::Remediation
+impl core::cmp::Eq for devboy_mcp::remediation::Remediation
+impl core::cmp::PartialEq for devboy_mcp::remediation::Remediation
+pub fn devboy_mcp::remediation::Remediation::eq(&self, other: &devboy_mcp::remediation::Remediation) -> bool
+impl core::fmt::Debug for devboy_mcp::remediation::Remediation
+pub fn devboy_mcp::remediation::Remediation::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::remediation::Remediation
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::remediation::Remediation
+impl serde_core::ser::Serialize for devboy_mcp::remediation::Remediation
+pub fn devboy_mcp::remediation::Remediation::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::remediation::Remediation
+pub fn devboy_mcp::remediation::Remediation::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::remediation::Remediation
+impl core::marker::Send for devboy_mcp::remediation::Remediation
+impl core::marker::Sync for devboy_mcp::remediation::Remediation
+impl core::marker::Unpin for devboy_mcp::remediation::Remediation
+impl core::marker::UnsafeUnpin for devboy_mcp::remediation::Remediation
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::remediation::Remediation
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::remediation::Remediation
+pub struct devboy_mcp::remediation::RemediationContext
+pub devboy_mcp::remediation::RemediationContext::daemon_start_command: core::option::Option<alloc::string::String>
+pub devboy_mcp::remediation::RemediationContext::description: core::option::Option<alloc::string::String>
+pub devboy_mcp::remediation::RemediationContext::env_candidates: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::remediation::RemediationContext::expires_at_hint: core::option::Option<alloc::string::String>
+pub devboy_mcp::remediation::RemediationContext::path: core::option::Option<alloc::string::String>
+pub devboy_mcp::remediation::RemediationContext::required_scopes: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::remediation::RemediationContext::retrieval_url: core::option::Option<alloc::string::String>
+pub devboy_mcp::remediation::RemediationContext::retry_after_seconds: core::option::Option<u64>
+pub devboy_mcp::remediation::RemediationContext::rotation_method: core::option::Option<alloc::string::String>
+impl devboy_mcp::remediation::RemediationContext
+pub fn devboy_mcp::remediation::RemediationContext::empty() -> Self
+pub fn devboy_mcp::remediation::RemediationContext::for_path(path: impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for devboy_mcp::remediation::RemediationContext
+pub fn devboy_mcp::remediation::RemediationContext::clone(&self) -> devboy_mcp::remediation::RemediationContext
+impl core::default::Default for devboy_mcp::remediation::RemediationContext
+pub fn devboy_mcp::remediation::RemediationContext::default() -> devboy_mcp::remediation::RemediationContext
+impl core::fmt::Debug for devboy_mcp::remediation::RemediationContext
+pub fn devboy_mcp::remediation::RemediationContext::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for devboy_mcp::remediation::RemediationContext
+impl core::marker::Send for devboy_mcp::remediation::RemediationContext
+impl core::marker::Sync for devboy_mcp::remediation::RemediationContext
+impl core::marker::Unpin for devboy_mcp::remediation::RemediationContext
+impl core::marker::UnsafeUnpin for devboy_mcp::remediation::RemediationContext
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::remediation::RemediationContext
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::remediation::RemediationContext
+pub const devboy_mcp::remediation::ALL_ERROR_KINDS: &[devboy_mcp::remediation::SecretsErrorKind]
+pub mod devboy_mcp::response_scrub
+pub struct devboy_mcp::response_scrub::CredentialRegistry
+impl devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::CredentialRegistry::is_empty(&self) -> bool
+pub fn devboy_mcp::response_scrub::CredentialRegistry::len(&self) -> usize
+pub fn devboy_mcp::response_scrub::CredentialRegistry::new() -> Self
+pub fn devboy_mcp::response_scrub::CredentialRegistry::remember(&self, label: impl core::convert::Into<alloc::string::String>, value: &str)
+impl core::default::Default for devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::CredentialRegistry::default() -> devboy_mcp::response_scrub::CredentialRegistry
+impl core::fmt::Debug for devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::CredentialRegistry::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl !core::marker::Freeze for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::Send for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::Sync for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::Unpin for devboy_mcp::response_scrub::CredentialRegistry
+impl core::marker::UnsafeUnpin for devboy_mcp::response_scrub::CredentialRegistry
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::response_scrub::CredentialRegistry
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::response_scrub::CredentialRegistry
+pub fn devboy_mcp::response_scrub::leak_summary(replacements: &[devboy_secret_patterns::scrubber::Replacement]) -> alloc::string::String
+pub fn devboy_mcp::response_scrub::oauth_token_label(upstream: &str) -> alloc::string::String
+pub fn devboy_mcp::response_scrub::scrub_text(upstream: &str, registry: &devboy_mcp::response_scrub::CredentialRegistry, text: &str) -> alloc::string::String
+pub fn devboy_mcp::response_scrub::scrub_tool_result(upstream: &str, registry: &devboy_mcp::response_scrub::CredentialRegistry, result: devboy_mcp::protocol::ToolCallResult) -> devboy_mcp::protocol::ToolCallResult
+pub fn devboy_mcp::response_scrub::static_token_label(upstream: &str) -> alloc::string::String
 pub mod devboy_mcp::routing
 pub enum devboy_mcp::routing::RoutingReason
 pub devboy_mcp::routing::RoutingReason::ExplicitPrefix
@@ -1134,6 +1306,171 @@ impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_tool::SecretsL
 pub fn devboy_mcp::secrets_tool::describe(index: &devboy_storage::index::GlobalIndex, manifest: &devboy_storage::manifest::ProjectManifest, path: &str, today: chrono::naive::date::NaiveDate) -> core::result::Result<devboy_mcp::secrets_tool::SecretsDescribeReply, devboy_mcp::secrets_tool::SecretsToolError>
 pub fn devboy_mcp::secrets_tool::list(index: &devboy_storage::index::GlobalIndex, manifest: &devboy_storage::manifest::ProjectManifest, filter: &devboy_mcp::secrets_tool::SecretsListFilter, today: chrono::naive::date::NaiveDate) -> core::result::Result<alloc::vec::Vec<devboy_mcp::secrets_tool::SecretsListItem>, devboy_mcp::secrets_tool::SecretsToolError>
 pub fn devboy_mcp::secrets_tool::today_local() -> chrono::naive::date::NaiveDate
+pub mod devboy_mcp::secrets_unlock
+pub struct devboy_mcp::secrets_unlock::SecretsStatusReply
+pub devboy_mcp::secrets_unlock::SecretsStatusReply::available_methods: alloc::vec::Vec<alloc::string::String>
+pub devboy_mcp::secrets_unlock::SecretsStatusReply::expires_in_seconds: core::option::Option<u64>
+pub devboy_mcp::secrets_unlock::SecretsStatusReply::state: alloc::string::String
+pub devboy_mcp::secrets_unlock::SecretsStatusReply::trust_level: alloc::string::String
+impl core::clone::Clone for devboy_mcp::secrets_unlock::SecretsStatusReply
+pub fn devboy_mcp::secrets_unlock::SecretsStatusReply::clone(&self) -> devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::cmp::Eq for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::cmp::PartialEq for devboy_mcp::secrets_unlock::SecretsStatusReply
+pub fn devboy_mcp::secrets_unlock::SecretsStatusReply::eq(&self, other: &devboy_mcp::secrets_unlock::SecretsStatusReply) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_unlock::SecretsStatusReply
+pub fn devboy_mcp::secrets_unlock::SecretsStatusReply::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl serde_core::ser::Serialize for devboy_mcp::secrets_unlock::SecretsStatusReply
+pub fn devboy_mcp::secrets_unlock::SecretsStatusReply::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::marker::Send for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::marker::Sync for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::marker::Unpin for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_unlock::SecretsStatusReply
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_unlock::SecretsStatusReply
+pub struct devboy_mcp::secrets_unlock::SecretsUnlockArgs
+pub devboy_mcp::secrets_unlock::SecretsUnlockArgs::duration_seconds: core::option::Option<u64>
+pub devboy_mcp::secrets_unlock::SecretsUnlockArgs::totp: alloc::string::String
+impl core::clone::Clone for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+pub fn devboy_mcp::secrets_unlock::SecretsUnlockArgs::clone(&self) -> devboy_mcp::secrets_unlock::SecretsUnlockArgs
+impl core::fmt::Debug for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+pub fn devboy_mcp::secrets_unlock::SecretsUnlockArgs::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+pub fn devboy_mcp::secrets_unlock::SecretsUnlockArgs::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+impl core::marker::Send for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+impl core::marker::Sync for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+impl core::marker::Unpin for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_unlock::SecretsUnlockArgs
+pub struct devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub devboy_mcp::secrets_unlock::SecretsUnlockReply::granted_seconds: core::option::Option<u64>
+pub devboy_mcp::secrets_unlock::SecretsUnlockReply::remediation: core::option::Option<devboy_mcp::remediation::Remediation>
+pub devboy_mcp::secrets_unlock::SecretsUnlockReply::unlocked: bool
+impl core::clone::Clone for devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub fn devboy_mcp::secrets_unlock::SecretsUnlockReply::clone(&self) -> devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::cmp::Eq for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::cmp::PartialEq for devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub fn devboy_mcp::secrets_unlock::SecretsUnlockReply::eq(&self, other: &devboy_mcp::secrets_unlock::SecretsUnlockReply) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub fn devboy_mcp::secrets_unlock::SecretsUnlockReply::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl serde_core::ser::Serialize for devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub fn devboy_mcp::secrets_unlock::SecretsUnlockReply::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl core::marker::Freeze for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::marker::Send for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::marker::Sync for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::marker::Unpin for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_unlock::SecretsUnlockReply
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub fn devboy_mcp::secrets_unlock::kind_for_daemon_code(code: i32) -> devboy_mcp::remediation::SecretsErrorKind
+pub fn devboy_mcp::secrets_unlock::status() -> devboy_mcp::secrets_unlock::SecretsStatusReply
+pub fn devboy_mcp::secrets_unlock::unlock(args: &devboy_mcp::secrets_unlock::SecretsUnlockArgs, ctx: &devboy_mcp::remediation::RemediationContext) -> devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub fn devboy_mcp::secrets_unlock::unlock_failure(code: i32, ctx: &devboy_mcp::remediation::RemediationContext) -> devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub fn devboy_mcp::secrets_unlock::unlock_success(granted_seconds: u64) -> devboy_mcp::secrets_unlock::SecretsUnlockReply
+pub mod devboy_mcp::secrets_validate
+pub enum devboy_mcp::secrets_validate::FormatVerdict
+pub devboy_mcp::secrets_validate::FormatVerdict::Invalid
+pub devboy_mcp::secrets_validate::FormatVerdict::Ok
+pub devboy_mcp::secrets_validate::FormatVerdict::Unknown
+impl core::clone::Clone for devboy_mcp::secrets_validate::FormatVerdict
+pub fn devboy_mcp::secrets_validate::FormatVerdict::clone(&self) -> devboy_mcp::secrets_validate::FormatVerdict
+impl core::cmp::Eq for devboy_mcp::secrets_validate::FormatVerdict
+impl core::cmp::PartialEq for devboy_mcp::secrets_validate::FormatVerdict
+pub fn devboy_mcp::secrets_validate::FormatVerdict::eq(&self, other: &devboy_mcp::secrets_validate::FormatVerdict) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_validate::FormatVerdict
+pub fn devboy_mcp::secrets_validate::FormatVerdict::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::secrets_validate::FormatVerdict
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_validate::FormatVerdict
+impl serde_core::ser::Serialize for devboy_mcp::secrets_validate::FormatVerdict
+pub fn devboy_mcp::secrets_validate::FormatVerdict::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_validate::FormatVerdict
+pub fn devboy_mcp::secrets_validate::FormatVerdict::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_validate::FormatVerdict
+impl core::marker::Send for devboy_mcp::secrets_validate::FormatVerdict
+impl core::marker::Sync for devboy_mcp::secrets_validate::FormatVerdict
+impl core::marker::Unpin for devboy_mcp::secrets_validate::FormatVerdict
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_validate::FormatVerdict
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_validate::FormatVerdict
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_validate::FormatVerdict
+pub enum devboy_mcp::secrets_validate::LivenessVerdict
+pub devboy_mcp::secrets_validate::LivenessVerdict::Invalid
+pub devboy_mcp::secrets_validate::LivenessVerdict::Ok
+pub devboy_mcp::secrets_validate::LivenessVerdict::Unreachable
+pub devboy_mcp::secrets_validate::LivenessVerdict::Unsupported
+impl core::clone::Clone for devboy_mcp::secrets_validate::LivenessVerdict
+pub fn devboy_mcp::secrets_validate::LivenessVerdict::clone(&self) -> devboy_mcp::secrets_validate::LivenessVerdict
+impl core::cmp::Eq for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::cmp::PartialEq for devboy_mcp::secrets_validate::LivenessVerdict
+pub fn devboy_mcp::secrets_validate::LivenessVerdict::eq(&self, other: &devboy_mcp::secrets_validate::LivenessVerdict) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_validate::LivenessVerdict
+pub fn devboy_mcp::secrets_validate::LivenessVerdict::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_validate::LivenessVerdict
+impl serde_core::ser::Serialize for devboy_mcp::secrets_validate::LivenessVerdict
+pub fn devboy_mcp::secrets_validate::LivenessVerdict::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_validate::LivenessVerdict
+pub fn devboy_mcp::secrets_validate::LivenessVerdict::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::marker::Send for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::marker::Sync for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::marker::Unpin for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_validate::LivenessVerdict
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_validate::LivenessVerdict
+pub struct devboy_mcp::secrets_validate::SecretsValidateArgs
+pub devboy_mcp::secrets_validate::SecretsValidateArgs::liveness: bool
+pub devboy_mcp::secrets_validate::SecretsValidateArgs::path: alloc::string::String
+impl core::clone::Clone for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::clone(&self) -> devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::fmt::Debug for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub fn devboy_mcp::secrets_validate::SecretsValidateArgs::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::Send for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::Sync for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::Unpin for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_validate::SecretsValidateArgs
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_validate::SecretsValidateArgs
+pub struct devboy_mcp::secrets_validate::SecretsValidateReply
+pub devboy_mcp::secrets_validate::SecretsValidateReply::expires_at: core::option::Option<alloc::string::String>
+pub devboy_mcp::secrets_validate::SecretsValidateReply::format: devboy_mcp::secrets_validate::FormatVerdict
+pub devboy_mcp::secrets_validate::SecretsValidateReply::liveness: core::option::Option<devboy_mcp::secrets_validate::LivenessVerdict>
+pub devboy_mcp::secrets_validate::SecretsValidateReply::path: alloc::string::String
+pub devboy_mcp::secrets_validate::SecretsValidateReply::remediation: core::option::Option<devboy_mcp::remediation::Remediation>
+impl devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::SecretsValidateReply::is_healthy(&self) -> bool
+pub fn devboy_mcp::secrets_validate::SecretsValidateReply::new(path: impl core::convert::Into<alloc::string::String>, format: devboy_mcp::secrets_validate::FormatVerdict, liveness: core::option::Option<devboy_mcp::secrets_validate::LivenessVerdict>, ctx: &devboy_mcp::remediation::RemediationContext) -> Self
+impl core::clone::Clone for devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::SecretsValidateReply::clone(&self) -> devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::cmp::Eq for devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::cmp::PartialEq for devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::SecretsValidateReply::eq(&self, other: &devboy_mcp::secrets_validate::SecretsValidateReply) -> bool
+impl core::fmt::Debug for devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::SecretsValidateReply::fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for devboy_mcp::secrets_validate::SecretsValidateReply
+impl devboy_mcp::agent_safety::AgentSafeReply for devboy_mcp::secrets_validate::SecretsValidateReply
+impl serde_core::ser::Serialize for devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::SecretsValidateReply::serialize<__S>(&self, __serializer: __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::SecretsValidateReply::deserialize<__D>(__deserializer: __D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl core::marker::Freeze for devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::marker::Send for devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::marker::Sync for devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::marker::Unpin for devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::marker::UnsafeUnpin for devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::panic::unwind_safe::RefUnwindSafe for devboy_mcp::secrets_validate::SecretsValidateReply
+impl core::panic::unwind_safe::UnwindSafe for devboy_mcp::secrets_validate::SecretsValidateReply
+pub fn devboy_mcp::secrets_validate::validate(args: &devboy_mcp::secrets_validate::SecretsValidateArgs, ctx: &devboy_mcp::remediation::RemediationContext) -> devboy_mcp::secrets_validate::SecretsValidateReply
 pub mod devboy_mcp::server
 pub struct devboy_mcp::server::DeferredInit
 pub devboy_mcp::server::DeferredInit::builtin_tools_config: core::option::Option<devboy_core::config::BuiltinToolsConfig>

@@ -42,6 +42,10 @@ tokio-util = { version = "0.7", features = ["io"] }
 async-trait.workspace = true
 thiserror.workspace = true
 secrecy.workspace = true
+devboy-secrets-agent.workspace = true
+# Reverse-scrubbing upstream tool results before they reach the
+# agent's transcript (Ф15).
+devboy-secret-patterns.workspace = true
 
 [dev-dependencies]
 mockall.workspace = true

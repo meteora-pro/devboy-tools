@@ -26,6 +26,7 @@ name = "devboy_secrets_agent"
 path = "src/lib.rs"
 
 [dependencies]
+devboy-core.workspace = true
 devboy-vault-crypto.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -34,13 +35,27 @@ tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
 secrecy.workspace = true
 dirs.workspace = true
+devboy-secret-patterns.workspace = true
+reqwest = { workspace = true }
+# Not unix-gated: `totp_session` holds the shared secret in a
+# `Zeroizing` buffer and compiles on every platform.
+zeroize = "1.8"
 
 # Unix-only deps for socket creation, file permissions, and peer credential checks.
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.30", default-features = false, features = ["user", "process"] }
+# `term` carries both halves the passphrase prompt needs: termios
+# for the echo-off dance, and `nix::pty` so the tests can drive that
+# prompt over a real terminal rather than a stand-in. `fs` adds
+# `isatty`, which is how a caller-supplied terminal path is checked
+# to actually be a terminal (Ф14).
+nix = { version = "0.30", default-features = false, features = ["user", "process", "term", "fs"] }
 
 [dev-dependencies]
+httpmock.workspace = true
+base64.workspace = true
 tempfile.workspace = true
+# Base32 for seeding the TOTP slot the way enrolment does.
+data-encoding.workspace = true
 temp-env = "0.3"
 
 [lints]

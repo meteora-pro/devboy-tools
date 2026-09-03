@@ -112,6 +112,12 @@ pub struct UserPattern {
     display_name: String,
     severity: Severity,
     regex: Regex,
+    /// Scanning form of `regex`, derived at load time. `None` when the
+    /// pattern is unfit to scan free text — see [`crate::scanning`].
+    /// Derived here rather than lazily because the whole file is
+    /// compiled up-front anyway, and a user pattern that will never
+    /// scan is worth knowing about at load.
+    scan: Option<Regex>,
     metadata: Option<PatternMetadata>,
 }
 
@@ -133,6 +139,9 @@ impl SecretPattern for UserPattern {
     }
     fn format_regex(&self) -> &Regex {
         &self.regex
+    }
+    fn scan_regex(&self) -> Option<&Regex> {
+        self.scan.as_ref()
     }
     fn severity(&self) -> Severity {
         self.severity
@@ -214,6 +223,21 @@ pub struct LoadWarning {
     pub kind: LoadWarningKind,
     /// Identifier or filename the warning concerns.
     pub subject: String,
+}
+
+impl std::fmt::Display for LoadWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            LoadWarningKind::ShadowsBuiltin => write!(
+                f,
+                "`{}` shadows a built-in pattern of the same id; yours wins",
+                self.subject
+            ),
+            LoadWarningKind::SkippedNonToml => {
+                write!(f, "skipped {} — not a .toml file", self.subject)
+            }
+        }
+    }
 }
 
 /// Categories of advisory warnings.
@@ -357,12 +381,18 @@ impl Catalogue {
                     );
                 }
 
+                // Derived from the same source the regex was built
+                // from, so a user pattern gets embedded-match
+                // redaction on exactly the same terms as a built-in.
+                let scan = crate::scanning::scanning_regex(&entry.format_regex);
+
                 id_origin.insert(entry.id.clone(), path.clone());
                 cat.user_patterns.push(UserPattern {
                     id: entry.id,
                     display_name: entry.display_name,
                     severity: entry.severity,
                     regex,
+                    scan,
                     metadata,
                 });
             }

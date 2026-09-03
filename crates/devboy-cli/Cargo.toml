@@ -89,6 +89,9 @@ tar = "0.4"
 secrecy.workspace = true
 sentry = { workspace = true, optional = true }
 sentry-tracing = { workspace = true, optional = true }
+qrcode = { version = "0.14.1", default-features = false }
+data-encoding.workspace = true
+devboy-vault-crypto.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 zip = "8.4"

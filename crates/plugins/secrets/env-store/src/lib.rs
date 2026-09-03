@@ -230,6 +230,16 @@ impl EnvStoreSource {
         }
         self.file_values.get(var_name).cloned()
     }
+
+    /// Every environment variable this source would try for
+    /// `reference`, in order — including the manifest alias when
+    /// one is registered.
+    ///
+    /// A not-found error should list these verbatim so the user
+    /// can set one of them without guessing.
+    pub fn candidate_names(&self, reference: &str) -> Vec<String> {
+        candidate_env_names(reference, self.aliases.get(reference).map(String::as_str))
+    }
 }
 
 #[async_trait]
@@ -258,23 +268,30 @@ impl SecretSource for EnvStoreSource {
                 reason: "reference must be a non-empty path".to_owned(),
             });
         }
-        // Tier 1: manifest alias.
-        if let Some(var_name) = self.aliases.get(reference)
-            && let Some(value) = self.lookup_var(var_name)
-        {
-            return Ok(Some(GetOutcome {
-                value,
-                lease_duration: None,
-            }));
+        // Tiers 1-4 in order: manifest alias, ADR-021 convention
+        // name, then the ADR-005 legacy names. `lookup_var`
+        // consults the process environment and the
+        // `DEVBOY_SECRETS_FILE` fallback for each candidate, so
+        // the file is not a separate tier.
+        for name in self.candidate_names(reference) {
+            if let Some(value) = self.lookup_var(&name) {
+                debug!(
+                    reference = reference,
+                    env_var = %name,
+                    "resolved secret from environment"
+                );
+                return Ok(Some(GetOutcome {
+                    value,
+                    lease_duration: None,
+                }));
+            }
         }
-        // Tier 2: convention name.
-        let conv = convention_name(reference);
-        if let Some(value) = self.lookup_var(&conv) {
-            return Ok(Some(GetOutcome {
-                value,
-                lease_duration: None,
-            }));
-        }
+
+        debug!(
+            reference = reference,
+            candidates = ?self.candidate_names(reference),
+            "secret not present under any known environment variable name"
+        );
         Ok(None)
     }
 
@@ -334,6 +351,87 @@ pub fn convention_name(path: &str) -> String {
     out
 }
 
+/// Legacy (ADR-005) env-var names an ADR-020 path may also answer
+/// to, most specific first: `DEVBOY_<NAME>` then bare `<NAME>`.
+///
+/// ADR-005's `EnvVarStore` keys on `provider.field` and reads
+/// `DEVBOY_GITHUB_TOKEN` with a bare `GITHUB_TOKEN` fallback.
+/// ADR-020 paths are hierarchical, so the mapping takes the **last
+/// two segments** — which is exactly the provider/field pair in
+/// practice:
+///
+/// - `team/gitlab/token` → `DEVBOY_GITLAB_TOKEN`, `GITLAB_TOKEN`
+/// - `personal/github/token` → `DEVBOY_GITHUB_TOKEN`, `GITHUB_TOKEN`
+/// - `team/gitlab/token-deploy` → `DEVBOY_GITLAB_TOKEN_DEPLOY`, …
+///
+/// This exists so the ADR-024 §6 default flip does not silently
+/// break pipelines written against ADR-005 names — a broken
+/// pipeline would surface as "secret not found", not as an obvious
+/// error, which is the worst possible failure mode.
+///
+/// The bare form is **omitted for single-segment names**: a path
+/// like `token` would otherwise claim the wildly generic `TOKEN`
+/// environment variable. The prefixed form is always safe.
+pub fn legacy_names(path: &str) -> Vec<String> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return Vec::new();
+    }
+
+    let tail = if segments.len() >= 2 {
+        &segments[segments.len() - 2..]
+    } else {
+        &segments[..]
+    };
+
+    let joined = tail.join("_");
+    let upper: String = joined
+        .chars()
+        .map(|c| {
+            if c == '-' {
+                '_'
+            } else {
+                c.to_ascii_uppercase()
+            }
+        })
+        .collect();
+
+    let mut out = vec![format!("DEVBOY_{upper}")];
+    // Only offer the unprefixed form when the name is specific
+    // enough to be worth claiming.
+    if tail.len() >= 2 {
+        out.push(upper);
+    }
+    out
+}
+
+/// Every environment variable that could satisfy `path`, in
+/// resolution order (ADR-024 §6).
+///
+/// 1. the manifest's explicit `env_var` alias,
+/// 2. the ADR-021 convention name,
+/// 3. the ADR-005 prefixed name,
+/// 4. the ADR-005 bare name.
+///
+/// `DEVBOY_SECRETS_FILE` is not a separate entry: it is consulted
+/// for *each* of these names by the lookup itself.
+///
+/// Exposed so a not-found error can list every name that was
+/// tried — the fix then pastes straight into a CI config.
+pub fn candidate_env_names(path: &str, alias: Option<&str>) -> Vec<String> {
+    let mut out = Vec::with_capacity(4);
+    if let Some(alias) = alias {
+        out.push(alias.to_owned());
+    }
+    out.push(convention_name(path));
+    for name in legacy_names(path) {
+        if !out.contains(&name) {
+            out.push(name);
+        }
+    }
+    out
+}
+
 /// Strip surrounding `"..."` or `'...'` from a value.
 fn strip_quotes(s: &str) -> &str {
     if s.len() >= 2 {
@@ -379,6 +477,164 @@ fn strip_inline_comment(line: &str) -> &str {
 // =============================================================================
 // Tests
 // =============================================================================
+
+#[cfg(test)]
+mod legacy_compat_tests {
+    use super::*;
+
+    /// The whole point of ADR-024 §6's five-step order: a pipeline
+    /// written against ADR-005 names must keep working after the
+    /// default flip. Breaking this surfaces as "secret not found",
+    /// not as an obvious error, so it gets an explicit test.
+    #[test]
+    fn provider_field_paths_map_to_the_classic_names() {
+        assert_eq!(
+            legacy_names("team/gitlab/token"),
+            vec!["DEVBOY_GITLAB_TOKEN", "GITLAB_TOKEN"]
+        );
+        assert_eq!(
+            legacy_names("personal/github/token"),
+            vec!["DEVBOY_GITHUB_TOKEN", "GITHUB_TOKEN"]
+        );
+    }
+
+    #[test]
+    fn hyphens_become_underscores() {
+        assert_eq!(
+            legacy_names("team/gitlab/token-deploy"),
+            vec!["DEVBOY_GITLAB_TOKEN_DEPLOY", "GITLAB_TOKEN_DEPLOY"]
+        );
+    }
+
+    /// Only the last two segments participate, so a deep path
+    /// still lands on the provider/field pair.
+    #[test]
+    fn only_the_last_two_segments_are_used() {
+        assert_eq!(
+            legacy_names("a/b/c/gitlab/token"),
+            vec!["DEVBOY_GITLAB_TOKEN", "GITLAB_TOKEN"]
+        );
+    }
+
+    /// A single-segment path must not claim a wildly generic bare
+    /// variable like `TOKEN`; the prefixed form is still offered.
+    #[test]
+    fn single_segment_paths_do_not_claim_bare_variables() {
+        assert_eq!(legacy_names("token"), vec!["DEVBOY_TOKEN"]);
+        assert_eq!(legacy_names("github"), vec!["DEVBOY_GITHUB"]);
+    }
+
+    #[test]
+    fn empty_and_slash_only_paths_yield_nothing() {
+        assert!(legacy_names("").is_empty());
+        assert!(legacy_names("///").is_empty());
+    }
+
+    #[test]
+    fn candidate_order_is_alias_then_convention_then_legacy() {
+        let names = candidate_env_names("team/gitlab/token", Some("MY_ALIAS"));
+        assert_eq!(
+            names,
+            vec![
+                "MY_ALIAS",
+                "DEVBOY_SECRET__TEAM__GITLAB__TOKEN",
+                "DEVBOY_GITLAB_TOKEN",
+                "GITLAB_TOKEN",
+            ]
+        );
+    }
+
+    #[test]
+    fn candidates_without_alias_start_at_the_convention_name() {
+        let names = candidate_env_names("team/gitlab/token", None);
+        assert_eq!(names[0], "DEVBOY_SECRET__TEAM__GITLAB__TOKEN");
+        assert_eq!(names.len(), 3);
+    }
+
+    /// An alias that happens to equal a legacy name must not be
+    /// listed twice — the not-found message is user-facing.
+    #[test]
+    fn duplicate_candidates_are_collapsed() {
+        let names = candidate_env_names("team/gitlab/token", Some("GITLAB_TOKEN"));
+        assert_eq!(names.iter().filter(|n| *n == "GITLAB_TOKEN").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn legacy_prefixed_name_resolves() {
+        let source = EnvStoreSource::new("env-store");
+        let outcome = temp_env::async_with_vars(
+            [("DEVBOY_GITLAB_TOKEN", Some("from-legacy-prefixed"))],
+            async { source.get("team/gitlab/token").await.unwrap() },
+        )
+        .await;
+
+        assert!(outcome.is_some(), "legacy prefixed name must resolve");
+    }
+
+    #[tokio::test]
+    async fn legacy_bare_name_resolves() {
+        let source = EnvStoreSource::new("env-store");
+        let outcome =
+            temp_env::async_with_vars([("GITLAB_TOKEN", Some("from-legacy-bare"))], async {
+                source.get("team/gitlab/token").await.unwrap()
+            })
+            .await;
+
+        assert!(
+            outcome.is_some(),
+            "bare name must resolve — CI platforms already export these"
+        );
+    }
+
+    /// Precedence matters: the ADR-021 convention name wins over
+    /// the ADR-005 names when both are set.
+    #[tokio::test]
+    async fn convention_name_beats_legacy_names() {
+        let source = EnvStoreSource::new("env-store");
+        let outcome = temp_env::async_with_vars(
+            [
+                ("DEVBOY_SECRET__TEAM__GITLAB__TOKEN", Some("convention")),
+                ("DEVBOY_GITLAB_TOKEN", Some("legacy-prefixed")),
+                ("GITLAB_TOKEN", Some("legacy-bare")),
+            ],
+            async { source.get("team/gitlab/token").await.unwrap() },
+        )
+        .await;
+
+        let value = outcome.expect("some value");
+        assert_eq!(
+            secrecy::ExposeSecret::expose_secret(&value.value),
+            "convention"
+        );
+    }
+
+    #[tokio::test]
+    async fn prefixed_legacy_beats_bare_legacy() {
+        let source = EnvStoreSource::new("env-store");
+        let outcome = temp_env::async_with_vars(
+            [
+                ("DEVBOY_GITLAB_TOKEN", Some("legacy-prefixed")),
+                ("GITLAB_TOKEN", Some("legacy-bare")),
+            ],
+            async { source.get("team/gitlab/token").await.unwrap() },
+        )
+        .await;
+
+        let value = outcome.expect("some value");
+        assert_eq!(
+            secrecy::ExposeSecret::expose_secret(&value.value),
+            "legacy-prefixed"
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_names_include_a_registered_alias() {
+        let source =
+            EnvStoreSource::new("env-store").with_aliases([("team/gitlab/token", "CUSTOM_VAR")]);
+
+        assert_eq!(source.candidate_names("team/gitlab/token")[0], "CUSTOM_VAR");
+    }
+}
 
 #[cfg(test)]
 mod tests {

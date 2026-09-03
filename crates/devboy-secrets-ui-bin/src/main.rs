@@ -1076,7 +1076,7 @@ impl StorageBackend {
             InitialUnlock {
                 passphrase: passphrase.clone(),
                 with_recovery: true,
-                with_keychain_account: None,
+                with_totp_secret: None,
                 passphrase_params: None,
             },
         )
@@ -1291,7 +1291,7 @@ impl StorageBackend {
                         InitialUnlock {
                             passphrase: passphrase.clone(),
                             with_recovery: true,
-                            with_keychain_account: None,
+                            with_totp_secret: None,
                             passphrase_params: None,
                         },
                     )
@@ -2640,7 +2640,7 @@ impl InventoryApp {
                                 if let Some(re) = e.format_regex.as_deref() {
                                     Some(re.to_owned())
                                 } else if let Some(pid) = e.pattern_id.as_deref() {
-                                    let cat = devboy_secret_patterns::Catalogue::builtins_only();
+                                    let cat = devboy_secret_patterns::resolved::shared();
                                     cat.find(pid).map(|p| p.format_regex().as_str().to_owned())
                                 } else {
                                     None
@@ -2736,8 +2736,8 @@ impl InventoryApp {
                     }
                 } else {
                     let format_check = entry.as_ref().map(|e| {
-                        let catalogue = devboy_secret_patterns::Catalogue::builtins_only();
-                        devboy_storage::validate_format(e, value.expose_secret(), &catalogue)
+                        let catalogue = devboy_secret_patterns::resolved::shared();
+                        devboy_storage::validate_format(e, value.expose_secret(), catalogue)
                     });
                     match &format_check {
                         Some(devboy_storage::FormatCheck::Mismatch { source, expected }) => {
@@ -2971,7 +2971,7 @@ fn liveness_probe(
     let Some(pid) = entry.pattern_id.as_deref() else {
         return Ok(());
     };
-    let cat = devboy_secret_patterns::Catalogue::builtins_only();
+    let cat = devboy_secret_patterns::resolved::shared();
     let Some(pattern) = cat.find(pid) else {
         return Ok(());
     };

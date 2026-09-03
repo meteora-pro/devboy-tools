@@ -21,6 +21,76 @@ All notable changes to `devboy-tools` are recorded here. Format follows [Keep a 
   failed call as a success. The error now propagates, so the exit code matches
   what happened. Scripts that relied on the previous exit code will see a
   non-zero status where the payload does not parse.
+### Added — agent-mediated vault access, TOTP re-unlock, audit log (ADR-024)
+
+The secret framework now assumes the agent is on the same machine, running as
+the same user, and able to read whatever the user can. Every change below
+follows from taking that seriously rather than treating the agent as a
+well-behaved caller.
+
+- **The OS keychain leaves the default chain.** It only exceeds the protection
+  of a `0600` file on macOS — on Linux the Secret Service hands a stored secret
+  to any process in the session, and on Windows DPAPI is scoped to the user —
+  while costing a D-Bus dependency, a daemon absent from CI and containers, and
+  prompt failures on locked-down machines. It is now opt-in via
+  `[secrets.keychain] enabled = true`. The local vault takes its place, reached
+  through a new synchronous client so it works from inside the MCP server's
+  runtime.
+
+- **CI resolves from environment variables alone**, and only an explicit
+  `DEVBOY_CI` / `--ci` / `[runtime] ci` switches the mode. Heuristic variables
+  raise a notice but never change the posture — a security mode should not flip
+  because an unrelated tool exported `CI=1`. Both env-var naming conventions
+  keep working, so pipelines written against ADR-005 are unaffected.
+
+- **TOTP re-unlock.** A code proves a human approved the re-unlock, which rests
+  entirely on the shared secret being unreachable: `__totp/secret` cannot be
+  read, listed, or *written* from the wire — the write ban matters as much,
+  since an agent that could swap in its own secret mints codes just as easily.
+  Replay guard per RFC 6238 §5.2, and a rate limit that cannot be tripped
+  against a path with no secret resident. Enrol with `devboy secrets add-totp`.
+
+- **A keyfile can open the vault unattended**, replacing what the keychain used
+  to provide for a cold start. The path comes from configuration, never from
+  the request, and enrolling a new keyfile retires the old one.
+
+- **Secret versioning.** `put` and `rotate` append versions; delete writes a
+  tombstone and keeps history; only a user-initiated purge removes ciphertext.
+  A vault written before this loads unchanged.
+
+- **Encrypted append-only audit log.** Splicing, editing and truncation are all
+  detected — the last of these is what a plain append-only file cannot notice,
+  since what remains after lopping records off the end is self-consistent.
+  Values are redacted by a scrubber the writer cannot bypass: the record type
+  accepts only text the scrubber produced.
+
+- **Every agent-facing failure carries remediation** naming who must act and
+  whether retrying can help, so an agent stops looping on refusals it cannot
+  resolve.
+
+- **The daemon checks its own ancestry at startup** and refuses to run where its
+  caller could trace it. Fail-closed, with an override that never upgrades the
+  reported trust level.
+
+### Fixed
+
+- The daemon never read its configuration, so `secrets.profile` and every
+  unlock-TTL setting were inert — a user selecting `strict` kept the eight-hour
+  default. `secrets selftest` made it worse by printing the configured window as
+  though it were in force; it now asks the daemon and flags a divergence.
+
+- Three CI gates outside `cargo test` had been failing unnoticed: the
+  `cargo publish` dry-run (a published crate had gained an unpublishable
+  dependency), the public-API baselines, and rustdoc.
+
+### Documentation
+
+- The Gherkin specifications are now load-bearing. Every scenario carries
+  `@covered-by:<test>` and a gate fails when a named test disappears; scenarios
+  nothing covers are marked explicitly and pinned as a ratchet that can shrink
+  but not grow. Several long-standing claims were corrected — including one
+  saying the type system caught a leak it did not, now backed by a gate that
+  actually does.
 
 ### Changed — crates.io publishing policy (#308)
 

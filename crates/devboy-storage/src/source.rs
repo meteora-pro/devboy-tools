@@ -38,6 +38,7 @@ use async_trait::async_trait;
 use bitflags::bitflags;
 use secrecy::SecretString;
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::SecretPath;
 
@@ -97,6 +98,23 @@ bitflags! {
         /// Descriptive — every read is observable in the upstream's
         /// audit log.
         const AUDIT_LOGGED      = 0b0100_0000;
+        /// The source can remove the value at `reference`.
+        ///
+        /// Separate from [`Self::WRITE`] on purpose: an
+        /// append-only or audit-retained backend can legitimately
+        /// accept new values and refuse to drop old ones, and
+        /// folding the two would make the router promise a
+        /// deletion such a source cannot perform.
+        const DELETE            = 0b1000_0000;
+        /// The source can hand back raw key material for a named
+        /// purpose — the wrapping key for the local vault's
+        /// keyfile envelope, for instance.
+        ///
+        /// This is what lets a closed-source plugin own key
+        /// derivation without the scheme living in a public
+        /// repository, which is the only way an obfuscated one is
+        /// worth anything at all.
+        const KEY_SOURCE        = 0b1_0000_0000;
     }
 }
 
@@ -364,6 +382,96 @@ pub trait SecretSource: Send + Sync {
             capability: Capabilities::VALIDATE,
         })
     }
+
+    /// Store `value` at `reference`. Default implementation
+    /// reports unsupported. A source that declares
+    /// [`Capabilities::WRITE`] must override.
+    ///
+    /// Until this existed, `WRITE` and `ROTATE` were bits a source
+    /// could declare and nothing could act on — declared in
+    /// ADR-021 §1.1, unreachable in code.
+    async fn put(&self, reference: &str, value: &SecretString) -> Result<(), SourceError> {
+        let _ = (reference, value);
+        Err(SourceError::UnsupportedCapability {
+            name: self.name().to_owned(),
+            capability: Capabilities::WRITE,
+        })
+    }
+
+    /// Remove the value at `reference`. Default implementation
+    /// reports unsupported. A source that declares
+    /// [`Capabilities::DELETE`] must override.
+    ///
+    /// Deleting something that was never there is success: the
+    /// caller asked for an end state, and it holds.
+    async fn delete(&self, reference: &str) -> Result<(), SourceError> {
+        let _ = reference;
+        Err(SourceError::UnsupportedCapability {
+            name: self.name().to_owned(),
+            capability: Capabilities::DELETE,
+        })
+    }
+
+    /// Hand back raw key material for a named `purpose`.
+    ///
+    /// The purpose is part of the contract, not a hint: one source
+    /// may hold the wrapping key for the vault's keyfile envelope
+    /// and a different one for a file-backed token store, and
+    /// silently returning the wrong bytes would produce a
+    /// decryption failure far from its cause.
+    ///
+    /// Default implementation reports unsupported. A source that
+    /// declares [`Capabilities::KEY_SOURCE`] must override.
+    async fn key_material(&self, purpose: &str) -> Result<KeyMaterial, SourceError> {
+        let _ = purpose;
+        Err(SourceError::UnsupportedCapability {
+            name: self.name().to_owned(),
+            capability: Capabilities::KEY_SOURCE,
+        })
+    }
+}
+
+// =============================================================================
+// Key material
+// =============================================================================
+
+/// Raw bytes from a [`Capabilities::KEY_SOURCE`] source.
+///
+/// A newtype rather than a bare `Vec<u8>` for two reasons: the
+/// buffer is zeroized when dropped, and `Debug` renders the length
+/// instead of the contents. Key material reaches log lines by
+/// accident far more often than by design, and `{:?}` on a struct
+/// that happens to contain one is the usual route.
+pub struct KeyMaterial(Zeroizing<Vec<u8>>);
+
+impl KeyMaterial {
+    /// Wrap bytes obtained from a source.
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
+
+    /// The bytes, for the one caller that actually derives a key
+    /// from them.
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// How many bytes came back. Safe to log — a length is not a
+    /// secret, and a caller diagnosing "wrong key size" needs it.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether the source returned nothing at all.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::fmt::Debug for KeyMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "KeyMaterial({} bytes, redacted)", self.0.len())
+    }
 }
 
 // =============================================================================
@@ -376,6 +484,97 @@ mod tests {
     use secrecy::ExposeSecret;
 
     // -- Capabilities -----------------------------------------------------
+
+    /// The three methods added for stores and key sources
+    /// default to refusing, exactly like `list` and `validate` —
+    /// and each names its own capability, so a source author who
+    /// declared a bit and forgot to override gets told which one.
+    #[tokio::test]
+    async fn the_write_side_defaults_to_reporting_unsupported() {
+        struct Bare;
+
+        #[async_trait]
+        impl SecretSource for Bare {
+            fn name(&self) -> &str {
+                "bare"
+            }
+            fn capabilities(&self) -> Capabilities {
+                Capabilities::READ
+            }
+            async fn is_available(&self) -> SourceStatus {
+                SourceStatus::Available
+            }
+            async fn get(&self, _r: &str) -> Result<Option<GetOutcome>, SourceError> {
+                Ok(None)
+            }
+        }
+
+        let s = Bare;
+
+        let err = s
+            .put("r", &SecretString::from("v".to_owned()))
+            .await
+            .expect_err("put is not declared");
+        assert!(matches!(
+            err,
+            SourceError::UnsupportedCapability {
+                capability: Capabilities::WRITE,
+                ..
+            }
+        ));
+
+        let err = s.delete("r").await.expect_err("delete is not declared");
+        assert!(matches!(
+            err,
+            SourceError::UnsupportedCapability {
+                capability: Capabilities::DELETE,
+                ..
+            }
+        ));
+
+        let err = s
+            .key_material("vault-keyfile")
+            .await
+            .expect_err("key_source is not declared");
+        assert!(matches!(
+            err,
+            SourceError::UnsupportedCapability {
+                capability: Capabilities::KEY_SOURCE,
+                ..
+            }
+        ));
+    }
+
+    /// Key material reaches a log through a derived `Debug` far
+    /// more often than through a deliberate print.
+    #[test]
+    fn key_material_shows_its_length_and_nothing_else() {
+        let k = KeyMaterial::new(b"super-secret-wrapping-key".to_vec());
+        let shown = format!("{k:?}");
+
+        assert!(!shown.contains("super-secret"), "{shown}");
+        assert!(shown.contains("25 bytes"), "{shown}");
+        assert_eq!(k.expose(), b"super-secret-wrapping-key");
+        assert_eq!(k.len(), 25);
+        assert!(!k.is_empty());
+    }
+
+    /// The two new bits must not collide with the seven already
+    /// spent, or a source would silently declare something else.
+    #[test]
+    fn the_new_bits_do_not_overlap_the_existing_ones() {
+        let existing = Capabilities::READ
+            | Capabilities::LIST
+            | Capabilities::VALIDATE
+            | Capabilities::WRITE
+            | Capabilities::ROTATE
+            | Capabilities::BIOMETRIC_PROMPT
+            | Capabilities::AUDIT_LOGGED;
+
+        assert!(!existing.contains(Capabilities::DELETE));
+        assert!(!existing.contains(Capabilities::KEY_SOURCE));
+        assert_ne!(Capabilities::DELETE, Capabilities::KEY_SOURCE);
+    }
 
     #[test]
     fn capabilities_bit_values_match_adr_021() {

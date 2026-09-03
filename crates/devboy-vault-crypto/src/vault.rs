@@ -4,7 +4,7 @@
 //!
 //! - [`crate::format`] is the on-disk byte layout.
 //! - [`crate::aead`] is the per-entry XChaCha20-Poly1305 wrapper.
-//! - [`crate::passphrase`] / [`crate::recovery`] / [`crate::keychain`]
+//! - [`crate::passphrase`] / [`crate::recovery`] / [`crate::totp`]
 //!   are the three envelope variants — independent ways to wrap the
 //!   same `vault_key` so the user can unlock with whichever method
 //!   they have on hand.
@@ -50,12 +50,14 @@ use std::path::{Path, PathBuf};
 
 use secrecy::{ExposeSecret, SecretBox, SecretString};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::aead::{self, AeadError, KEY_LEN, NONCE_LEN};
 use crate::format::{
     EntryMeta, Envelope, EnvelopeKdfParams, FormatError, Header, VaultFile, b64_decode, b64_encode,
+    entry_aad,
 };
-use crate::keychain::{KeychainError, create_keychain_envelope, unwrap_keychain};
+use crate::keyfile::{KeyfileError, create_keyfile_envelope, unwrap_keyfile};
 use crate::passphrase::{
     DEFAULT_KDF_PARAMS, PassphraseError, create_passphrase_envelope, unwrap_passphrase,
 };
@@ -63,6 +65,7 @@ use crate::recovery::{
     RecoveryError, RecoveryPhrase, create_recovery_envelope, generate_recovery_phrase,
     unwrap_recovery,
 };
+use crate::totp::{TotpEnvelopeError, create_totp_envelope, unwrap_totp};
 
 // =============================================================================
 // User-facing types
@@ -85,22 +88,61 @@ pub struct EntryMetadata {
     pub pattern_id: Option<String>,
 }
 
+/// One version of a secret, for a history view (ADR-024 §5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionInfo {
+    /// Monotonic version number within the path.
+    pub version: u64,
+    /// Whether this version is a tombstone (the path stopped
+    /// resolving here).
+    pub tombstone: bool,
+    /// Who wrote it — `"agent"` or `"user"`, when recorded.
+    pub actor: Option<String>,
+    /// ISO 8601 date the version was written.
+    pub created_at: Option<String>,
+}
+
 /// How the caller wants [`Vault::open`] to unlock the vault.
 pub enum UnlockMethod {
     /// Try the passphrase envelope.
     Passphrase(SecretString),
     /// Try the recovery envelope.
     Recovery(RecoveryPhrase),
-    /// Try the keychain envelope (macOS only).
-    Keychain,
+    /// Try the TOTP envelope (ADR-024 §1).
+    ///
+    /// The caller supplies the shared secret it already holds in
+    /// memory, and is responsible for having verified a code — and
+    /// rejected a replayed step — beforehand. Possession of the
+    /// secret alone authorises nothing: the daemon has it for the
+    /// whole session.
+    Totp {
+        /// The shared TOTP secret, resident in daemon memory.
+        totp_secret: Vec<u8>,
+    },
+    /// Try the keyfile envelope (ADR-024 §6).
+    ///
+    /// This is the unattended cold start: a daemon can open the
+    /// vault with nobody present, which is what the OS keychain
+    /// provided before it left the default chain.
+    ///
+    /// The caller passes the bytes rather than a path on purpose.
+    /// Where the keyfile lives is a *configuration* decision, and
+    /// letting a request name the file would let a caller point the
+    /// unlock at a keyfile it controls — which is the whole attack
+    /// this envelope is supposed to be indifferent to.
+    Keyfile {
+        /// Contents of the keyfile, read by the caller.
+        keyfile: Zeroizing<Vec<u8>>,
+    },
 }
 
 /// Initial unlock methods to attach when calling [`Vault::create`].
 ///
 /// `passphrase` is mandatory — every vault must accept *some* unlock
 /// method, and the passphrase is the only one that works without
-/// external infrastructure (no Touch ID hardware, no recovery phrase
-/// yet generated). Touch ID and BIP39 recovery are optional add-ons.
+/// external infrastructure (no authenticator enrolled, no recovery
+/// phrase yet generated). TOTP and BIP39 recovery are optional
+/// add-ons layered on top.
 pub struct InitialUnlock {
     /// Mandatory passphrase. Used to wrap the vault key in the
     /// initial passphrase envelope.
@@ -113,11 +155,13 @@ pub struct InitialUnlock {
     /// [`CreateOutcome::recovery_phrase`] so the caller can show it
     /// to the user (per ADR-023 §3.2 acknowledgement step).
     pub with_recovery: bool,
-    /// If `Some`, also add a Keychain envelope under the supplied
-    /// account name (macOS only). The non-macOS stub returns
-    /// [`KeychainError::Unsupported`] from [`Vault::create`] when
-    /// this is set.
-    pub with_keychain_account: Option<String>,
+    /// If `Some`, also add a TOTP envelope wrapping the vault key
+    /// under this shared secret (ADR-024 §1).
+    ///
+    /// Enrollment normally happens on an already-open vault via
+    /// [`Vault::add_totp_envelope`]; this field exists so a vault
+    /// can be created with TOTP in one step.
+    pub with_totp_secret: Option<Vec<u8>>,
 }
 
 impl InitialUnlock {
@@ -127,7 +171,7 @@ impl InitialUnlock {
             passphrase,
             passphrase_params: None,
             with_recovery: false,
-            with_keychain_account: None,
+            with_totp_secret: None,
         }
     }
 }
@@ -170,14 +214,67 @@ pub enum VaultError {
     #[error("recovery envelope error: {0}")]
     Recovery(#[from] RecoveryError),
 
-    /// Wraps [`crate::keychain::KeychainError`] from the macOS
-    /// keychain envelope layer.
-    #[error("keychain envelope error: {0}")]
-    Keychain(#[from] KeychainError),
+    /// Wraps [`crate::totp::TotpEnvelopeError`] from the TOTP
+    /// envelope layer (ADR-024 §1).
+    #[error("TOTP envelope error: {0}")]
+    Totp(#[from] TotpEnvelopeError),
+
+    /// Wraps [`crate::keyfile::KeyfileError`] from the keyfile
+    /// envelope layer (ADR-024 §6).
+    #[error("keyfile envelope error: {0}")]
+    Keyfile(#[from] KeyfileError),
+
+    /// HKDF refused to produce the audit-log subkey.
+    #[error("could not derive the audit-log key")]
+    AuditKeyDerivation,
+
+    /// The file's index does not match its commitment.
+    ///
+    /// Per-entry AEAD binds a ciphertext to its own path and
+    /// version, so an entry cannot be edited or moved between
+    /// paths. It says nothing about the entry *existing*: deleting
+    /// the newest version's index record left `get` resolving to the
+    /// previous one, which decrypts perfectly under its own AAD. A
+    /// token rotated because it leaked came back to life, and
+    /// nothing in the file registered that anything had happened.
+    #[error(
+        "{path}: the entry index does not match its commitment. Entries have been removed or \
+         altered outside this tool, or the file was written under a different key — refusing to \
+         open it"
+    )]
+    IndexUnauthenticated {
+        /// The vault file whose index does not verify.
+        path: PathBuf,
+    },
+
+    /// The file changed since this handle opened it.
+    ///
+    /// Refused rather than reconciled. A mutation rewrites the whole
+    /// file from memory, so continuing would delete the other
+    /// writer's change with no trace that it ever existed — and the
+    /// other writer is usually the person at the keyboard running
+    /// `devboy secrets restore` against a vault the daemon holds
+    /// open.
+    #[error(
+        "{path} changed on disk since it was opened, and writing now would erase that change. \
+         If a secrets daemon is running, lock and unlock it to pick up the new file, then retry"
+    )]
+    ChangedOnDisk {
+        /// The vault file whose contents moved.
+        path: PathBuf,
+    },
 
     /// `Vault::open` could not find an envelope of the requested kind
     /// in the file. The caller asked for a passphrase unlock but the
     /// vault has only a recovery envelope, for example.
+    /// Refused: removing this envelope would leave no way to open
+    /// the vault at all.
+    #[error(
+        "this is the vault's only unlock envelope; removing it would destroy the vault. Add \
+         another way in first — a passphrase, a recovery phrase, or an authenticator"
+    )]
+    LastEnvelope,
+
     #[error("vault has no '{kind}' envelope to unlock with")]
     NoMatchingEnvelope {
         /// Which envelope kind the caller asked for.
@@ -224,7 +321,18 @@ pub struct Vault {
     /// consumed by `persist`. Keyed by entry path so multiple
     /// in-flight operations coalesce naturally even though current
     /// call sites only touch one entry at a time.
-    pending_ciphertexts_for_persist: BTreeMap<String, Vec<u8>>,
+    pending_ciphertexts_for_persist: BTreeMap<(String, u64), Vec<u8>>,
+    /// Digest of the file's bytes as they were when this handle last
+    /// agreed with the disk.
+    ///
+    /// Every mutation rewrites the whole file from this handle's own
+    /// memory, so a second writer's work is erased by whatever this
+    /// one does next. That second writer is not hypothetical: the
+    /// daemon holds a vault open for the whole unlock window while
+    /// `devboy secrets restore`, `purge`, `keyfile add` and `totp
+    /// enrol` open the same file themselves. Comparing this before
+    /// overwriting turns a silent revert into a refusal.
+    disk_fingerprint: [u8; 32],
 }
 
 impl std::fmt::Debug for Vault {
@@ -275,15 +383,20 @@ impl Vault {
             None
         };
 
-        // Optional keychain envelope.
-        if let Some(account) = init.with_keychain_account.as_deref() {
-            let env = create_keychain_envelope(&vault_key_bytes, account)?;
+        // Optional TOTP envelope (ADR-024 §1). The shared secret
+        // is supplied by the caller, which is also responsible for
+        // storing it inside the vault under its reserved path.
+        if let Some(totp_secret) = init.with_totp_secret.as_deref() {
+            let mut salt = [0u8; 32];
+            getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
+            let env = create_totp_envelope(&vault_key_bytes, totp_secret, salt)?;
             file.envelopes.push(env);
         }
 
         // Persist atomically before handing back the in-memory
         // vault. If anything fails after this point, we want disk
         // and memory to agree.
+        Self::sign_index(&mut file, &vault_key_bytes)?;
         file.write_file_atomic(path)?;
 
         let vault = Vault {
@@ -291,6 +404,7 @@ impl Vault {
             file,
             vault_key: SecretBox::new(Box::new(vault_key_bytes)),
             pending_ciphertexts_for_persist: BTreeMap::new(),
+            disk_fingerprint: Self::fingerprint_on_disk(path),
         };
         Ok(CreateOutcome {
             vault,
@@ -322,24 +436,39 @@ impl Vault {
                     .ok_or(VaultError::NoMatchingEnvelope { kind: "recovery" })?;
                 unwrap_recovery(env, phrase)?
             }
-            UnlockMethod::Keychain => {
+            UnlockMethod::Totp { totp_secret } => {
                 let env = file
                     .envelopes
                     .iter()
-                    .find(|e| matches!(e, Envelope::Keychain { .. }))
-                    .ok_or(VaultError::NoMatchingEnvelope { kind: "keychain" })?;
-                unwrap_keychain(env)?
+                    .find(|e| matches!(e, Envelope::Totp { .. }))
+                    .ok_or(VaultError::NoMatchingEnvelope { kind: "totp" })?;
+                unwrap_totp(env, totp_secret)?
+            }
+            UnlockMethod::Keyfile { keyfile } => {
+                let env = file
+                    .envelopes
+                    .iter()
+                    .find(|e| matches!(e, Envelope::Keyfile { .. }))
+                    .ok_or(VaultError::NoMatchingEnvelope { kind: "keyfile" })?;
+                unwrap_keyfile(env, keyfile)?
             }
         };
         // Convert Zeroizing<[u8; KEY_LEN]> -> SecretBox<[u8; KEY_LEN]>.
         let mut key_array = [0u8; KEY_LEN];
         key_array.copy_from_slice(vault_key_bytes.as_ref());
 
+        // Before anything reads the index. An entry removed from it
+        // is invisible to per-entry AEAD — every survivor still
+        // decrypts — so this is the only place the deletion can be
+        // caught.
+        Self::verify_index(&file, &key_array, path)?;
+
         Ok(Vault {
             path: path.to_path_buf(),
             file,
             vault_key: SecretBox::new(Box::new(key_array)),
             pending_ciphertexts_for_persist: BTreeMap::new(),
+            disk_fingerprint: Self::fingerprint_on_disk(path),
         })
     }
 
@@ -355,48 +484,128 @@ impl Vault {
         getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
         let env = create_recovery_envelope(self.vault_key.expose_secret(), &phrase, salt)?;
         self.file.envelopes.push(env);
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(phrase)
     }
 
-    /// Add a keychain envelope to an already-unlocked vault (macOS
-    /// only — non-macOS targets return [`KeychainError::Unsupported`]
-    /// wrapped in `VaultError::Keychain`).
-    pub fn add_keychain_envelope(&mut self, account: &str) -> Result<(), VaultError> {
-        let env = create_keychain_envelope(self.vault_key.expose_secret(), account)?;
+    /// Add a TOTP envelope to an already-unlocked vault
+    /// (ADR-024 §1).
+    ///
+    /// The caller supplies the shared secret and is responsible for
+    /// also storing it *inside* this vault under its reserved path.
+    /// That placement is what the whole scheme rests on: the secret
+    /// then exists in plaintext only in daemon memory, which an
+    /// agent cannot read, so a valid code is evidence a human
+    /// approved the re-unlock.
+    pub fn add_totp_envelope(&mut self, totp_secret: &[u8]) -> Result<(), VaultError> {
+        let mut salt = [0u8; 32];
+        getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
+        let env = create_totp_envelope(self.vault_key.expose_secret(), totp_secret, salt)?;
         self.file.envelopes.push(env);
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(())
     }
 
-    /// Encrypt and store a value at `path`.
+    /// Enrol a keyfile so the vault can be opened unattended
+    /// (ADR-024 §6).
     ///
-    /// If `path` already has an entry, this commit is a no-op on the
-    /// metadata side: callers that want to update an existing value
-    /// should use [`Vault::rotate`] instead, which preserves
-    /// `last_rotated_at` semantics. `put` will, however, replace the
-    /// ciphertext if the entry already exists.
+    /// Enrolment happens on an already-open vault, so the caller
+    /// has necessarily proved they can unlock it some other way —
+    /// adding a keyfile is not a way in, it is a second door opened
+    /// from inside.
+    ///
+    /// Replaces any existing keyfile envelope rather than stacking
+    /// a second one: two live keyfiles would mean the old file
+    /// still opens the vault after a rotation, which is the
+    /// opposite of what rotating one is for.
+    pub fn add_keyfile_envelope(&mut self, keyfile: &[u8]) -> Result<(), VaultError> {
+        let mut salt = [0u8; 32];
+        getrandom::getrandom(&mut salt).map_err(VaultError::RngUnavailable)?;
+        let env = create_keyfile_envelope(self.vault_key.expose_secret(), keyfile, salt)?;
+        self.file
+            .envelopes
+            .retain(|e| !matches!(e, Envelope::Keyfile { .. }));
+        self.file.envelopes.push(env);
+        self.write_through()?;
+        Ok(())
+    }
+
+    /// Drop the keyfile envelope, so the file on disk no longer
+    /// opens this vault.
+    ///
+    /// Refuses to remove the last remaining envelope. A vault with
+    /// no way in is not "more secure", it is destroyed, and the
+    /// operation that destroys it should not be a one-word
+    /// subcommand.
+    ///
+    /// Returns whether an envelope was actually removed, so a caller
+    /// can tell "unenrolled" from "there was nothing to unenrol"
+    /// instead of reporting success either way.
+    pub fn remove_keyfile_envelope(&mut self) -> Result<bool, VaultError> {
+        let present = self
+            .file
+            .envelopes
+            .iter()
+            .any(|e| matches!(e, Envelope::Keyfile { .. }));
+        if !present {
+            return Ok(false);
+        }
+
+        if self.file.envelopes.len() == 1 {
+            return Err(VaultError::LastEnvelope);
+        }
+
+        self.file
+            .envelopes
+            .retain(|e| !matches!(e, Envelope::Keyfile { .. }));
+        self.write_through()?;
+        Ok(true)
+    }
+
+    /// Encrypt and store a value at `path`, appending a new version
+    /// (ADR-024 §5).
+    ///
+    /// The previous version's ciphertext is retained, so no write
+    /// can destroy a value — an agent that stores the wrong token,
+    /// or an empty one, is always recoverable via
+    /// [`Vault::restore`]. Only [`Vault::purge`] removes
+    /// ciphertext, and that is a user-only operation.
     pub fn put(
         &mut self,
         path: &str,
         value: &SecretString,
         meta: EntryMetadata,
     ) -> Result<(), VaultError> {
+        self.put_as(path, value, meta, None)
+    }
+
+    /// [`Vault::put`], recording which actor wrote the version.
+    pub fn put_as(
+        &mut self,
+        path: &str,
+        value: &SecretString,
+        meta: EntryMetadata,
+        actor: Option<String>,
+    ) -> Result<(), VaultError> {
+        let version = self.next_version(path);
         let enc = aead::encrypt_entry(
             self.vault_key.expose_secret(),
-            path,
+            &entry_aad(path, version),
             value.expose_secret().as_bytes(),
         )?;
-        self.upsert_entry(path, enc, meta);
+        self.append_version(path, version, enc, meta, actor);
         self.persist()
     }
 
     /// Decrypt and return the value at `path`. Returns `Ok(None)` when
     /// no entry exists.
     pub fn get(&self, path: &str) -> Result<Option<SecretString>, VaultError> {
-        let entry = match self.file.entries.iter().find(|e| e.path == path) {
-            Some(e) => e,
-            None => return Ok(None),
+        // Resolve the newest version, and treat a tombstone as
+        // absent — the ciphertext stays on disk and recoverable,
+        // but the path stops answering (ADR-024 §5).
+        let entry = match self.latest_entry(path) {
+            Some(e) if !e.tombstone => e,
+            _ => return Ok(None),
         };
         let nonce_bytes = b64_decode(&entry.nonce).map_err(|e| {
             VaultError::Format(FormatError::Io(std::io::Error::new(
@@ -426,8 +635,12 @@ impl Vault {
         }
         let ciphertext = &self.file.ciphertext_blobs[start..end];
 
-        let plaintext =
-            aead::decrypt_entry(self.vault_key.expose_secret(), path, &nonce, ciphertext)?;
+        let plaintext = aead::decrypt_entry(
+            self.vault_key.expose_secret(),
+            &entry_aad(path, entry.version),
+            &nonce,
+            ciphertext,
+        )?;
         let s = String::from_utf8(plaintext).map_err(|e| {
             VaultError::Format(FormatError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -450,46 +663,227 @@ impl Vault {
                 path: path.to_owned(),
             });
         }
+        // Rotation appends a version like `put` does — the point of
+        // ADR-024 §5 is that rotating to a dud is recoverable — but
+        // it carries the previous version's metadata forward and
+        // stamps `last_rotated_at`.
+        let previous = self
+            .latest_entry(path)
+            .expect("existence checked above")
+            .clone();
+
+        let version = previous.version + 1;
         let enc = aead::encrypt_entry(
             self.vault_key.expose_secret(),
-            path,
+            &entry_aad(path, version),
             value.expose_secret().as_bytes(),
         )?;
-        // Replace ciphertext + nonce, leave other metadata as-is and
-        // bump `last_rotated_at`.
-        let today = today_iso8601();
-        if let Some(slot) = self.file.entries.iter_mut().find(|e| e.path == path) {
-            slot.nonce = b64_encode(&enc.nonce);
-            slot.last_rotated_at = Some(today);
-            // ct_offset / ct_length are recomputed by `persist`.
-            slot.ct_offset = 0;
-            slot.ct_length = enc.ciphertext.len() as u32;
-            // Stash the new ciphertext keyed by path so `persist`
-            // picks it up.
-            self.pending_ciphertexts_for_persist
-                .insert(path.to_owned(), enc.ciphertext);
-        }
+
+        let meta = EntryMetadata {
+            description: previous.description.clone(),
+            retrieval_url: previous.retrieval_url.clone(),
+            expires_at: previous.expires_at.clone(),
+            last_rotated_at: Some(today_iso8601()),
+            pattern_id: previous.pattern_id.clone(),
+        };
+        self.append_version(path, version, enc, meta, None);
         self.persist()
     }
 
-    /// Remove the entry at `path`. Idempotent — succeeds even when
-    /// no entry exists. The on-disk ciphertext is scrubbed (the blob
-    /// region is rebuilt from scratch on the next persist), so a
-    /// deleted entry leaves no residue.
+    /// Stop `path` from resolving by writing a tombstone version
+    /// (ADR-024 §5).
+    ///
+    /// This is the delete an agent is allowed to perform, and it is
+    /// **not destructive**: every prior version keeps its
+    /// ciphertext and stays recoverable through [`Vault::restore`].
+    /// The path answers `Ok(None)` afterwards, which is what makes
+    /// a mistaken delete survivable.
+    ///
+    /// Idempotent — deleting an absent or already-tombstoned path
+    /// succeeds without writing anything.
+    ///
+    /// For irreversible removal see [`Vault::purge`], which is a
+    /// user-only operation.
     pub fn delete(&mut self, path: &str) -> Result<(), VaultError> {
+        self.delete_as(path, None)
+    }
+
+    /// [`Vault::delete`], recording which actor tombstoned the path.
+    pub fn delete_as(&mut self, path: &str, actor: Option<String>) -> Result<(), VaultError> {
+        match self.latest_entry(path) {
+            // Nothing here, or already gone — nothing to record.
+            None => return Ok(()),
+            Some(e) if e.tombstone => return Ok(()),
+            Some(_) => {}
+        }
+
+        let version = self.next_version(path);
+        // A tombstone carries no value, but still needs a
+        // well-formed ciphertext slot so the file layout stays
+        // uniform. An empty plaintext seals to tag-only output.
+        let enc = aead::encrypt_entry(
+            self.vault_key.expose_secret(),
+            &entry_aad(path, version),
+            &[],
+        )?;
+
+        let mut meta = EntryMeta {
+            path: path.to_owned(),
+            nonce: b64_encode(&enc.nonce),
+            ct_offset: 0,
+            ct_length: enc.ciphertext.len() as u32,
+            description: None,
+            retrieval_url: None,
+            expires_at: None,
+            last_rotated_at: None,
+            pattern_id: None,
+            version,
+            tombstone: true,
+            actor,
+            created_at: Some(today_iso8601()),
+        };
+        meta.tombstone = true;
+
+        self.pending_ciphertexts_for_persist
+            .insert((path.to_owned(), version), enc.ciphertext);
+        self.file.entries.push(meta);
+        self.persist()
+    }
+
+    /// Every version recorded for `path`, oldest first.
+    ///
+    /// Exposed so a user-facing history view can offer a restore
+    /// target without the caller re-deriving the ordering.
+    pub fn versions(&self, path: &str) -> Vec<VersionInfo> {
+        let mut all: Vec<&EntryMeta> = self
+            .file
+            .entries
+            .iter()
+            .filter(|e| e.path == path)
+            .collect();
+        all.sort_by_key(|e| e.version);
+        all.into_iter()
+            .map(|e| VersionInfo {
+                version: e.version,
+                tombstone: e.tombstone,
+                actor: e.actor.clone(),
+                created_at: e.created_at.clone(),
+            })
+            .collect()
+    }
+
+    /// Point `path` back at a prior version by copying its
+    /// ciphertext forward as a new version (ADR-024 §5).
+    ///
+    /// Copying forward rather than rewinding a pointer keeps the
+    /// history append-only: the restore itself is visible as a
+    /// version, so "what happened here" stays answerable.
+    ///
+    /// The value is never re-typed — the user picks from ciphertext
+    /// that already exists.
+    pub fn restore(&mut self, path: &str, version: u64) -> Result<(), VaultError> {
+        let source = self
+            .file
+            .entries
+            .iter()
+            .find(|e| e.path == path && e.version == version)
+            .ok_or_else(|| VaultError::EntryNotFound {
+                path: format!("{path}@v{version}"),
+            })?
+            .clone();
+
+        if source.tombstone {
+            return Err(VaultError::EntryNotFound {
+                path: format!("{path}@v{version} (tombstone)"),
+            });
+        }
+
+        // Decrypt under the source version's AAD and re-seal under
+        // the new one; the AAD binds ciphertext to its version, so
+        // the bytes cannot simply be copied across.
+        let plaintext = self.decrypt_entry_at(&source)?;
+        let new_version = self.next_version(path);
+        let enc = aead::encrypt_entry(
+            self.vault_key.expose_secret(),
+            &entry_aad(path, new_version),
+            &plaintext,
+        )?;
+
+        let meta = EntryMetadata {
+            description: source.description.clone(),
+            retrieval_url: source.retrieval_url.clone(),
+            expires_at: source.expires_at.clone(),
+            last_rotated_at: source.last_rotated_at.clone(),
+            pattern_id: source.pattern_id.clone(),
+        };
+        self.append_version(path, new_version, enc, meta, Some("user".to_owned()));
+        self.persist()
+    }
+
+    /// Permanently remove versions of `path` — **user-only**.
+    ///
+    /// `version = None` purges every version of the path; `Some(v)`
+    /// purges just that one. The blob region is rebuilt on persist,
+    /// so purged ciphertext leaves no residue.
+    ///
+    /// This is the one irreversible operation in the versioning
+    /// model, and it is deliberately absent from the agent-facing
+    /// surface (ADR-024 §5): everything an agent can do is
+    /// recoverable, and only the user holds the eraser.
+    pub fn purge(&mut self, path: &str, version: Option<u64>) -> Result<(), VaultError> {
         let before = self.file.entries.len();
-        self.file.entries.retain(|e| e.path != path);
+        match version {
+            Some(v) => self
+                .file
+                .entries
+                .retain(|e| !(e.path == path && e.version == v)),
+            None => self.file.entries.retain(|e| e.path != path),
+        }
         if self.file.entries.len() == before {
             return Ok(());
         }
         self.persist()
     }
 
+    /// Decrypt one specific entry version.
+    fn decrypt_entry_at(&self, entry: &EntryMeta) -> Result<Vec<u8>, VaultError> {
+        let nonce_bytes = b64_decode(&entry.nonce).map_err(|e| {
+            VaultError::Format(FormatError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("entry nonce is not valid base64: {e}"),
+            )))
+        })?;
+        if nonce_bytes.len() != NONCE_LEN {
+            return Err(VaultError::Format(FormatError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "entry nonce has wrong length",
+            ))));
+        }
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce.copy_from_slice(&nonce_bytes);
+
+        let start = entry.ct_offset as usize;
+        let end = start + entry.ct_length as usize;
+        if end > self.file.ciphertext_blobs.len() {
+            return Err(VaultError::Format(FormatError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "entry ciphertext range exceeds blob region",
+            ))));
+        }
+
+        Ok(aead::decrypt_entry(
+            self.vault_key.expose_secret(),
+            &entry_aad(&entry.path, entry.version),
+            &nonce,
+            &self.file.ciphertext_blobs[start..end],
+        )?)
+    }
+
     /// Iterate over the metadata of every entry. Order is the file's
     /// natural order (insertion order; a future P9.x version may sort
     /// before persisting).
     pub fn list(&self) -> impl Iterator<Item = EntryMetadata> + '_ {
-        self.file.entries.iter().map(|e| EntryMetadata {
+        self.current_entries().map(|e| EntryMetadata {
             description: e.description.clone(),
             retrieval_url: e.retrieval_url.clone(),
             expires_at: e.expires_at.clone(),
@@ -498,10 +892,59 @@ impl Vault {
         })
     }
 
-    /// Iterate over the paths of every entry. Convenience for
-    /// callers that only want the keys.
+    /// Paths that currently resolve, with their newest version.
+    ///
+    /// Superseded versions and tombstoned paths are filtered out:
+    /// versioning is an implementation detail of durability, not
+    /// something every listing should surface. A caller that wants
+    /// history asks [`Vault::versions`] for it.
+    fn current_entries(&self) -> impl Iterator<Item = &EntryMeta> + '_ {
+        let mut newest: BTreeMap<&str, &EntryMeta> = BTreeMap::new();
+        for entry in &self.file.entries {
+            newest
+                .entry(entry.path.as_str())
+                .and_modify(|slot| {
+                    if entry.version > slot.version {
+                        *slot = entry;
+                    }
+                })
+                .or_insert(entry);
+        }
+        newest
+            .into_values()
+            .filter(|e| !e.tombstone)
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// Paths that currently resolve. Convenience for callers that
+    /// only want the keys.
+    ///
+    /// Superseded versions and tombstoned paths are excluded, so a
+    /// path appears at most once regardless of how many times it
+    /// has been written.
     pub fn paths(&self) -> impl Iterator<Item = &str> + '_ {
-        self.file.entries.iter().map(|e| e.path.as_str())
+        self.current_entries().map(|e| e.path.as_str())
+    }
+
+    /// Derive the key the audit log is encrypted under.
+    ///
+    /// A separate key rather than the vault key itself: the audit
+    /// writer holds it for the whole session, and a component that
+    /// only needs to write a log should not be holding the key that
+    /// opens every secret. HKDF with a fixed info string makes it
+    /// deterministic — the same vault always yields the same audit
+    /// key, so a log written yesterday still reads today — while
+    /// being useless for anything else.
+    pub fn audit_key(&self) -> Result<Zeroizing<[u8; KEY_LEN]>, VaultError> {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+
+        let hkdf = Hkdf::<Sha256>::new(None, self.vault_key.expose_secret().as_slice());
+        let mut out = Zeroizing::new([0u8; KEY_LEN]);
+        hkdf.expand(b"devboy-vault-audit-key-v1", out.as_mut())
+            .map_err(|_| VaultError::AuditKeyDerivation)?;
+        Ok(out)
     }
 
     /// Borrow the on-disk path for diagnostics.
@@ -526,7 +969,19 @@ impl Vault {
     ///
     /// Keyed by path because that is the unique key every
     /// other operation in this module is keyed on.
-    fn upsert_entry(&mut self, path: &str, enc: aead::EncryptedEntry, meta: EntryMetadata) {
+    /// Append a new version of `path` (ADR-024 §5).
+    ///
+    /// Never overwrites: an existing version keeps its ciphertext,
+    /// which is what makes an agent-mediated write reversible. The
+    /// caller has already encrypted under the AAD for `version`.
+    fn append_version(
+        &mut self,
+        path: &str,
+        version: u64,
+        enc: aead::EncryptedEntry,
+        meta: EntryMetadata,
+        actor: Option<String>,
+    ) {
         let new_meta = EntryMeta {
             path: path.to_owned(),
             nonce: b64_encode(&enc.nonce),
@@ -537,15 +992,28 @@ impl Vault {
             expires_at: meta.expires_at,
             last_rotated_at: meta.last_rotated_at,
             pattern_id: meta.pattern_id,
+            version,
+            tombstone: false,
+            actor,
+            created_at: Some(today_iso8601()),
         };
         self.pending_ciphertexts_for_persist
-            .insert(path.to_owned(), enc.ciphertext);
+            .insert((path.to_owned(), version), enc.ciphertext);
+        self.file.entries.push(new_meta);
+    }
 
-        if let Some(slot) = self.file.entries.iter_mut().find(|e| e.path == path) {
-            *slot = new_meta;
-        } else {
-            self.file.entries.push(new_meta);
-        }
+    /// The newest version recorded for `path`, tombstoned or not.
+    fn latest_entry(&self, path: &str) -> Option<&EntryMeta> {
+        self.file
+            .entries
+            .iter()
+            .filter(|e| e.path == path)
+            .max_by_key(|e| e.version)
+    }
+
+    /// Version number a new write to `path` should carry.
+    fn next_version(&self, path: &str) -> u64 {
+        self.latest_entry(path).map_or(1, |e| e.version + 1)
     }
 
     /// Rebuild `ciphertext_blobs` so each entry's `ct_offset` /
@@ -555,7 +1023,96 @@ impl Vault {
     /// Building from a single in-memory map of pending ciphertexts
     /// plus the existing blob region keeps deletes from leaving
     /// stale bytes on disk.
+    /// Digest of whatever is at `path` right now.
+    ///
+    /// A missing file hashes as empty rather than erroring: the
+    /// interesting comparison is "is this still what I loaded", and
+    /// a vault that vanished is emphatically not.
+    fn fingerprint_on_disk(path: &Path) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(path).unwrap_or_default();
+        Sha256::digest(&bytes).into()
+    }
+
+    /// The AAD the index commitment is computed under.
+    fn commitment_aad(digest: &[u8; 32]) -> String {
+        let mut hex = String::with_capacity(64);
+        for byte in digest {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02x}");
+        }
+        format!("vault-index-v2:{hex}")
+    }
+
+    /// Stamp the file with a fresh commitment over its current
+    /// contents.
+    ///
+    /// Called on every write. The format layer holds no keys, so it
+    /// carries the bytes and this computes them.
+    fn sign_index(file: &mut VaultFile, vault_key: &[u8; KEY_LEN]) -> Result<(), VaultError> {
+        let digest = file.commitment_digest()?;
+        let sealed = crate::aead::encrypt_entry(vault_key, &Self::commitment_aad(&digest), &[])?;
+        let mut commitment = [0u8; crate::format::COMMITMENT_LEN];
+        commitment[..NONCE_LEN].copy_from_slice(&sealed.nonce);
+        commitment[NONCE_LEN..].copy_from_slice(&sealed.ciphertext);
+        file.commitment = commitment;
+        Ok(())
+    }
+
+    /// Check a file's commitment before trusting its index.
+    fn verify_index(
+        file: &VaultFile,
+        vault_key: &[u8; KEY_LEN],
+        path: &Path,
+    ) -> Result<(), VaultError> {
+        let digest = file.commitment_digest()?;
+        let mut nonce = [0u8; NONCE_LEN];
+        nonce.copy_from_slice(&file.commitment[..NONCE_LEN]);
+        crate::aead::decrypt_entry(
+            vault_key,
+            &Self::commitment_aad(&digest),
+            &nonce,
+            &file.commitment[NONCE_LEN..],
+        )
+        .map(|_| ())
+        .map_err(|_| VaultError::IndexUnauthenticated {
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Write this handle's image out, refusing if the disk moved.
+    ///
+    /// Every path that touches the file goes through here — the
+    /// envelope-adding methods write directly rather than via
+    /// `persist`, and a guard on `persist` alone would leave
+    /// `keyfile add` and `totp enrol` able to erase a concurrent
+    /// change.
+    fn write_through(&mut self) -> Result<(), VaultError> {
+        self.ensure_disk_unchanged()?;
+        let key = *self.vault_key.expose_secret();
+        Self::sign_index(&mut self.file, &key)?;
+        self.file.write_file_atomic(&self.path)?;
+        self.disk_fingerprint = Self::fingerprint_on_disk(&self.path);
+        Ok(())
+    }
+
+    /// Refuse to overwrite work this handle never saw.
+    fn ensure_disk_unchanged(&self) -> Result<(), VaultError> {
+        if Self::fingerprint_on_disk(&self.path) != self.disk_fingerprint {
+            return Err(VaultError::ChangedOnDisk {
+                path: self.path.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn persist(&mut self) -> Result<(), VaultError> {
+        // Checked here as well as in `write_through`, so the refusal
+        // lands before the new image is built rather than after. The
+        // cost is one extra read of a small file on a path that
+        // already writes one.
+        self.ensure_disk_unchanged()?;
+
         let mut new_blobs: Vec<u8> = Vec::with_capacity(self.file.ciphertext_blobs.len());
         let mut new_entries: Vec<EntryMeta> = Vec::with_capacity(self.file.entries.len());
 
@@ -564,23 +1121,24 @@ impl Vault {
         let pending = std::mem::take(&mut self.pending_ciphertexts_for_persist);
 
         for entry in &self.file.entries {
-            let ciphertext: &[u8] = if let Some(p) = pending.get(&entry.path) {
-                p
-            } else {
-                // Re-use the existing blob slice from the loaded file.
-                let start = entry.ct_offset as usize;
-                let end = start + entry.ct_length as usize;
-                if end > self.file.ciphertext_blobs.len() {
-                    return Err(VaultError::Format(FormatError::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "entry '{}' ciphertext slice [{start}, {end}) exceeds blob region",
-                            entry.path
-                        ),
-                    ))));
-                }
-                &self.file.ciphertext_blobs[start..end]
-            };
+            let ciphertext: &[u8] =
+                if let Some(p) = pending.get(&(entry.path.clone(), entry.version)) {
+                    p
+                } else {
+                    // Re-use the existing blob slice from the loaded file.
+                    let start = entry.ct_offset as usize;
+                    let end = start + entry.ct_length as usize;
+                    if end > self.file.ciphertext_blobs.len() {
+                        return Err(VaultError::Format(FormatError::Io(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "entry '{}' ciphertext slice [{start}, {end}) exceeds blob region",
+                                entry.path
+                            ),
+                        ))));
+                    }
+                    &self.file.ciphertext_blobs[start..end]
+                };
 
             let mut new_entry = entry.clone();
             new_entry.ct_offset = new_blobs.len() as u64;
@@ -591,7 +1149,7 @@ impl Vault {
 
         self.file.entries = new_entries;
         self.file.ciphertext_blobs = new_blobs;
-        self.file.write_file_atomic(&self.path)?;
+        self.write_through()?;
         Ok(())
     }
 }
@@ -671,7 +1229,7 @@ mod tests {
             passphrase: pw(passphrase),
             passphrase_params: Some(fast_params()),
             with_recovery: false,
-            with_keychain_account: None,
+            with_totp_secret: None,
         }
     }
 
@@ -697,7 +1255,7 @@ mod tests {
             passphrase: pw("p"),
             passphrase_params: Some(fast_params()),
             with_recovery: true,
-            with_keychain_account: None,
+            with_totp_secret: None,
         };
         let outcome = Vault::create(&path, init).unwrap();
         let phrase = outcome.recovery_phrase.expect("phrase returned");
@@ -741,6 +1299,239 @@ mod tests {
 
     // -- put / get / list / delete -----------------------------------------
 
+    /// The per-entry guarantee, end to end, with the outer one
+    /// satisfied.
+    ///
+    /// `crypto_invariants.rs` used to swap two entries' ciphertext
+    /// pointers and check that `get` refused. Since the index is
+    /// committed to, that swap no longer gets as far as `get` — the
+    /// vault will not open. The invariant it was testing has not
+    /// gone away, so it is tested here instead, where the key is
+    /// reachable and the doctored file can be re-signed exactly as
+    /// something holding the key would.
+    #[test]
+    fn a_swapped_blob_is_refused_even_when_the_index_is_signed() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+
+        let key = {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault.put("team/low/value", &val("LOW"), meta()).unwrap();
+            vault.put("team/high/value", &val("HIGH"), meta()).unwrap();
+            *vault.vault_key.expose_secret()
+        };
+
+        let mut file = crate::format::VaultFile::read_file(&path).unwrap();
+        let low = file
+            .entries
+            .iter()
+            .position(|e| e.path == "team/low/value")
+            .unwrap();
+        let high = file
+            .entries
+            .iter()
+            .position(|e| e.path == "team/high/value")
+            .unwrap();
+        let carried = (
+            file.entries[low].nonce.clone(),
+            file.entries[low].ct_offset,
+            file.entries[low].ct_length,
+        );
+        file.entries[low].nonce = file.entries[high].nonce.clone();
+        file.entries[low].ct_offset = file.entries[high].ct_offset;
+        file.entries[low].ct_length = file.entries[high].ct_length;
+        file.entries[high].nonce = carried.0;
+        file.entries[high].ct_offset = carried.1;
+        file.entries[high].ct_length = carried.2;
+
+        // Re-sign, so the commitment is not what refuses this.
+        Vault::sign_index(&mut file, &key).unwrap();
+        file.write_file_atomic(&path).unwrap();
+
+        let opened = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect("a correctly signed index opens, which is the point of this test");
+        assert!(
+            opened.get("team/high/value").is_err(),
+            "a swapped ciphertext must not decrypt under a different path"
+        );
+    }
+
+    /// The attack the index commitment exists for: rolling a
+    /// rotation back by deleting the newest version's index entry.
+    ///
+    /// Per-entry AEAD binds a ciphertext to its own path and
+    /// version, so every survivor of the deletion decrypts
+    /// perfectly. `get` then resolves to the previous version — a
+    /// token rotated *because it leaked* is live again, and nothing
+    /// in the file says anything happened.
+    #[test]
+    fn deleting_the_newest_version_to_roll_a_rotation_back_is_caught() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault
+                .put("team/api/key", &val("leaked-value"), meta())
+                .unwrap();
+            vault
+                .rotate("team/api/key", &val("the-replacement"))
+                .unwrap();
+        }
+
+        // Confirm the rollback target is really there to roll back
+        // to, or the test proves nothing.
+        let mut file = crate::format::VaultFile::read_file(&path).unwrap();
+        assert_eq!(
+            file.entries.len(),
+            2,
+            "rotation must have kept the old version"
+        );
+
+        // Drop the newest index entry — the ciphertext stays,
+        // unreferenced, exactly as a careful attacker would leave it.
+        let newest = file
+            .entries
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, e)| e.version)
+            .map(|(i, _)| i)
+            .unwrap();
+        file.entries.remove(newest);
+        file.write_file_atomic(&path).unwrap();
+
+        let err = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect_err("a doctored index must not open");
+        assert!(
+            matches!(err, VaultError::IndexUnauthenticated { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// The same guard, aimed at metadata rather than at an entry.
+    ///
+    /// `expires_at` and friends are plaintext by design, so nothing
+    /// encrypts them. Without a commitment over the index, editing a
+    /// rotation reminder out of the file was free.
+    #[test]
+    fn editing_plaintext_metadata_in_the_index_is_caught() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault.put("team/api/key", &val("a-value"), meta()).unwrap();
+        }
+
+        let mut file = crate::format::VaultFile::read_file(&path).unwrap();
+        file.entries[0].path = "team/api/somewhere-else".to_owned();
+        file.write_file_atomic(&path).unwrap();
+
+        let err = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect_err("a renamed entry must not open");
+        assert!(
+            matches!(err, VaultError::IndexUnauthenticated { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// And the ordinary case must keep working across a re-open.
+    #[test]
+    fn an_untouched_vault_opens_and_reads_back() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        {
+            let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+            vault.put("team/api/one", &val("first"), meta()).unwrap();
+            vault.rotate("team/api/one", &val("second")).unwrap();
+        }
+
+        let reopened = Vault::open(&path, UnlockMethod::Passphrase(pw("p")))
+            .expect("an untouched vault must open");
+        assert_eq!(
+            reopened
+                .get("team/api/one")
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "second"
+        );
+    }
+
+    /// A second writer's change must not be silently erased.
+    ///
+    /// Every mutation rewrites the whole file from the handle's own
+    /// memory. The daemon keeps a vault open for the length of an
+    /// unlock window, while `devboy secrets restore`, `purge`,
+    /// `keyfile add` and `totp enrol` open the same file themselves.
+    /// Whichever wrote first used to lose, without an error and
+    /// without a trace.
+    #[test]
+    fn a_write_refuses_once_someone_else_has_changed_the_file() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut long_lived = Vault::create(&path, fast_init("p")).unwrap().vault;
+        long_lived
+            .put("team/api/one", &val("first"), meta())
+            .unwrap();
+
+        // Someone else opens the same file and writes to it — the
+        // CLI, while the daemon holds the vault above.
+        {
+            let mut other = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
+            other.put("team/api/two", &val("second"), meta()).unwrap();
+        }
+
+        let err = long_lived
+            .put("team/api/three", &val("third"), meta())
+            .expect_err("the file moved under this handle");
+        assert!(matches!(err, VaultError::ChangedOnDisk { .. }), "{err:?}");
+
+        // And the other writer's work is still there.
+        let reopened = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
+        assert!(
+            reopened.get("team/api/two").unwrap().is_some(),
+            "the concurrent write survived"
+        );
+    }
+
+    /// The guard must cover the envelope-adding methods too: those
+    /// write the file directly rather than through `persist`.
+    #[test]
+    fn adding_an_envelope_refuses_on_a_changed_file_as_well() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut long_lived = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        {
+            let mut other = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
+            other.put("team/api/two", &val("second"), meta()).unwrap();
+        }
+
+        let err = long_lived
+            .add_totp_envelope(&[7u8; 32])
+            .expect_err("this writes the file too");
+        assert!(matches!(err, VaultError::ChangedOnDisk { .. }), "{err:?}");
+    }
+
+    /// A handle that is the only writer must keep working — the
+    /// guard has to notice its own writes.
+    #[test]
+    fn repeated_writes_from_one_handle_are_fine() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut vault = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        for n in 0..4 {
+            vault
+                .put(
+                    &format!("team/api/{n}"),
+                    &val("value"),
+                    EntryMetadata::default(),
+                )
+                .expect("a handle must not trip over its own writes");
+        }
+        assert_eq!(vault.paths().count(), 4);
+    }
+
     #[test]
     fn put_then_get_roundtrips() {
         let dir = TempDir::new().unwrap();
@@ -775,17 +1566,239 @@ mod tests {
         v.delete("a/b/c").unwrap();
     }
 
+    // -- Versioning (ADR-024 §5) ---------------------------------
+
+    /// The core promise: an agent that overwrites a good token with
+    /// a wrong one has not destroyed anything.
     #[test]
-    fn delete_scrubs_ciphertext_from_blob_region() {
+    fn put_appends_a_version_and_the_old_value_survives() {
         let dir = TempDir::new().unwrap();
         let path = vault_path(&dir);
         let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
-        // Put a value with a recognisable plaintext.
+
+        v.put("a/b/c", &val("original"), meta()).unwrap();
+        v.put("a/b/c", &val("clobbered"), meta()).unwrap();
+
+        // The newest version resolves...
+        assert_eq!(
+            v.get("a/b/c")
+                .unwrap()
+                .map(|s| s.expose_secret().to_owned()),
+            Some("clobbered".to_owned())
+        );
+        // ...and the original is still there to go back to.
+        let versions = v.versions("a/b/c");
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[0].version, 1);
+        assert_eq!(versions[1].version, 2);
+
+        v.restore("a/b/c", 1).unwrap();
+        assert_eq!(
+            v.get("a/b/c")
+                .unwrap()
+                .map(|s| s.expose_secret().to_owned()),
+            Some("original".to_owned())
+        );
+    }
+
+    /// A restore is itself a version, so history stays append-only
+    /// and "what happened here" remains answerable.
+    #[test]
+    fn restore_appends_rather_than_rewinding() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        v.put("a/b/c", &val("v1"), meta()).unwrap();
+        v.put("a/b/c", &val("v2"), meta()).unwrap();
+        v.restore("a/b/c", 1).unwrap();
+
+        let versions = v.versions("a/b/c");
+        assert_eq!(versions.len(), 3, "restore is recorded, not silent");
+        assert_eq!(versions[2].actor.as_deref(), Some("user"));
+    }
+
+    /// Tombstoning stops resolution without destroying anything.
+    #[test]
+    fn delete_tombstones_and_restore_brings_the_path_back() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        v.put("a/b/c", &val("secret"), meta()).unwrap();
+        v.delete("a/b/c").unwrap();
+
+        assert!(v.get("a/b/c").unwrap().is_none());
+        assert!(
+            !v.paths().any(|p| p == "a/b/c"),
+            "tombstoned paths do not list"
+        );
+
+        v.restore("a/b/c", 1).unwrap();
+        assert_eq!(
+            v.get("a/b/c")
+                .unwrap()
+                .map(|s| s.expose_secret().to_owned()),
+            Some("secret".to_owned())
+        );
+    }
+
+    #[test]
+    fn deleting_twice_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        v.put("a/b/c", &val("x"), meta()).unwrap();
+        v.delete("a/b/c").unwrap();
+        let after_first = v.versions("a/b/c").len();
+        v.delete("a/b/c").unwrap();
+
+        assert_eq!(
+            v.versions("a/b/c").len(),
+            after_first,
+            "a second delete must not pile up tombstones"
+        );
+    }
+
+    /// Versioning must not make a path appear several times in a
+    /// listing — history is a separate question from inventory.
+    #[test]
+    fn listings_show_one_row_per_path_regardless_of_version_count() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        for i in 0..5 {
+            v.put("a/b/c", &val(&format!("v{i}")), meta()).unwrap();
+        }
+
+        assert_eq!(v.paths().count(), 1);
+        assert_eq!(v.list().count(), 1);
+        assert_eq!(v.versions("a/b/c").len(), 5);
+    }
+
+    /// The AAD binds ciphertext to its version from v2 onwards, so
+    /// a blob cannot be moved between versions of the same path.
+    /// Version 1 keeps the bare path, which is what lets vaults
+    /// written before ADR-024 still open.
+    #[test]
+    fn aad_binds_version_from_two_onwards() {
+        assert_eq!(crate::format::entry_aad("a/b/c", 1), "a/b/c");
+        assert_eq!(crate::format::entry_aad("a/b/c", 2), "a/b/c@v2");
+        assert_ne!(
+            crate::format::entry_aad("a/b/c", 2),
+            crate::format::entry_aad("a/b/c", 3)
+        );
+    }
+
+    /// Rotation is a version too, so rotating to a dud is
+    /// recoverable — and it carries prior metadata forward.
+    #[test]
+    fn rotate_appends_a_version_and_keeps_metadata() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        let mut m = meta();
+        m.description = Some("gitlab deploy token".to_owned());
+        v.put("a/b/c", &val("old"), m).unwrap();
+        v.rotate("a/b/c", &val("new")).unwrap();
+
+        assert_eq!(v.versions("a/b/c").len(), 2);
+        let current = v.list().next().unwrap();
+        assert_eq!(current.description.as_deref(), Some("gitlab deploy token"));
+        assert!(current.last_rotated_at.is_some());
+
+        v.restore("a/b/c", 1).unwrap();
+        assert_eq!(
+            v.get("a/b/c")
+                .unwrap()
+                .map(|s| s.expose_secret().to_owned()),
+            Some("old".to_owned())
+        );
+    }
+
+    /// Purge is the only irreversible operation, and it can take a
+    /// single version.
+    #[test]
+    fn purge_can_remove_one_version_without_touching_the_rest() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        v.put("a/b/c", &val("v1"), meta()).unwrap();
+        v.put("a/b/c", &val("v2"), meta()).unwrap();
+        v.purge("a/b/c", Some(1)).unwrap();
+
+        assert_eq!(v.versions("a/b/c").len(), 1);
+        assert_eq!(
+            v.get("a/b/c")
+                .unwrap()
+                .map(|s| s.expose_secret().to_owned()),
+            Some("v2".to_owned()),
+            "the surviving version still decrypts under its own AAD"
+        );
+    }
+
+    #[test]
+    fn restoring_a_tombstone_or_a_missing_version_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+
+        v.put("a/b/c", &val("x"), meta()).unwrap();
+        v.delete("a/b/c").unwrap();
+
+        assert!(v.restore("a/b/c", 2).is_err(), "version 2 is the tombstone");
+        assert!(v.restore("a/b/c", 99).is_err(), "no such version");
+    }
+
+    /// Versions must survive a close/reopen cycle, or the whole
+    /// feature only exists in memory.
+    #[test]
+    fn version_history_survives_reopen() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        {
+            let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
+            v.put("a/b/c", &val("v1"), meta()).unwrap();
+            v.put("a/b/c", &val("v2"), meta()).unwrap();
+        }
+
+        let mut reopened = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
+        assert_eq!(reopened.versions("a/b/c").len(), 2);
+        reopened.restore("a/b/c", 1).unwrap();
+        assert_eq!(
+            reopened
+                .get("a/b/c")
+                .unwrap()
+                .map(|s| s.expose_secret().to_owned()),
+            Some("v1".to_owned())
+        );
+    }
+
+    #[test]
+    fn purge_scrubs_ciphertext_from_blob_region() {
+        let dir = TempDir::new().unwrap();
+        let path = vault_path(&dir);
+        let mut v = Vault::create(&path, fast_init("p")).unwrap().vault;
         v.put("a/b/c", &val("PLAINTEXT-THAT-WONT-APPEAR-IN-BLOBS"), meta())
             .unwrap();
+
+        // ADR-024 §5: `delete` is a tombstone, so the ciphertext
+        // survives — that is what makes an agent-mediated delete
+        // recoverable.
         v.delete("a/b/c").unwrap();
-        // Reopen and inspect the on-disk file. After delete the
-        // blob region should be empty.
+        assert!(v.get("a/b/c").unwrap().is_none(), "path stops resolving");
+        assert!(
+            !v.file.ciphertext_blobs.is_empty(),
+            "tombstoning must not scrub the value it can still restore"
+        );
+
+        // `purge` is the user-only eraser, and it really erases.
+        v.purge("a/b/c", None).unwrap();
+
         let opened = Vault::open(&path, UnlockMethod::Passphrase(pw("p"))).unwrap();
         assert_eq!(opened.file.ciphertext_blobs.len(), 0);
         assert_eq!(opened.file.entries.len(), 0);

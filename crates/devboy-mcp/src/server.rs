@@ -129,7 +129,7 @@ impl McpServer {
         tracing::info!(
             "Paper 2 layered pipeline enabled — L0 dedup active. \
              Edit ~/.devboy/pipeline_config.toml (or set DEVBOY_PIPELINE_CONFIG) \
-             to tune knobs. See `devboy tune analyze` for split-savings metrics."
+             to tune knobs."
         );
     }
 
@@ -788,6 +788,9 @@ impl McpServer {
                 })
             }
             "secrets_list" => Some(self.handle_secrets_list(params)),
+            "secrets_unlock" => Some(Self::handle_secrets_unlock(params)),
+            "secrets_status" => Some(Self::handle_secrets_status()),
+            "secrets_validate" => Some(Self::handle_secrets_validate(params)),
             "secrets_describe" => Some(self.handle_secrets_describe(params)),
             "secrets_request_provision" => Some(self.handle_secrets_request_provision(params)),
             "secrets_request_rotation" => Some(self.handle_secrets_request_rotation(params)),
@@ -801,6 +804,86 @@ impl McpServer {
             "kdbx_edit_metadata" => Some(Self::handle_kdbx_edit_metadata(params)),
             _ => None,
         }
+    }
+
+    /// `secrets_unlock` — forward a TOTP code to the daemon.
+    ///
+    /// The reply never carries a value; the most it says is whether
+    /// the vault opened and, if not, what to do about it.
+    #[cfg(unix)]
+    fn handle_secrets_unlock(params: &ToolCallParams) -> ToolCallResult {
+        use crate::remediation::RemediationContext;
+        use crate::secrets_unlock::{self, SecretsUnlockArgs};
+
+        let args: SecretsUnlockArgs = match &params.arguments {
+            Some(a) => match serde_json::from_value(a.clone()) {
+                Ok(v) => v,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: totp".to_string()),
+        };
+
+        let ctx = RemediationContext::for_path("vault");
+        let reply = secrets_unlock::unlock(&args, &ctx);
+        match serde_json::to_string_pretty(&reply) {
+            Ok(json) => ToolCallResult::text(json),
+            Err(e) => ToolCallResult::error(format!("could not serialise the reply: {e}")),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn handle_secrets_unlock(_params: &ToolCallParams) -> ToolCallResult {
+        ToolCallResult::error(
+            "the secret daemon is only reachable over UNIX domain sockets".to_string(),
+        )
+    }
+
+    /// `secrets_status` — what the agent may try right now.
+    #[cfg(unix)]
+    fn handle_secrets_status() -> ToolCallResult {
+        let reply = crate::secrets_unlock::status();
+        match serde_json::to_string_pretty(&reply) {
+            Ok(json) => ToolCallResult::text(json),
+            Err(e) => ToolCallResult::error(format!("could not serialise the reply: {e}")),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn handle_secrets_status() -> ToolCallResult {
+        ToolCallResult::error(
+            "the secret daemon is only reachable over UNIX domain sockets".to_string(),
+        )
+    }
+
+    /// `secrets_validate` — is the stored secret the right shape?
+    ///
+    /// Everything happens in the daemon; only a verdict comes back.
+    #[cfg(unix)]
+    fn handle_secrets_validate(params: &ToolCallParams) -> ToolCallResult {
+        use crate::remediation::RemediationContext;
+        use crate::secrets_validate::{self, SecretsValidateArgs};
+
+        let args: SecretsValidateArgs = match &params.arguments {
+            Some(a) => match serde_json::from_value(a.clone()) {
+                Ok(v) => v,
+                Err(e) => return ToolCallResult::error(format!("invalid arguments: {e}")),
+            },
+            None => return ToolCallResult::error("missing required parameter: path".to_string()),
+        };
+
+        let ctx = RemediationContext::for_path(&args.path);
+        let reply = secrets_validate::validate(&args, &ctx);
+        match serde_json::to_string_pretty(&reply) {
+            Ok(json) => ToolCallResult::text(json),
+            Err(e) => ToolCallResult::error(format!("could not serialise the reply: {e}")),
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn handle_secrets_validate(_params: &ToolCallParams) -> ToolCallResult {
+        ToolCallResult::error(
+            "the secret daemon is only reachable over UNIX domain sockets".to_string(),
+        )
     }
 
     fn handle_secrets_list(&self, params: &ToolCallParams) -> ToolCallResult {
@@ -1501,6 +1584,18 @@ impl McpServer {
                 | "get_current_context"
                 | "switch_context"
                 | "secrets_list"
+                // A speculative `secrets_unlock` would spend the
+                // user's code: the replay guard accepts each step
+                // once, so their real unlock would then fail as a
+                // replay. `secrets_status` joins it for the same
+                // reason the rest of the family is here.
+                | "secrets_unlock"
+                | "secrets_status"
+                // Validating reads the value and writes an audit
+                // record. A speculative run would put a read in the
+                // user's trail that nobody asked for, which is
+                // exactly the noise an audit log must not have.
+                | "secrets_validate"
                 | "secrets_describe"
                 | "secrets_request_provision"
                 | "secrets_request_rotation"

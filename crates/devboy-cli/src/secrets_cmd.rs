@@ -75,6 +75,55 @@ pub enum SecretsCommands {
     /// `<repo>/.devboy/secrets.toml`. See ADR-023 §3.8 and
     /// `crates/devboy-skills/skills/00-self-bootstrap/setup-secrets/`.
     Setup(SetupArgs),
+    /// Report which security posture is actually in force, and
+    /// where it is weaker than it looks (ADR-024). `doctor` asks
+    /// "is anything broken"; this asks "what am I actually
+    /// getting".
+    Selftest(crate::secrets_selftest::SelftestArgs),
+    /// Enrol an authenticator app so the vault can be re-unlocked
+    /// with a six-digit code instead of the passphrase (ADR-024 §1).
+    ///
+    /// The shared secret is displayed once and never again — it is
+    /// stored in a reserved vault slot that nothing can read back,
+    /// which is precisely what makes a code from it evidence that a
+    /// human was present.
+    AddTotp(crate::secrets_totp::AddTotpArgs),
+
+    /// Manage the keyfile that lets the vault open with no human
+    /// present (ADR-024 §6).
+    ///
+    /// The keyfile is a second door opened from inside: enrolling one
+    /// requires unlocking the vault first, so it records a new way to
+    /// reach access you already had rather than granting any.
+    ///
+    /// Where a stable machine identifier exists, the enrolment is
+    /// bound to this host — the same two files will not open the
+    /// vault anywhere else.
+    Keyfile(crate::secrets_keyfile::KeyfileArgs),
+
+    /// Show the write history of a secret (ADR-024 §5).
+    ///
+    /// Every write appends a version and keeps the previous
+    /// ciphertext, so a wrong value is recoverable. Values are never
+    /// printed here.
+    Versions(crate::secrets_versions::VersionsArgs),
+
+    /// Undo a write by bringing an earlier version back.
+    ///
+    /// Restoring appends a new version rather than rewriting history,
+    /// so the value being replaced stays recoverable in turn.
+    ///
+    /// Deliberately a person's command and not an agent's: an agent
+    /// that can undo its own writes can also undo a human's
+    /// correction of them.
+    Restore(crate::secrets_versions::RestoreArgs),
+
+    /// Permanently destroy a secret's ciphertext (ADR-024 §5).
+    ///
+    /// The only operation here that cannot be undone: every other
+    /// write appends a version and leaves the old one recoverable.
+    /// User-only by design — no agent-facing tool purges anything.
+    Purge(crate::secrets_versions::PurgeArgs),
     /// Work with KDBX 4 (KeePass) files as a SecretSource. The
     /// passphrase is prompted from stdin with no echo; the
     /// decrypted body lives only inside this process and is
@@ -368,6 +417,24 @@ pub enum AgentCommands {
     /// Stop the user service (if loaded) and remove the unit file
     /// written by `install`. Idempotent — running it twice is fine.
     Uninstall(AgentUninstallArgs),
+    /// Ask the daemon to unlock itself (ADR-024 §7).
+    ///
+    /// This command never sees the passphrase. It sends a request
+    /// carrying no secret material, the daemon collects the
+    /// passphrase on a channel of its own, and this side polls
+    /// until the vault opens. A process the agent can tamper with
+    /// is a poor place to type a passphrase, so it does not.
+    Unlock(AgentUnlockArgs),
+}
+
+/// Flags for `devboy secrets agent unlock`.
+#[derive(Args, Debug, Default)]
+pub struct AgentUnlockArgs {
+    /// How long to wait for the unlock, in seconds. Defaults to 120
+    /// — long enough to find a phone, short enough not to hang a
+    /// script forever.
+    #[arg(long)]
+    pub timeout_secs: Option<u64>,
 }
 
 /// Flags for `devboy secrets agent start`.
@@ -494,6 +561,7 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             AgentCommands::Start(args) => agent_start(args).await,
             AgentCommands::Install(args) => agent_install(args),
             AgentCommands::Uninstall(args) => agent_uninstall(args),
+            AgentCommands::Unlock(args) => agent_unlock(args).await,
         },
         SecretsCommands::Ui(args) => crate::secrets_ui::handle(args).await,
         SecretsCommands::Rotate(args) => crate::secrets_rotate::handle(args).await,
@@ -507,6 +575,12 @@ pub async fn handle(command: SecretsCommands) -> Result<()> {
             CatalogCommands::Validate(args) => catalog_validate(args),
         },
         SecretsCommands::Setup(args) => crate::secrets_setup::handle_cli(args),
+        SecretsCommands::Selftest(args) => crate::secrets_selftest::handle(args),
+        SecretsCommands::AddTotp(args) => crate::secrets_totp::handle(args),
+        SecretsCommands::Keyfile(args) => crate::secrets_keyfile::run(args),
+        SecretsCommands::Versions(args) => crate::secrets_versions::run_versions(args),
+        SecretsCommands::Restore(args) => crate::secrets_versions::run_restore(args),
+        SecretsCommands::Purge(args) => crate::secrets_versions::run_purge(args),
         SecretsCommands::Kdbx { command } => match command {
             KdbxCommands::Peek(args) => kdbx_peek(args),
             KdbxCommands::DescribeMetadata(args) => kdbx_describe_metadata(args),
@@ -545,6 +619,7 @@ fn kdbx_peek(args: KdbxPeekArgs) -> Result<()> {
     // shows up in shell history or process listings. Refuse to
     // read from a pipe (`!is_terminal`) since the prompt would
     // hang forever waiting for a terminal.
+    refuse_interactive_in_env_only("Reading a KDBX passphrase")?;
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "KDBX passphrase prompt requires an interactive terminal; \
@@ -650,6 +725,7 @@ fn kdbx_describe_metadata(args: KdbxDescribeMetadataArgs) -> Result<()> {
             args.file.display()
         );
     }
+    refuse_interactive_in_env_only("Reading a KDBX passphrase")?;
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "KDBX passphrase prompt requires an interactive terminal; \
@@ -780,6 +856,7 @@ fn kdbx_edit_metadata(args: KdbxEditMetadataArgs) -> Result<()> {
         );
     }
 
+    refuse_interactive_in_env_only("Reading a KDBX passphrase")?;
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "KDBX passphrase prompt requires an interactive terminal; \
@@ -1619,6 +1696,88 @@ async fn agent_status() -> Result<()> {
     Ok(())
 }
 
+/// Default wait for `agent unlock`.
+const UNLOCK_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How often to ask whether the vault has opened.
+///
+/// There is no callback by design (ADR-024 §7): the daemon owes
+/// nothing to a process it does not trust, so this side asks rather
+/// than being told.
+const UNLOCK_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Why an unlock cannot even be attempted when no socket path
+/// resolves.
+///
+/// Two situations reach it and both mean the same thing to the
+/// caller: off UNIX there is no daemon to have a socket, and on
+/// UNIX it means no config directory could be derived. Either
+/// way the answer is "there is nothing to unlock", and the
+/// message has to say *that* — a caller told only that a path
+/// could not be resolved learns nothing about what to do next.
+const NO_SOCKET_PATH: &str = "no socket path resolves, so there is no secret daemon to unlock \
+                              here. Supply the secrets this process needs through the \
+                              environment instead.";
+
+/// Ask the daemon to unlock itself, then wait for it.
+///
+/// The passphrase never enters this process. The request carries no
+/// secret material — there is no field for one — and nothing here
+/// reads stdin, so there is no path by which a passphrase could
+/// arrive even if a caller tried to supply it.
+async fn agent_unlock(args: AgentUnlockArgs) -> Result<()> {
+    let client = devboy_secrets_agent::AgentClient::new().context(NO_SOCKET_PATH)?;
+
+    anyhow::ensure!(
+        client.is_running(),
+        "the secret daemon is not running. Start it with `devboy secrets agent start`, or          install it as a service with `devboy secrets agent install`."
+    );
+
+    // Already open is success, not an error — and re-asking would
+    // make the user type a passphrase for nothing.
+    if let Ok(status) = client.status()
+        && status.get("state").and_then(|v| v.as_str()) == Some("unlocked")
+    {
+        println!("vault is already unlocked");
+        return Ok(());
+    }
+
+    // The prompt appears here when this process has a terminal to
+    // lend, and on the daemon's own terminal otherwise — so the
+    // wording no longer promises one or the other.
+    println!("asking the daemon to unlock — answer the passphrase prompt when it appears");
+
+    match client.request_unlock() {
+        Ok(_) => {}
+        Err(devboy_secrets_agent::ClientError::Daemon(e)) => {
+            // The daemon's refusal already explains itself; passing
+            // it through beats wrapping it in a vaguer one.
+            anyhow::bail!("{}", e.message);
+        }
+        Err(e) => anyhow::bail!("could not reach the secret daemon: {e}"),
+    }
+
+    let timeout = args
+        .timeout_secs
+        .map(Duration::from_secs)
+        .unwrap_or(UNLOCK_TIMEOUT);
+    let deadline = std::time::Instant::now() + timeout;
+
+    while std::time::Instant::now() < deadline {
+        if let Ok(status) = client.status()
+            && status.get("state").and_then(|v| v.as_str()) == Some("unlocked")
+        {
+            println!("vault unlocked");
+            return Ok(());
+        }
+        tokio::time::sleep(UNLOCK_POLL_INTERVAL).await;
+    }
+
+    anyhow::bail!(
+        "the vault was still locked after {timeout:?}. The daemon may have had nowhere to show          the prompt — check `devboy secrets selftest` for its prompt channel."
+    )
+}
+
 async fn agent_start(args: AgentStartArgs) -> Result<()> {
     let socket_path = devboy_secrets_agent::default_socket_path()
         .context("could not resolve the default agent socket path")?;
@@ -1677,8 +1836,9 @@ fn agent_uninstall(args: AgentUninstallArgs) -> Result<()> {
 }
 
 fn default_log_path() -> Result<PathBuf> {
-    let dir = dirs::config_dir().context("could not resolve the user's config directory")?;
-    Ok(dir.join("devboy-tools").join("secrets").join("agent.log"))
+    devboy_core::config::Config::secrets_dir()
+        .map(|dir| dir.join("agent.log"))
+        .context("could not resolve the user's config directory")
 }
 
 // =============================================================================
@@ -1896,11 +2056,65 @@ fn describe(args: DescribeArgs) -> Result<()> {
     }
 
     anyhow::bail!(
-        "secret path '{}' not found in any source — register it via the global index or add a \
-         `[secret.\"{path}\"]` block",
-        path,
+        "secret path '{path}' not found in any source — register it via the global index or add a \
+         `[secret.\"{path}\"]` block.\n\n{}",
+        env_candidates_hint(path.as_str()),
         path = path
     );
+}
+
+/// Refuse an interactive secret operation when the process is in
+/// CI / env-only mode (ADR-024 §6).
+///
+/// The `is_terminal()` guards next to each prompt already stop a
+/// prompt from hanging on a pipe, but they answer a different
+/// question: "is there a TTY". A CI runner can have one — a
+/// pseudo-TTY is common — and would then sit waiting for a human
+/// who is never going to type. This guard keys on the *mode*
+/// instead, so the failure is immediate and explains itself.
+///
+/// Env-only mode has no vault to unlock and no daemon to ask, so
+/// there is nothing an interactive prompt could usefully do.
+pub fn refuse_interactive_in_env_only(operation: &str) -> anyhow::Result<()> {
+    let config = devboy_core::config::Config::load().unwrap_or_default();
+    if !crate::is_env_only_mode(&config) {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "{operation} needs an interactive prompt, but this process is in CI / env-only mode \
+         (ADR-024 §6): the environment is the sole secret source, and no vault, daemon or \
+         passphrase prompt is available.\n\n\
+         Either provide the secret through the environment, or drop `--ci` / `DEVBOY_CI` / \
+         `[runtime] ci` if this was not meant to be a CI run."
+    );
+}
+
+/// Render the environment variables that would satisfy `path`, in
+/// resolution order (ADR-024 §6).
+///
+/// A "not found" that does not say *what to set* forces the user
+/// to go read the docs; this lists every name that was tried so
+/// the fix pastes straight into a shell or a CI config. It matters
+/// most in env-only mode, where the environment is the only source
+/// there is.
+fn env_candidates_hint(path: &str) -> String {
+    let candidates = devboy_secret_env_store::candidate_env_names(path, None);
+    if candidates.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::from("Set any one of these environment variables:\n");
+    for name in &candidates {
+        out.push_str("  ");
+        out.push_str(name);
+        out.push('\n');
+    }
+    out.push_str(
+        "\n(the first is the ADR-021 convention name; the rest are the ADR-005 names kept for \
+         compatibility with existing pipelines)",
+    );
+    out
 }
 
 #[derive(Serialize)]
@@ -2055,6 +2269,24 @@ fn load_resolved() -> Result<(MergeOutput, ProjectManifest)> {
 
 #[cfg(test)]
 mod tests {
+    /// The integration test for `secrets agent unlock` asserts the
+    /// failure is about the daemon rather than about input — that
+    /// is the whole claim of moving the prompt out of this
+    /// process. It only fires where no socket path resolves, which
+    /// on a developer machine is nowhere, so the wording was
+    /// written blind and a Windows runner found it saying
+    /// "could not resolve the agent socket path" — true, and about
+    /// a path rather than about a daemon.
+    #[test]
+    fn the_no_socket_message_is_about_the_daemon_not_about_a_path() {
+        let text = super::NO_SOCKET_PATH.to_lowercase();
+        assert!(text.contains("daemon"), "{text}");
+        assert!(
+            text.contains("environment"),
+            "with no daemon there has to be somewhere else to get the secret: {text}"
+        );
+    }
+
     use super::*;
     use devboy_storage::{IndexEntry, OverrideEntry, RotationMethod};
 

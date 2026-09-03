@@ -36,6 +36,19 @@ const CONFIG_FILE_NAME: &str = "config.toml";
 /// Config directory name.
 const CONFIG_DIR_NAME: &str = "devboy-tools";
 
+/// Environment variable that replaces the platform's config
+/// directory outright.
+///
+/// The value is used as-is — `CONFIG_DIR_NAME` is *not* appended,
+/// because a caller pointing this at a scratch directory wants that
+/// directory, not a subdirectory of it.
+///
+/// Primarily for tests that spawn the real binary: see
+/// [`Config::config_dir`] for why `HOME` and `XDG_CONFIG_HOME` are
+/// not enough. Also usable for running two configurations side by
+/// side, which is why it is documented rather than hidden.
+pub const CONFIG_DIR_ENV: &str = "DEVBOY_CONFIG_DIR";
+
 // =============================================================================
 // Configuration structures
 // =============================================================================
@@ -109,14 +122,18 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_config: Option<RemoteConfigSettings>,
 
-    /// Secret-framework knobs (ADR-020 / ADR-021 / ADR-023).
-    /// Currently the only field is `migration_complete`, which
-    /// the user flips on after walking through every legacy
-    /// keychain entry via `devboy secrets migrate`. Once set,
-    /// the doctor escalates any *remaining* legacy entries to a
-    /// stronger warning.
+    /// Secret-framework knobs (ADR-020 / ADR-021 / ADR-023 /
+    /// ADR-024): migration state, the unlock-window profile, and
+    /// the opt-in OS keychain switch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets: Option<SecretsConfig>,
+
+    /// Process-level switches that belong to no single provider
+    /// or subsystem (ADR-024 §6). Currently carries the explicit
+    /// CI / env-only flag that `detect_ci_mode` consults after
+    /// `--ci` and `DEVBOY_CI`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeConfig>,
 }
 
 impl Config {
@@ -129,24 +146,310 @@ impl Config {
             .map(|s| s.migration_complete)
             .unwrap_or(false)
     }
+
+    /// Active unlock-window profile, defaulting to
+    /// [`SecretsProfile::Convenient`] when unset (ADR-024 §2).
+    pub fn secrets_profile(&self) -> SecretsProfile {
+        self.secrets.as_ref().map(|s| s.profile).unwrap_or_default()
+    }
+
+    /// `true` only when the user explicitly opted the OS keychain
+    /// back in (ADR-024 §6). Absent config means disabled, on
+    /// every platform.
+    pub fn is_keychain_enabled(&self) -> bool {
+        self.secrets
+            .as_ref()
+            .map(|s| s.keychain.enabled)
+            .unwrap_or(false)
+    }
+
+    /// Ceiling on any single unlock window, in seconds. Falls
+    /// back to the active profile's default.
+    pub fn max_unlock_ttl_seconds(&self) -> u64 {
+        self.secrets
+            .as_ref()
+            .and_then(|s| s.max_unlock_ttl_seconds)
+            .unwrap_or_else(|| self.secrets_profile().default_max_unlock_ttl_seconds())
+    }
+
+    /// Unlock window in seconds, falling back to the profile
+    /// default and **clamped** to [`Self::max_unlock_ttl_seconds`].
+    ///
+    /// Clamping rather than erroring keeps a misconfigured file
+    /// usable; [`Self::secrets_config_warnings`] surfaces the
+    /// inconsistency to `doctor` instead of failing the process.
+    pub fn unlock_ttl_seconds(&self) -> u64 {
+        let configured = self
+            .secrets
+            .as_ref()
+            .and_then(|s| s.unlock_ttl_seconds)
+            .unwrap_or_else(|| self.secrets_profile().default_unlock_ttl_seconds());
+        configured.min(self.max_unlock_ttl_seconds())
+    }
+
+    /// Idle re-lock in seconds, or `None` when idle re-locking is
+    /// off. Falls back to the profile default.
+    pub fn idle_relock_seconds(&self) -> Option<u64> {
+        match self.secrets.as_ref() {
+            Some(s) if s.idle_relock_seconds.is_some() => s.idle_relock_seconds,
+            _ => self.secrets_profile().default_idle_relock_seconds(),
+        }
+    }
+
+    /// Configured keyfile path for `Envelope::Keyfile`, if any.
+    pub fn secrets_keyfile_path(&self) -> Option<&std::path::Path> {
+        self.secrets
+            .as_ref()
+            .and_then(|s| s.keyfile_path.as_deref())
+    }
+
+    /// `true` when `[runtime] ci = true`. This is the
+    /// lowest-priority explicit CI signal; `--ci` and `DEVBOY_CI`
+    /// take precedence, and heuristic variables never reach here.
+    pub fn is_ci_forced(&self) -> bool {
+        self.runtime.as_ref().map(|r| r.ci).unwrap_or(false)
+    }
+
+    /// Human-readable inconsistencies in the `[secrets]` section.
+    ///
+    /// These are reported rather than enforced, because a config
+    /// that is merely odd should not stop the process — but a
+    /// silently clamped window is exactly the kind of thing a
+    /// user should be told about rather than discover later.
+    pub fn secrets_config_warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let Some(secrets) = self.secrets.as_ref() else {
+            return out;
+        };
+
+        let max = self.max_unlock_ttl_seconds();
+
+        if let Some(ttl) = secrets.unlock_ttl_seconds
+            && ttl > max
+        {
+            out.push(format!(
+                "[secrets] unlock_ttl_seconds = {ttl} exceeds max_unlock_ttl_seconds = {max}; \
+                 the effective window is clamped to {max}s"
+            ));
+        }
+
+        if let Some(idle) = secrets.idle_relock_seconds {
+            let effective = self.unlock_ttl_seconds();
+            if idle > effective {
+                out.push(format!(
+                    "[secrets] idle_relock_seconds = {idle} is longer than the unlock window \
+                     ({effective}s), so idle re-locking can never fire"
+                ));
+            }
+        }
+
+        if secrets.unlock_ttl_seconds == Some(0) {
+            out.push(
+                "[secrets] unlock_ttl_seconds = 0 re-locks the vault immediately after every \
+                 unlock, so nothing can ever read a secret. For a short window set a small \
+                 non-zero value, and use idle_relock_seconds to re-lock after inactivity"
+                    .to_string(),
+            );
+        }
+
+        out
+    }
 }
 
-/// `[secrets]` section per ADR-020 §7 (migration story) and
-/// ADR-021 §6 (validation framework). The struct is
-/// intentionally minimal — fields land here as the framework
-/// grows, not in [`Config`] directly, so the
-/// secret-framework-specific knobs travel together.
+/// `[runtime]` section (ADR-024 §6).
+///
+/// Holds process-level switches that belong to no single
+/// provider. `ci` is the lowest-priority of the three explicit
+/// CI signals — `--ci` beats `DEVBOY_CI` beats this — and is the
+/// one that lives with the project rather than with the
+/// invocation.
+///
+/// Heuristic variables (`CI`, `GITLAB_CI`, …) deliberately do
+/// **not** feed this field: they raise a doctor notice instead,
+/// because a security posture must not change because an
+/// unrelated tool exported `CI=1`.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeConfig {
+    /// Force CI / env-only mode: the environment becomes the sole
+    /// secret source, and no vault, daemon, keychain or prompt is
+    /// involved.
+    #[serde(default)]
+    pub ci: bool,
+}
+
+/// Unlock-window profile (ADR-024 §2).
+///
+/// A wide unlock window and per-call approval pull in opposite
+/// directions, so the coherent combinations ship as named
+/// profiles rather than four independent knobs the user has to
+/// keep consistent.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SecretsProfile {
+    /// A developer laptop running a trusted agent: unlock once
+    /// for the working day, honour each path's own
+    /// `approve_on_use`.
+    #[default]
+    Convenient,
+    /// Shared hosts, high-value paths, untrusted or unattended
+    /// agents: short window, idle re-lock, and every access a
+    /// separate human decision.
+    Strict,
+}
+
+impl SecretsProfile {
+    /// Default `unlock_ttl` for this profile, in seconds.
+    pub fn default_unlock_ttl_seconds(self) -> u64 {
+        match self {
+            Self::Convenient => 8 * 60 * 60,
+            Self::Strict => 15 * 60,
+        }
+    }
+
+    /// Default `max_unlock_ttl` ceiling for this profile, in
+    /// seconds. A per-unlock `duration` may not exceed it.
+    pub fn default_max_unlock_ttl_seconds(self) -> u64 {
+        match self {
+            Self::Convenient => 24 * 60 * 60,
+            Self::Strict => 60 * 60,
+        }
+    }
+
+    /// Default idle re-lock for this profile, in seconds.
+    /// `None` under `convenient`, which is what preserves the
+    /// daily-unlock intent.
+    pub fn default_idle_relock_seconds(self) -> Option<u64> {
+        match self {
+            Self::Convenient => None,
+            Self::Strict => Some(5 * 60),
+        }
+    }
+
+    /// Whether this profile *intends* every path to require per-use
+    /// approval, regardless of its manifest setting.
+    ///
+    /// # Not enforced in this build, and deliberately so
+    ///
+    /// Nothing consults this when deciding whether a resolve needs
+    /// approval — [`crate::secret_approval::SessionApprovalCache::evaluate`]
+    /// takes the per-path policy and only that. Reported here rather
+    /// than quietly wired up, because wiring it would be wrong twice
+    /// over:
+    ///
+    /// - There is no mechanism in this build for collecting a per-use
+    ///   approval. A path carrying `session` or `per-call` cannot be
+    ///   resolved at all — `doctor` reports exactly that as an error.
+    ///   Forcing the policy onto every path would therefore make
+    ///   every secret unresolvable, not more carefully guarded.
+    /// - The model was decided against. A human unlocks the vault
+    ///   once and the agent works within that window; where a second
+    ///   factor is wanted, TOTP re-unlock provides it. Prompting per
+    ///   secret is not the shape of this system.
+    ///
+    /// What `strict` actually does is real and enforced: a shorter
+    /// unlock window, a lower ceiling on any single unlock, and idle
+    /// re-locking. Those are "smaller numbers", and smaller numbers
+    /// are the mitigation.
+    ///
+    /// Kept as a predicate rather than deleted so the intent stays
+    /// visible if per-use approval is ever built — but callers must
+    /// not present it as a live control.
+    pub fn intends_per_call_approval(self) -> bool {
+        matches!(self, Self::Strict)
+    }
+
+    /// Whether this profile needs a surface on which the daemon
+    /// can ask the user something. `strict` does, because
+    /// per-call approval is meaningless with nobody to ask, and
+    /// selecting it on a headless host must fail at configuration
+    /// time rather than at the first secret access.
+    pub fn requires_prompt_surface(self) -> bool {
+        matches!(self, Self::Strict)
+    }
+}
+
+/// `[secrets.keychain]` section (ADR-024 §6).
+///
+/// The OS keychain is **disabled by default on every platform**,
+/// including macOS. It only exceeds the protection of a `0600`
+/// file on macOS, where item ACLs bind to the reading process's
+/// code signature; on Linux the Secret Service hands a stored
+/// secret to any process in the user's session, and on Windows
+/// DPAPI is scoped to the user.
+///
+/// Enabling it is therefore a deliberate choice — most usefully
+/// on macOS as an anti-tamper binding (ADR-024 §7) rather than as
+/// a general secret store.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct KeychainConfig {
+    /// Whether the in-tree `keychain` source may be used at all.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl KeychainConfig {
+    /// `true` when this section carries nothing worth writing.
+    pub fn is_default(&self) -> bool {
+        !self.enabled
+    }
+}
+
+/// `[secrets]` section per ADR-020 §7 (migration story),
+/// ADR-021 §6 (validation framework) and ADR-024 §2/§6
+/// (unlock window, keychain demotion).
+///
+/// Secret-framework knobs live here rather than in [`Config`]
+/// directly so they travel together.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretsConfig {
     /// `true` when the user has confirmed every legacy
     /// pre-ADR-020 keychain entry has been migrated. Once set,
     /// the doctor escalates any remaining legacy entries from
     /// "migrate these" to "migration_complete is set but legacy
-    /// entries remain — clear the flag or finish the move." A
-    /// future router can read this flag to refuse the legacy
-    /// fallback reader entirely.
+    /// entries remain — clear the flag or finish the move."
+    ///
+    /// Independent of [`KeychainConfig::enabled`]: the legacy
+    /// reader stays available until migration is complete, so the
+    /// ADR-024 default flip cannot strand a user whose tokens
+    /// still live in the OS keychain.
     #[serde(default)]
     pub migration_complete: bool,
+
+    /// Unlock-window profile. Supplies the defaults for the three
+    /// TTL fields below; each may still be overridden
+    /// individually.
+    #[serde(default)]
+    pub profile: SecretsProfile,
+
+    /// How long the daemon holds the vault key after a successful
+    /// unlock. `None` takes the profile's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlock_ttl_seconds: Option<u64>,
+
+    /// Hard ceiling on any single unlock window, including a
+    /// per-unlock `duration`. `None` takes the profile's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_unlock_ttl_seconds: Option<u64>,
+
+    /// Re-lock after this much *inactivity* even inside the
+    /// unlock window. `None` takes the profile's default, which
+    /// is off under `convenient`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_relock_seconds: Option<u64>,
+
+    /// Opt-in OS keychain source.
+    #[serde(default, skip_serializing_if = "KeychainConfig::is_default")]
+    pub keychain: KeychainConfig,
+
+    /// Path to the keyfile whose HKDF output wraps the vault key
+    /// (ADR-024 §6, `Envelope::Keyfile`), enabling an unattended
+    /// cold start.
+    ///
+    /// Deliberately defaults **outside** the vault's own
+    /// directory so that a backup, a cloud sync, or an accidental
+    /// `git add` of the config tree does not carry both halves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyfile_path: Option<PathBuf>,
 }
 
 /// Configuration for an upstream MCP server to proxy.
@@ -684,6 +987,22 @@ pub struct RemoteConfigSettings {
     /// Keychain key for the Bearer token (e.g., "remote_config.token").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_key: Option<String>,
+
+    /// Where to trade a short-lived onboarding token for a durable
+    /// one, when the config server offers that.
+    ///
+    /// Read from the server's *response*, not written by the user:
+    /// declaring it is how a server opts into
+    /// [`crate::token_exchange`]. A server that declares nothing
+    /// keeps the old behaviour, where the token supplied on the
+    /// command line is stored as-is.
+    ///
+    /// Only honoured when it shares an origin with the config URL —
+    /// acting on it means posting a live credential to wherever it
+    /// points, and that decision belongs to the person who chose the
+    /// config server, not to the response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_exchange_url: Option<String>,
 }
 
 fn default_gitlab_url() -> String {
@@ -1007,10 +1326,48 @@ impl Config {
     pub const DEFAULT_CONTEXT_NAME: &'static str = "default";
 
     /// Get the configuration directory path.
+    ///
+    /// [`CONFIG_DIR_ENV`] overrides the platform default, and exists
+    /// for one reason: without it, nothing that runs the real binary
+    /// can be isolated from the developer's own configuration on
+    /// Windows.
+    ///
+    /// `dirs::config_dir()` reads `XDG_CONFIG_HOME` on Linux and
+    /// `$HOME/Library/Application Support` on macOS, both of which a
+    /// test can redirect. On Windows it goes through the Known Folder
+    /// API, which no environment variable reaches — so a test that
+    /// spawns `devboy` there writes to the config of whoever ran
+    /// `cargo test`. That is not a hypothetical: it is why the
+    /// keyfile-enrolment tests had to be gated to UNIX.
     pub fn config_dir() -> Result<PathBuf> {
+        if let Ok(overridden) = std::env::var(CONFIG_DIR_ENV) {
+            let trimmed = overridden.trim();
+            if !trimmed.is_empty() {
+                return Ok(PathBuf::from(trimmed));
+            }
+        }
+
         dirs::config_dir()
             .map(|p| p.join(CONFIG_DIR_NAME))
             .ok_or_else(|| Error::Config("Could not determine config directory".to_string()))
+    }
+
+    /// Directory holding the vault, the global secrets index and the
+    /// audit log.
+    ///
+    /// Derived from [`Config::config_dir`] so it follows
+    /// [`CONFIG_DIR_ENV`] with everything else. Four call sites used
+    /// to build this path by hand from `dirs::config_dir()`; each
+    /// would have kept pointing at the platform default while the
+    /// config moved, which is the kind of split that produces a
+    /// vault the CLI can see and the daemon cannot.
+    pub fn secrets_dir() -> Result<PathBuf> {
+        Ok(Self::config_dir()?.join("secrets"))
+    }
+
+    /// Canonical vault location.
+    pub fn vault_path() -> Result<PathBuf> {
+        Ok(Self::secrets_dir()?.join("vault.dvb"))
     }
 
     /// Get the configuration file path.
@@ -1235,14 +1592,20 @@ impl Config {
     pub fn set(&mut self, key: &str, value: &str) -> Result<()> {
         let parts: Vec<&str> = key.split('.').collect();
 
-        // Three-part paths are reserved for `proxy.*` sections.
-        if parts.len() == 3 && parts[0] == "proxy" {
-            return self.set_proxy_field(parts[1], parts[2], value);
+        // Three-part paths belong to nested sections: `proxy.*`
+        // and, since ADR-024 §6, `secrets.keychain.*`.
+        if parts.len() == 3 {
+            match parts[0] {
+                "proxy" => return self.set_proxy_field(parts[1], parts[2], value),
+                "secrets" => return self.set_secrets_subsection(parts[1], parts[2], value),
+                _ => {}
+            }
         }
 
         if parts.len() != 2 {
             return Err(Error::Config(format!(
-                "Invalid config key '{}'. Expected formats: provider.field or proxy.section.field",
+                "Invalid config key '{}'. Expected formats: provider.field, \
+                 proxy.section.field, or secrets.keychain.field",
                 key
             )));
         }
@@ -1413,12 +1776,83 @@ impl Config {
                     }
                 }
             }
+            "secrets" => {
+                let config = self.secrets.get_or_insert_with(SecretsConfig::default);
+                match field {
+                    "migration_complete" => {
+                        config.migration_complete = parse_bool(value)?;
+                    }
+                    "profile" => {
+                        config.profile = match value.trim().to_ascii_lowercase().as_str() {
+                            "convenient" => SecretsProfile::Convenient,
+                            "strict" => SecretsProfile::Strict,
+                            other => {
+                                return Err(Error::Config(format!(
+                                    "Unknown secrets profile '{other}'. Expected 'convenient' \
+                                     or 'strict'."
+                                )));
+                            }
+                        };
+                    }
+                    "unlock_ttl_seconds" => {
+                        config.unlock_ttl_seconds = Some(parse_u64(value, field)?);
+                    }
+                    "max_unlock_ttl_seconds" => {
+                        config.max_unlock_ttl_seconds = Some(parse_u64(value, field)?);
+                    }
+                    "idle_relock_seconds" => {
+                        config.idle_relock_seconds = Some(parse_u64(value, field)?);
+                    }
+                    "keyfile_path" | "keyfile" => {
+                        config.keyfile_path = Some(PathBuf::from(value));
+                    }
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown secrets config field: {field}. Known fields: \
+                             migration_complete, profile, unlock_ttl_seconds, \
+                             max_unlock_ttl_seconds, idle_relock_seconds, keyfile_path, \
+                             keychain.enabled"
+                        )));
+                    }
+                }
+            }
+            "runtime" => {
+                let config = self.runtime.get_or_insert_with(RuntimeConfig::default);
+                match field {
+                    "ci" => config.ci = parse_bool(value)?,
+                    _ => {
+                        return Err(Error::Config(format!(
+                            "Unknown runtime config field: {field}. Known fields: ci"
+                        )));
+                    }
+                }
+            }
             _ => {
                 return Err(Error::Config(format!("Unknown provider: {}", provider)));
             }
         }
 
         Ok(())
+    }
+
+    /// Nested `secrets.<section>.<field>` setter. Currently only
+    /// `secrets.keychain.enabled` (ADR-024 §6).
+    fn set_secrets_subsection(&mut self, section: &str, field: &str, value: &str) -> Result<()> {
+        let config = self.secrets.get_or_insert_with(SecretsConfig::default);
+        match section {
+            "keychain" => match field {
+                "enabled" => {
+                    config.keychain.enabled = parse_bool(value)?;
+                    Ok(())
+                }
+                _ => Err(Error::Config(format!(
+                    "Unknown secrets.keychain field: {field}. Known fields: enabled"
+                ))),
+            },
+            _ => Err(Error::Config(format!(
+                "Unknown secrets subsection: {section}. Known subsections: keychain"
+            ))),
+        }
     }
 
     /// Get a configuration value by key path.
@@ -1429,13 +1863,18 @@ impl Config {
     pub fn get(&self, key: &str) -> Result<Option<String>> {
         let parts: Vec<&str> = key.split('.').collect();
 
-        if parts.len() == 3 && parts[0] == "proxy" {
-            return self.get_proxy_field(parts[1], parts[2]);
+        if parts.len() == 3 {
+            match parts[0] {
+                "proxy" => return self.get_proxy_field(parts[1], parts[2]),
+                "secrets" => return self.get_secrets_subsection(parts[1], parts[2]),
+                _ => {}
+            }
         }
 
         if parts.len() != 2 {
             return Err(Error::Config(format!(
-                "Invalid config key '{}'. Expected formats: provider.field or proxy.section.field",
+                "Invalid config key '{}'. Expected formats: provider.field, \
+                 proxy.section.field, or secrets.keychain.field",
                 key
             )));
         }
@@ -1572,7 +2011,52 @@ impl Config {
                     ))),
                 }
             }
+            // Secrets fields report the *effective* value, so a
+            // `get` after a fresh install shows the profile
+            // defaults rather than an empty string. The exception
+            // is `keyfile_path`, which has no default.
+            "secrets" => match field {
+                "migration_complete" => Ok(Some(self.is_secrets_migration_complete().to_string())),
+                "profile" => Ok(Some(
+                    match self.secrets_profile() {
+                        SecretsProfile::Convenient => "convenient",
+                        SecretsProfile::Strict => "strict",
+                    }
+                    .to_string(),
+                )),
+                "unlock_ttl_seconds" => Ok(Some(self.unlock_ttl_seconds().to_string())),
+                "max_unlock_ttl_seconds" => Ok(Some(self.max_unlock_ttl_seconds().to_string())),
+                "idle_relock_seconds" => Ok(self.idle_relock_seconds().map(|v| v.to_string())),
+                "keyfile_path" | "keyfile" => {
+                    Ok(self.secrets_keyfile_path().map(|p| p.display().to_string()))
+                }
+                _ => Err(Error::Config(format!(
+                    "Unknown secrets config field: {field}"
+                ))),
+            },
+            "runtime" => match field {
+                "ci" => Ok(Some(self.is_ci_forced().to_string())),
+                _ => Err(Error::Config(format!(
+                    "Unknown runtime config field: {field}"
+                ))),
+            },
             _ => Err(Error::Config(format!("Unknown provider: {}", provider))),
+        }
+    }
+
+    /// Nested `secrets.<section>.<field>` getter, mirroring
+    /// [`Self::set_secrets_subsection`].
+    fn get_secrets_subsection(&self, section: &str, field: &str) -> Result<Option<String>> {
+        match section {
+            "keychain" => match field {
+                "enabled" => Ok(Some(self.is_keychain_enabled().to_string())),
+                _ => Err(Error::Config(format!(
+                    "Unknown secrets.keychain field: {field}"
+                ))),
+            },
+            _ => Err(Error::Config(format!(
+                "Unknown secrets subsection: {section}"
+            ))),
         }
     }
 
@@ -1839,6 +2323,233 @@ impl ContextConfig {
 // =============================================================================
 
 #[cfg(test)]
+mod secrets_config_tests {
+    use super::*;
+
+    /// A config with no `[secrets]` section at all must behave
+    /// exactly like the `convenient` profile — this is the
+    /// upgrade path for every existing user.
+    #[test]
+    fn absent_section_yields_convenient_defaults() {
+        let config = Config::default();
+
+        assert_eq!(config.secrets_profile(), SecretsProfile::Convenient);
+        assert_eq!(config.unlock_ttl_seconds(), 8 * 60 * 60);
+        assert_eq!(config.max_unlock_ttl_seconds(), 24 * 60 * 60);
+        assert_eq!(config.idle_relock_seconds(), None);
+        assert!(!config.is_secrets_migration_complete());
+        assert!(config.secrets_keyfile_path().is_none());
+    }
+
+    /// ADR-024 §6: the OS keychain is off by default on *every*
+    /// platform, including macOS. If this test ever flips, the
+    /// default posture changed.
+    #[test]
+    fn keychain_is_disabled_by_default() {
+        assert!(!Config::default().is_keychain_enabled());
+
+        let mut config = Config::default();
+        config.set("secrets.keychain.enabled", "true").unwrap();
+        assert!(config.is_keychain_enabled());
+        assert_eq!(
+            config.get("secrets.keychain.enabled").unwrap().as_deref(),
+            Some("true")
+        );
+    }
+
+    /// ADR-024 §6: CI mode is never on implicitly.
+    #[test]
+    fn runtime_ci_is_off_by_default_and_settable() {
+        assert!(!Config::default().is_ci_forced());
+
+        let mut config = Config::default();
+        config.set("runtime.ci", "1").unwrap();
+        assert!(config.is_ci_forced());
+        assert_eq!(config.get("runtime.ci").unwrap().as_deref(), Some("true"));
+    }
+
+    #[test]
+    fn strict_profile_supplies_its_own_window() {
+        let mut config = Config::default();
+        config.set("secrets.profile", "strict").unwrap();
+
+        assert_eq!(config.secrets_profile(), SecretsProfile::Strict);
+        assert_eq!(config.unlock_ttl_seconds(), 15 * 60);
+        assert_eq!(config.max_unlock_ttl_seconds(), 60 * 60);
+        assert_eq!(config.idle_relock_seconds(), Some(5 * 60));
+        assert!(SecretsProfile::Strict.intends_per_call_approval());
+        assert!(SecretsProfile::Strict.requires_prompt_surface());
+    }
+
+    /// The predicate states an intent, not an enforced control, and
+    /// the difference matters: nothing consults it when deciding
+    /// whether a resolve needs approval. A test that asserted it
+    /// "forces" anything was describing a guarantee the code does
+    /// not make.
+    #[test]
+    fn the_strict_profile_does_not_actually_gate_a_resolve() {
+        use crate::secret_approval::{ApprovalGate, ApproveOnUsePolicy, SessionApprovalCache};
+
+        assert!(SecretsProfile::Strict.intends_per_call_approval());
+
+        // A path whose own policy is `never` resolves without a
+        // prompt no matter which profile is selected.
+        let cache = SessionApprovalCache::new();
+        assert_eq!(
+            cache.evaluate("team/prod/db-password", ApproveOnUsePolicy::Never),
+            ApprovalGate::NotRequired,
+            "if this ever changes, the profile has become a live control and the docs on \
+             `intends_per_call_approval` must be rewritten"
+        );
+    }
+
+    #[test]
+    fn convenient_profile_does_not_force_approval_or_prompt_surface() {
+        assert!(!SecretsProfile::Convenient.intends_per_call_approval());
+        assert!(!SecretsProfile::Convenient.requires_prompt_surface());
+    }
+
+    #[test]
+    fn explicit_values_override_profile_defaults() {
+        let mut config = Config::default();
+        config.set("secrets.profile", "strict").unwrap();
+        config.set("secrets.unlock_ttl_seconds", "600").unwrap();
+        config.set("secrets.idle_relock_seconds", "60").unwrap();
+
+        assert_eq!(config.unlock_ttl_seconds(), 600);
+        assert_eq!(config.idle_relock_seconds(), Some(60));
+        // Untouched field still follows the profile.
+        assert_eq!(config.max_unlock_ttl_seconds(), 60 * 60);
+    }
+
+    /// A window wider than the ceiling is clamped rather than
+    /// rejected, and the inconsistency is reported instead of
+    /// being silently absorbed.
+    #[test]
+    fn unlock_ttl_is_clamped_to_max_and_warned_about() {
+        let mut config = Config::default();
+        config
+            .set("secrets.max_unlock_ttl_seconds", "3600")
+            .unwrap();
+        config.set("secrets.unlock_ttl_seconds", "86400").unwrap();
+
+        assert_eq!(config.unlock_ttl_seconds(), 3600);
+
+        let warnings = config.secrets_config_warnings();
+        assert!(
+            warnings.iter().any(|w| w.contains("clamped")),
+            "expected a clamp warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn idle_relock_longer_than_window_is_reported_as_unreachable() {
+        let mut config = Config::default();
+        config.set("secrets.unlock_ttl_seconds", "300").unwrap();
+        config.set("secrets.idle_relock_seconds", "600").unwrap();
+
+        let warnings = config.secrets_config_warnings();
+        assert!(
+            warnings.iter().any(|w| w.contains("never fire")),
+            "expected an unreachable-idle warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn zero_unlock_ttl_is_reported() {
+        let mut config = Config::default();
+        config.set("secrets.unlock_ttl_seconds", "0").unwrap();
+
+        let warnings = config.secrets_config_warnings();
+        assert!(
+            warnings.iter().any(|w| w.contains("re-locks the vault")),
+            "expected a zero-window warning, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn clean_config_produces_no_warnings() {
+        let mut config = Config::default();
+        config.set("secrets.profile", "convenient").unwrap();
+        assert!(config.secrets_config_warnings().is_empty());
+    }
+
+    #[test]
+    fn unknown_fields_and_profiles_are_rejected() {
+        let mut config = Config::default();
+
+        assert!(config.set("secrets.profile", "paranoid").is_err());
+        assert!(config.set("secrets.nope", "1").is_err());
+        assert!(config.set("secrets.keychain.nope", "1").is_err());
+        assert!(config.set("secrets.nosuch.enabled", "1").is_err());
+        assert!(config.set("runtime.nope", "1").is_err());
+        assert!(config.set("secrets.unlock_ttl_seconds", "-5").is_err());
+        assert!(config.set("secrets.keychain.enabled", "maybe").is_err());
+    }
+
+    #[test]
+    fn keyfile_path_round_trips() {
+        let mut config = Config::default();
+        config
+            .set("secrets.keyfile_path", "/var/lib/devboy/vault.key")
+            .unwrap();
+
+        assert_eq!(
+            config
+                .secrets_keyfile_path()
+                .map(|p| p.display().to_string()),
+            Some("/var/lib/devboy/vault.key".to_string())
+        );
+        assert_eq!(
+            config.get("secrets.keyfile_path").unwrap().as_deref(),
+            Some("/var/lib/devboy/vault.key")
+        );
+    }
+
+    /// Round-trip through TOML: defaults must not be written out,
+    /// so an untouched config file stays empty rather than
+    /// freezing today's defaults into every user's config.
+    #[test]
+    fn defaults_are_not_serialized() {
+        let config = Config::default();
+        let toml = toml::to_string(&config).unwrap();
+
+        assert!(!toml.contains("[secrets]"), "got: {toml}");
+        assert!(!toml.contains("[runtime]"), "got: {toml}");
+    }
+
+    #[test]
+    fn non_default_values_survive_a_toml_round_trip() {
+        let mut config = Config::default();
+        config.set("secrets.profile", "strict").unwrap();
+        config.set("secrets.keychain.enabled", "true").unwrap();
+        config.set("runtime.ci", "true").unwrap();
+        config.set("secrets.unlock_ttl_seconds", "1800").unwrap();
+
+        let toml = toml::to_string(&config).unwrap();
+        let parsed: Config = toml::from_str(&toml).unwrap();
+
+        assert_eq!(parsed.secrets_profile(), SecretsProfile::Strict);
+        assert!(parsed.is_keychain_enabled());
+        assert!(parsed.is_ci_forced());
+        assert_eq!(parsed.unlock_ttl_seconds(), 1800);
+    }
+
+    /// The legacy reader is gated on `migration_complete`, not on
+    /// the new keychain switch — otherwise the ADR-024 default
+    /// flip would strand users whose tokens are still in the OS
+    /// keychain.
+    #[test]
+    fn migration_flag_is_independent_of_the_keychain_switch() {
+        let mut config = Config::default();
+        config.set("secrets.migration_complete", "true").unwrap();
+
+        assert!(config.is_secrets_migration_complete());
+        assert!(!config.is_keychain_enabled());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
@@ -1961,6 +2672,7 @@ mod tests {
         let config = Config {
             secrets: Some(SecretsConfig {
                 migration_complete: true,
+                ..SecretsConfig::default()
             }),
             ..Config::default()
         };
@@ -2413,6 +3125,7 @@ mod tests {
             sentry: None,
             remote_config: None,
             secrets: None,
+            runtime: None,
         };
 
         let providers = config.configured_providers();
@@ -2526,6 +3239,7 @@ mod tests {
             sentry: None,
             remote_config: None,
             secrets: None,
+            runtime: None,
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -3665,5 +4379,70 @@ endpoint = "https://app.example.com/api/telemetry/tool-invocations"
         let config = BuiltinToolsConfig::default();
         // Empty config — nothing to check
         config.warn_unknown_tools(known);
+    }
+}
+
+#[cfg(test)]
+mod config_dir_override_tests {
+    use super::*;
+
+    /// The override replaces the directory outright. Appending
+    /// `devboy-tools` to it would surprise a caller who pointed it at
+    /// a scratch directory and then looked for their file there.
+    #[test]
+    fn the_override_is_used_verbatim() {
+        temp_env::with_var(CONFIG_DIR_ENV, Some("/tmp/devboy-scratch"), || {
+            assert_eq!(
+                Config::config_dir().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch")
+            );
+            assert_eq!(
+                Config::config_path().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch").join(CONFIG_FILE_NAME)
+            );
+        });
+    }
+
+    /// An empty value is a variable someone meant to unset, not a
+    /// request to use the current directory.
+    #[test]
+    fn an_empty_override_falls_through_to_the_platform_default() {
+        let platform = temp_env::with_var_unset(CONFIG_DIR_ENV, || Config::config_dir().unwrap());
+
+        for blank in ["", "   "] {
+            temp_env::with_var(CONFIG_DIR_ENV, Some(blank), || {
+                assert_eq!(
+                    Config::config_dir().unwrap(),
+                    platform,
+                    "a blank override must not change where the config lives"
+                );
+            });
+        }
+    }
+
+    /// The vault, the index and the audit log must land beside the
+    /// config, not on the platform default. An override that moved
+    /// one and not the others would produce an install the CLI can
+    /// see and the daemon cannot.
+    #[test]
+    fn the_secrets_directory_follows_the_override() {
+        temp_env::with_var(CONFIG_DIR_ENV, Some("/tmp/devboy-scratch"), || {
+            assert_eq!(
+                Config::secrets_dir().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch/secrets")
+            );
+            assert_eq!(
+                Config::vault_path().unwrap(),
+                PathBuf::from("/tmp/devboy-scratch/secrets/vault.dvb")
+            );
+        });
+    }
+
+    /// Without the variable, nothing about the existing behaviour
+    /// changes — the override is an addition, not a redirection.
+    #[test]
+    fn the_platform_default_still_ends_in_the_product_directory() {
+        let path = temp_env::with_var_unset(CONFIG_DIR_ENV, || Config::config_dir().unwrap());
+        assert!(path.ends_with(CONFIG_DIR_NAME), "{}", path.display());
     }
 }

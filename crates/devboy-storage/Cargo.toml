@@ -26,6 +26,7 @@ toml.workspace = true
 tracing.workspace = true
 dirs.workspace = true
 secrecy.workspace = true
+zeroize = "1.8"
 async-trait.workspace = true
 bitflags = "2.6"
 regex.workspace = true

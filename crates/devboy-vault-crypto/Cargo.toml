@@ -30,15 +30,19 @@ argon2.workspace = true
 bip39.workspace = true
 hkdf.workspace = true
 sha2.workspace = true
-
-# Keychain access (macOS only — the keychain envelope from ADR-023 §3.2
-# is a no-op on every other platform).
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3", features = ["apple-native"] }
+hmac.workspace = true
+sha1.workspace = true
+data-encoding.workspace = true
+subtle.workspace = true
+dirs.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
-# tempfile is in [dependencies] above (used by atomic write); no
-# extra dev-only deps for this crate yet.
+# tempfile is in [dependencies] above (used by atomic write).
+# Scoped env-var mutation for the machine-binding tests; the
+# workspace `unsafe_code = "forbid"` lint blocks a bare
+# `std::env::set_var`.
+temp-env = "0.3"
 
 [lints]
 workspace = true

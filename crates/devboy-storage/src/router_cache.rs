@@ -31,9 +31,10 @@
 //!
 //! 1. Their effective TTL elapses (lazy — checked on the next
 //!    `get`).
-//! 2. The user invokes `devboy secrets refresh <path>` /
-//!    `--all` ([`AdaptiveCache::invalidate`] /
-//!    [`AdaptiveCache::invalidate_all`]).
+//! 2. Something calls [`AdaptiveCache::invalidate`] or
+//!    [`AdaptiveCache::invalidate_all`]. No CLI command exposes
+//!    these yet — the entry points exist for the router and for
+//!    case 3 below.
 //! 3. A source declares out-of-band invalidation (Vault lease
 //!    revoked, 1Password session timed out). The router calls
 //!    [`AdaptiveCache::invalidate`] in response.
@@ -254,7 +255,10 @@ impl AdaptiveCache {
         g.remove(path);
     }
 
-    /// Drop every entry. Used by `devboy secrets refresh --all`.
+    /// Drop every entry.
+    ///
+    /// Nothing user-facing reaches this yet; it is here for the
+    /// router and for whatever eventually offers a manual refresh.
     pub fn invalidate_all(&self) {
         let mut g = self.entries.lock().expect("AdaptiveCache mutex poisoned");
         g.clear();

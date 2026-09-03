@@ -1,8 +1,44 @@
 # Secret-framework BDD scenarios
 
-Eight Gherkin `.feature` files covering the user-facing behaviour of the secret framework — the setup-secrets onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, the catalog → provision-dialog rendering contract, the local-vault unlock / create flow, and the first-run onboarding wizard (backend picker).
+Eleven Gherkin `.feature` files covering the user-facing behaviour of the secret framework — the setup-secrets onboarding, approve-on-use, catalog URL lifecycle, the agent trust boundary, the proposer noise-reduction series, the catalog → provision-dialog rendering contract, the local-vault unlock / create flow, the first-run onboarding wizard (backend picker), and — from ADR-024 — CI env-only resolution, the daemon's startup provenance check, and TOTP re-unlock with its audit trail.
 
-These are **executable specifications** in the BDD sense — every scenario states a concrete observable outcome a user (developer or AI agent) can verify by running the documented commands. They are not (yet) wired into a `cucumber-rs` test harness; the `.feature` files act as the written contract that the existing unit / integration / end-to-end test suites already cover (look for the named functions and reasons in `crates/devboy-cli/src/secrets_setup.rs`, `crates/devboy-token-catalog/src/lib.rs`, `crates/devboy-mcp/src/secrets_*.rs`).
+Каждый сценарий описывает конкретный наблюдаемый результат, который пользователь (разработчик или AI-агент) может проверить, выполнив описанные команды.
+
+## Как сценарии связаны с кодом
+
+Сценарии **не исполняются** раннером. Вместо этого каждый из них несёт тег `@covered-by:<имя_теста>`, а тест-гейт `crates/devboy-cli/tests/bdd_coverage.rs` в CI проверяет, что:
+
+1. у каждого сценария есть хотя бы один `@covered-by:`;
+2. каждый упомянутый тест реально существует в workspace;
+3. имена сценариев внутри файла не повторяются.
+
+Правило 2 — то, ради чего всё это. Удалили или переименовали тест — сценарий, который на нём держался, роняет CI, и автор обязан либо восстановить покрытие, либо признать, что поведение исчезло. До этого гейта спецификация могла расходиться с кодом сколько угодно и никто бы не заметил: спецификация, которая не может оказаться неправдой, — не спецификация.
+
+### Почему не cucumber-rs
+
+Рассматривали и отказались. Сценарии написаны на уровне абстракции, до которого честный step definition не дотягивается:
+
+```gherkin
+Then the build fails with a typed error because SecretString does not implement AgentSafeReply
+```
+
+```gherkin
+When the user clicks "Deny" in the dialog
+```
+
+Такие шаги можно только сымитировать, а зелёный фейковый шаг **хуже** отсутствия раннера: спецификация выглядит проверенной, ничего не проверяя. Поведение, которое эти шаги описывают, уже покрыто — compile-fail-гейтами, юнит-тестами GUI-рендереров, процессными интеграционными тестами. Просто не из Gherkin.
+
+### Признанные дыры: `@not-covered:`
+
+Семь сценариев описывают поведение, которое сегодня не покрыто ничем: GUI-кнопка, чей результат ни один тест не читает; `is_first_run()`, который лезет в `dirs::config_dir()` и env напрямую и потому не запускается из теста; пиновые счётчики прополки, для которых нет фикстуры демо-проекта. Повесить на них «примерно подходящий» тест — значит заставить гейт **врать**, а это хуже самой дыры.
+
+Такие сценарии несут `@not-covered:<причина>`, и точный их список приколочен константой `UNCOVERED` в `bdd_coverage.rs`. Список — **храповик**: сценарий без покрытия, которого нет в списке, роняет CI; и наоборот, если покрытие появилось, а запись в списке осталась — тоже роняет. Долг видно, и он не может вырасти случайно.
+
+### Чего гейт НЕ гарантирует
+
+Что названный тест проверяет именно то, что написано в сценарии. Гейт умеет проверить, что ссылка есть и куда-то ведёт; что она ведёт **туда**, проверяет только человек на ревью. Поэтому тег стоит прямо над сценарием — чтобы ревьюер читал оба сразу.
+
+Многие связки покрывают сценарий **частично**: у сценария пять `Then`, а тест проверяет три. Это нормально и намеренно — гейт держит связь живой, а не измеряет полноту.
 
 ## Files
 
@@ -15,6 +51,9 @@ These are **executable specifications** in the BDD sense — every scenario stat
 | [`proposer-noise-reduction.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/proposer-noise-reduction.feature) | The five-step skip-list expansion (P1-P5) plus the catalog-driven precision (S2 + bundled catalogs) that took the proposer from 236 to 161 paths on the canonical demo project. |
 | [`ui-catalog-rendering.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/ui-catalog-rendering.feature) | The provision dialog binds to the active token catalog (description / numbered steps / notes / console URL), with manifest-only fallback when no catalog matches the path. Covers both the egui and ratatui renderers (U-series). |
 | [`vault-unlock.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/vault-unlock.feature) | The local-vault unlock / create flow in `secrets ui` — env-passphrase fast path, modal unlock prompt for an existing `.dvb`, wrong-passphrase handling, the keychain escape hatch, first-run create-vault with the recovery-phrase gate, and live backend switching (V-series). |
+| [`ci-env-only.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/ci-env-only.feature) | ADR-024 §6 — CI resolves from the environment alone: explicit `DEVBOY_CI` versus heuristic variables, both env-var naming conventions, no prompts, and a missing secret naming the variable that would supply it. |
+| [`daemon-provenance.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/daemon-provenance.feature) | ADR-024 §7 — the daemon's startup ancestry check: fail-closed by default, the insecure override that never upgrades the reported trust level, and the terminal check that stays advisory. |
+| [`totp-unlock-and-audit.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/totp-unlock-and-audit.feature) | ADR-024 §1 + §4 — the reserved TOTP slot an agent cannot read, list or overwrite; replay guard and rate limit; and the encrypted append-only audit log with its splice and truncation detection. |
 | [`onboarding.feature`](https://github.com/meteora-pro/devboy-tools/blob/main/docs/guide/secrets/scenarios/onboarding.feature) | The first-run onboarding wizard — backend picker (keychain / local-vault / HCP Vault, combinations allowed), per-backend sub-forms, the `access` mode for HCP Vault, `sources.toml` write, primary-backend resolution, and the P11 (multi-source routing) / P15 (write path) deferral boundaries (W-series). |
 
 ## Why Gherkin
@@ -34,3 +73,16 @@ Add a `.feature` block any time:
 - a new policy value lands on the manifest schema (e.g. extending `approve_on_use` with a `Project` or `Org` scope in a future epic).
 
 Keep scenarios concrete — name actual env vars, paths, error reasons. The Examples table is the right place for breadth (P1-P5 outlines).
+
+### Обязательный тег покрытия
+
+Новый сценарий без `@covered-by:` не пройдёт CI. Тег ставится строкой выше заголовка:
+
+```gherkin
+  @covered-by:legacy_env_names_still_resolve_in_ci_mode
+  Scenario: An ADR-005 pipeline keeps working after the default flip
+    Given the pipeline exports DEVBOY_GITLAB_TOKEN
+    ...
+```
+
+Тегов может быть несколько через пробел. Порядок такой: **сначала тест, потом сценарий.** Если покрывающего теста ещё нет — это не повод писать сценарий «на будущее»: непокрытый сценарий обещает то, чего набор тестов не выполняет.

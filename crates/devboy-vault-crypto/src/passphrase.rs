@@ -66,6 +66,22 @@ pub enum PassphraseError {
     #[error("Argon2id key derivation failed: {0}")]
     Argon2KdfFailed(argon2::Error),
 
+    /// An envelope's KDF parameter is above the sanity cap.
+    ///
+    /// Refused before Argon2 is constructed, so the allocation the
+    /// parameter would have asked for never happens.
+    #[error(
+        "envelope KDF param `{param}` = {value} exceeds the sanity cap ({cap}); the vault file is          either corrupt or was tampered with — refusing to unlock"
+    )]
+    KdfParamOutOfRange {
+        /// Which parameter tripped the cap.
+        param: &'static str,
+        /// The envelope's value, verbatim.
+        value: u32,
+        /// The maximum accepted.
+        cap: u32,
+    },
+
     /// `argon2_salt` or `wrapped_key` is not valid base64.
     #[error("envelope payload is not valid base64: {0}")]
     Base64Decode(#[from] base64::DecodeError),
@@ -127,11 +143,45 @@ impl From<AeadError> for PassphraseError {
 /// The returned bytes are wrapped in [`Zeroizing`] so the buffer is
 /// erased from RAM when the caller drops it; the wrap key is only
 /// useful for the immediate AEAD operation that follows.
+/// Upper bounds on envelope KDF parameters, mirroring the header's.
+///
+/// Not about cryptographic strength — the `argon2` crate enforces the
+/// lower bounds. These stop a tampered file from turning an unlock
+/// into an allocation the machine cannot serve.
+pub const MAX_M_COST_KIB: u32 = 1024 * 1024;
+/// See [`MAX_M_COST_KIB`].
+pub const MAX_T_COST: u32 = 64;
+/// See [`MAX_M_COST_KIB`].
+pub const MAX_P_COST: u32 = 16;
+
+/// Refuse a parameter above its cap.
+fn check_cap(param: &'static str, value: u32, cap: u32) -> Result<(), PassphraseError> {
+    if value > cap {
+        return Err(PassphraseError::KdfParamOutOfRange { param, value, cap });
+    }
+    Ok(())
+}
+
 pub fn derive_wrap_key(
     passphrase: &SecretString,
     salt: &[u8],
     params: &EnvelopeKdfParams,
 ) -> Result<Zeroizing<[u8; KEY_LEN]>, PassphraseError> {
+    // Capped before Argon2 sees them. The header's `KdfParams` has
+    // carried these caps since PR #265, with a comment about stopping
+    // a tampered vault from OOM-killing the process via
+    // `m_cost = u32::MAX` — but the header's copy is not what the
+    // passphrase KDF uses. These come straight out of the envelope's
+    // TOML, and until now went to the allocator uninspected.
+    //
+    // A vault picked up from a synced folder or written by a
+    // co-tenant could therefore ask for terabytes at unlock time. The
+    // caps are the same numbers, applied where the values are
+    // actually used.
+    check_cap("m_cost", params.m, MAX_M_COST_KIB)?;
+    check_cap("t_cost", params.t, MAX_T_COST)?;
+    check_cap("p_cost", params.p, MAX_P_COST)?;
+
     let argon_params = Params::new(params.m, params.t, params.p, Some(KEY_LEN))
         .map_err(PassphraseError::Argon2InvalidParams)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
@@ -185,7 +235,10 @@ pub fn unwrap_passphrase(
             argon2_params,
             wrapped_key,
         } => (argon2_salt, argon2_params, wrapped_key),
-        Envelope::Keychain { .. } => return Err(PassphraseError::WrongKind { kind: "keychain" }),
+        Envelope::Totp { .. } => return Err(PassphraseError::WrongKind { kind: "totp" }),
+        Envelope::Keyfile { .. } => {
+            return Err(PassphraseError::WrongKind { kind: "keyfile" });
+        }
         Envelope::Recovery { .. } => return Err(PassphraseError::WrongKind { kind: "recovery" }),
     };
 
@@ -223,6 +276,57 @@ const _ARGON2_VERSION_TAG: NonZeroU32 = match NonZeroU32::new(0x13) {
 
 #[cfg(test)]
 mod tests {
+
+    /// A tampered envelope must not be able to turn an unlock into a
+    /// terabyte allocation.
+    ///
+    /// The header carries these caps already, with a comment about
+    /// exactly this attack — but the header's copy is not what the
+    /// passphrase KDF reads. These values come from the envelope's
+    /// TOML, and went to the allocator uninspected.
+    #[test]
+    fn an_envelope_asking_for_absurd_memory_is_refused_before_allocating() {
+        let params = EnvelopeKdfParams {
+            m: u32::MAX,
+            t: 1,
+            p: 1,
+        };
+
+        let err = derive_wrap_key(
+            &SecretString::from("passphrase".to_owned()),
+            &fixed_salt(),
+            &params,
+        )
+        .expect_err("u32::MAX KiB is four terabytes");
+
+        assert!(
+            matches!(
+                err,
+                PassphraseError::KdfParamOutOfRange {
+                    param: "m_cost",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert!(
+            err.to_string().contains("tampered"),
+            "the message should say what this usually means: {err}"
+        );
+    }
+
+    #[test]
+    fn ordinary_parameters_still_derive() {
+        let params = EnvelopeKdfParams { m: 8, t: 1, p: 1 };
+        assert!(
+            derive_wrap_key(
+                &SecretString::from("passphrase".to_owned()),
+                &fixed_salt(),
+                &params,
+            )
+            .is_ok()
+        );
+    }
     use super::*;
 
     /// Fast Argon2 params for tests. The crate's `Params::new` enforces
@@ -345,14 +449,14 @@ mod tests {
     }
 
     #[test]
-    fn unwrap_rejects_keychain_envelope() {
-        let env = Envelope::Keychain {
-            keychain_account: "x".to_owned(),
+    fn unwrap_rejects_totp_envelope() {
+        let env = Envelope::Totp {
+            totp_salt: b64_encode(&[0; 32]),
             wrapped_key: b64_encode(&[0; 64]),
         };
         let err = unwrap_passphrase(&env, &passphrase("x")).unwrap_err();
         match err {
-            PassphraseError::WrongKind { kind } => assert_eq!(kind, "keychain"),
+            PassphraseError::WrongKind { kind } => assert_eq!(kind, "totp"),
             other => panic!("expected WrongKind, got {other:?}"),
         }
     }

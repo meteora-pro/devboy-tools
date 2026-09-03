@@ -18,6 +18,9 @@
 //! | `secret_source.get`           | [`SecretSource::get`]                  |
 //! | `secret_source.list`          | [`SecretSource::list`]                 |
 //! | `secret_source.validate`      | [`SecretSource::validate`]             |
+//! | `secret_source.put`           | [`SecretSource::put`]                  |
+//! | `secret_source.delete`        | [`SecretSource::delete`]               |
+//! | `secret_source.key_material`  | [`SecretSource::key_material`]         |
 //!
 //! `init` is the first call — the host sends config and gets
 //! back the plugin's name + capability bitset. Subsequent
@@ -41,6 +44,9 @@
 //! [`SecretSource::get`]: crate::source::SecretSource::get
 //! [`SecretSource::list`]: crate::source::SecretSource::list
 //! [`SecretSource::validate`]: crate::source::SecretSource::validate
+//! [`SecretSource::put`]: crate::source::SecretSource::put
+//! [`SecretSource::delete`]: crate::source::SecretSource::delete
+//! [`SecretSource::key_material`]: crate::source::SecretSource::key_material
 
 use std::collections::BTreeMap;
 
@@ -53,7 +59,7 @@ use serde::{Deserialize, Serialize};
 /// Pinned protocol version. Bumped on a breaking change so
 /// host + plugin can refuse to talk if the major versions
 /// don't match.
-pub const PROTOCOL_VERSION: &str = "1.0";
+pub const PROTOCOL_VERSION: &str = "1.1";
 
 /// Wrapper for a single request line. Always includes
 /// `jsonrpc = "2.0"`, an integer `id`, and a method name with
@@ -138,6 +144,12 @@ pub enum PluginRequest {
     /// Confirm a reference is well-formed without round-trip.
     #[serde(rename = "secret_source.validate")]
     Validate(ValidateParams),
+    #[serde(rename = "secret_source.put")]
+    Put(PutParams),
+    #[serde(rename = "secret_source.delete")]
+    Delete(DeleteParams),
+    #[serde(rename = "secret_source.key_material")]
+    KeyMaterial(KeyMaterialParams),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +176,44 @@ pub struct ValidateParams {
     pub reference: String,
 }
 
+/// Params for `secret_source.put`.
+///
+/// `Debug` is hand-written: the derived one would print the value,
+/// and a request struct is exactly the sort of thing that ends up
+/// inside a `{:?}` while someone is debugging transport.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutParams {
+    pub reference: String,
+    /// The value as plaintext. Same rule as [`GetResult::value`] —
+    /// the wire is the only place a raw `String` is acceptable.
+    pub value: String,
+}
+
+impl std::fmt::Debug for PutParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PutParams")
+            .field("reference", &self.reference)
+            .field("value", &"<redacted>")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteParams {
+    pub reference: String,
+}
+
+/// Params for `secret_source.key_material`.
+///
+/// The purpose is part of the contract: one plugin may hold the
+/// wrapping key for the vault's keyfile envelope and another for a
+/// file-backed token store, and returning the wrong bytes fails at
+/// decryption time, far from the cause.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyMaterialParams {
+    pub purpose: String,
+}
+
 // =============================================================================
 // Responses
 // =============================================================================
@@ -179,6 +229,9 @@ pub enum PluginResponse {
     Get(GetResult),
     List(ListResult),
     Validate(ValidateResult),
+    Put(PutResult),
+    Delete(DeleteResult),
+    KeyMaterial(KeyMaterialResult),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,7 +270,17 @@ pub enum IsAvailableStatus {
     NeedsCredential,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The answer to `secret_source.get`.
+///
+/// `Debug` is hand-written for the same reason as [`PutParams`] —
+/// and this is the type that carries the user's actual secret on
+/// the most-travelled path. It had the derived one, while both of
+/// its neighbours ([`PutParams`], [`KeyMaterialResult`]) were
+/// given redacting impls, so a `{:?}` anywhere in the response
+/// path printed the plaintext. One did: the plugin client's
+/// init-handshake mismatch put the whole reply into an error
+/// string.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GetResult {
     /// The secret value as plaintext. The plugin client wraps
     /// it in [`secrecy::SecretString`] before returning to the
@@ -227,6 +290,18 @@ pub struct GetResult {
     /// Upstream-reported lease duration, in seconds. `None`
     /// means "no lease" → cache uses default TTL.
     pub lease_seconds: Option<u64>,
+}
+
+impl std::fmt::Debug for GetResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // No length, unlike `KeyMaterialResult`: that one holds
+        // key bytes of a size fixed by the algorithm, where here
+        // the length is a property of the user's own secret.
+        f.debug_struct("GetResult")
+            .field("value", &"<redacted>")
+            .field("lease_seconds", &self.lease_seconds)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,6 +321,48 @@ pub struct ValidateResult {
     /// reported via [`PluginError::BadReference`] instead so
     /// success is unambiguous.
     pub ok: bool,
+}
+
+/// Reply to `secret_source.put`.
+///
+/// Carries a flag rather than being empty so the plugin can say
+/// whether it replaced something. A caller that believes it
+/// created a new entry and actually overwrote one is a class of
+/// surprise worth naming on the wire.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutResult {
+    /// `true` when a value already existed at that reference.
+    #[serde(default)]
+    pub replaced: bool,
+}
+
+/// Reply to `secret_source.delete`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteResult {
+    /// `false` when there was nothing there. Not an error:
+    /// deletion is an end state, and it already held.
+    #[serde(default)]
+    pub existed: bool,
+}
+
+/// Reply to `secret_source.key_material`.
+///
+/// Base64 because JSON has no byte string. `Debug` is hand-written
+/// so the material cannot reach a log through a derived one.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyMaterialResult {
+    /// Standard base64 of the raw bytes.
+    pub material_b64: String,
+}
+
+impl std::fmt::Debug for KeyMaterialResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "KeyMaterialResult({} base64 chars, redacted)",
+            self.material_b64.len()
+        )
+    }
 }
 
 // =============================================================================
@@ -303,6 +420,108 @@ mod tests {
             id,
             outcome: RpcOutcome::Result(resp),
         }
+    }
+
+    // -- редакция секретов в Debug ---------------------------
+
+    /// A request struct is exactly the sort of thing that ends up
+    /// inside a `{:?}` while someone debugs transport, so the
+    /// derived `Debug` would have printed the value.
+    #[test]
+    fn put_params_never_print_the_value() {
+        let p = PutParams {
+            reference: "personal/github/token".into(),
+            value: "ghp_actual_secret_value".into(),
+        };
+        let shown = format!("{p:?}");
+
+        assert!(!shown.contains("ghp_actual_secret_value"), "{shown}");
+        assert!(shown.contains("redacted"), "{shown}");
+        assert!(
+            shown.contains("personal/github/token"),
+            "the reference is not a secret and is what makes the line useful: {shown}"
+        );
+    }
+
+    #[test]
+    fn key_material_result_never_prints_the_material() {
+        let r = KeyMaterialResult {
+            material_b64: "c3VwZXItc2VjcmV0LWtleS1tYXRlcmlhbA==".into(),
+        };
+        let shown = format!("{r:?}");
+
+        assert!(!shown.contains("c3VwZXI"), "{shown}");
+        assert!(shown.contains("redacted"), "{shown}");
+    }
+
+    // -- новые методы на проводе -----------------------------
+
+    #[test]
+    fn put_round_trips_and_carries_the_value_under_its_own_method_name() {
+        let r = req(
+            PluginRequest::Put(PutParams {
+                reference: "personal/github/token".into(),
+                value: "ghp_x".into(),
+            }),
+            7,
+        );
+        let json = serde_json::to_value(&r).unwrap();
+
+        assert_eq!(json["method"], "secret_source.put");
+        assert_eq!(json["params"]["value"], "ghp_x");
+
+        let back: PluginRpcRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn delete_and_key_material_round_trip() {
+        let d = req(
+            PluginRequest::Delete(DeleteParams {
+                reference: "personal/github/token".into(),
+            }),
+            8,
+        );
+        assert_eq!(
+            serde_json::to_value(&d).unwrap()["method"],
+            "secret_source.delete"
+        );
+        assert_eq!(
+            serde_json::from_value::<PluginRpcRequest>(serde_json::to_value(&d).unwrap()).unwrap(),
+            d
+        );
+
+        let k = req(
+            PluginRequest::KeyMaterial(KeyMaterialParams {
+                purpose: "vault-keyfile".into(),
+            }),
+            9,
+        );
+        let json = serde_json::to_value(&k).unwrap();
+        assert_eq!(json["method"], "secret_source.key_material");
+        assert_eq!(json["params"]["purpose"], "vault-keyfile");
+    }
+
+    /// `existed: false` is a successful delete, not a failure —
+    /// deletion asks for an end state and that state already
+    /// held. Defaulting the field keeps a terse plugin honest.
+    #[test]
+    fn a_delete_reply_defaults_to_nothing_having_been_there() {
+        let r: DeleteResult = serde_json::from_str("{}").unwrap();
+        assert!(!r.existed);
+
+        let r: PutResult = serde_json::from_str("{}").unwrap();
+        assert!(!r.replaced);
+    }
+
+    /// The version is pinned so host and plugin can refuse to
+    /// talk across a breaking change. Adding methods is additive,
+    /// so this moved to 1.1 rather than 2.0 — and a plugin that
+    /// only knows the old set still answers everything it did
+    /// before.
+    #[test]
+    fn the_protocol_version_records_the_additive_bump() {
+        assert_eq!(PROTOCOL_VERSION, "1.1");
     }
 
     // -- JSON-RPC framing ------------------------------------

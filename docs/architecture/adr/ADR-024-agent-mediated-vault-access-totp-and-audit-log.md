@@ -423,11 +423,34 @@ secrets_status()
   // from this session" is materially different from "unlocked".
 
 secrets_validate(path: string, liveness?: boolean)
-  → { format: "ok" | "invalid", liveness?: "ok" | "invalid" | "unreachable", expires_at? }
+  → { format: "ok" | "invalid" | "unknown",
+      liveness?: "ok" | "invalid" | "unreachable" | "unsupported",
+      expires_at? }
   // Format check is offline. Liveness resolves the value server-side through
-  // the source's validate() / the pattern's LivenessSpec, makes the cheap
-  // authenticated call, and returns ONLY the verdict. The value never crosses
-  // the MCP wire.
+  // the pattern's LivenessSpec, makes the cheap authenticated call, and
+  // returns ONLY the verdict. The value never crosses the MCP wire.
+  //
+  // "unknown" is a third format answer, distinct from "ok": nobody declared a
+  // shape for that path. An agent that reads the two as the same reports
+  // confidence it has not earned.
+  //
+  // The caller supplies NEITHER rule. A caller-chosen format_regex makes this
+  // a value oracle — ask ^g.*, then ^gl.*, and read the secret out of a run
+  // of yes/no answers. A caller-chosen endpoint is worse: a probe is "send
+  // this secret to this URL", so anyone able to name the URL has the value
+  // outright. Both come from the catalogue the daemon holds.
+  //
+  // Consequently liveness endpoints are declared only by BUILT-IN patterns.
+  // A user pattern under <config>/secrets/patterns.d/ can declare a format
+  // (offline, harmless — an in-house token shape validates like any other)
+  // but not an endpoint, because that directory is writable by the agent
+  // itself. UserPattern leaves SecretPattern::liveness() at its None default
+  // and a test holds it there.
+  //
+  // A probe is https-only, follows no redirects, gets one attempt with a
+  // short timeout, and is recorded in the audit log as its own action: the
+  // trail has to distinguish "a value was read inside the daemon" from "a
+  // value left the machine, to here".
 ```
 
 #### Why relaying a TOTP through the agent is acceptable
@@ -481,10 +504,11 @@ same `vault_key`.
 #### File layout
 
 `~/.devboy/secrets/audit-log.dvb` (separate file, same key). Format mirrors
-the vault's AEAD approach: a plaintext header (`AUDIT1`, version, entry count
-for truncation detection), a plaintext per-entry index (`seq → { nonce,
-ct_offset }`, so each entry's sequence number and nonce are available without
-decrypting the body), followed by contiguous per-entry ciphertexts, each
+the vault's AEAD approach: a plaintext header (`AUDIT1`, version, entry count,
+and a nonce + tag committing to that count and the whole index), a plaintext
+per-entry index (`seq → { nonce, ct_offset }`, so each entry's sequence number
+and nonce are available without decrypting the body), followed by contiguous
+per-entry ciphertexts, each
 
 ```
 XChaCha20-Poly1305(
@@ -501,10 +525,64 @@ XChaCha20-Poly1305(
 available verbatim at decrypt time). Per-entry AEAD with the plaintext
 sequence number in AAD gives tamper evidence: a splice of one entry's
 ciphertext under another's index fails decryption, because the AAD `seq` no
-longer matches. There is no
-whole-file Merkle tree; truncation is detected by the entry-count header, and
-the threat model already grants single-writer (the daemon) and filesystem
-permissions.
+longer matches.
+
+Truncation needs more than the entry-count header, which was the original
+plan here. The count is plaintext, so an attacker who can write to the file
+can drop the last index entry and its ciphertext, decrement the count, and
+leave a log that reads back as valid with the incriminating tail gone. Format
+version 2 therefore commits to the count **and the whole index** with an AEAD
+tag under `vault_key`:
+
+```
+XChaCha20-Poly1305(
+  plaintext       = <empty>,
+  key             = vault_key,
+  nonce           = header.c_nonce,
+  associated_data = "audit-index-v2:" || count || ":" || hex(SHA-256(index))
+)
+```
+
+Appending verifies the existing commitment before writing a new one, so an
+ordinary later write cannot re-sign a doctored file into one that verifies.
+There is still no whole-file Merkle tree, and none is needed: the index is
+rewritten on every append anyway, so committing to all of it costs one tag.
+
+What remains outside the format: deletion of the file, rollback to an older
+copy, and truncation all the way back to empty (an empty log has no
+commitment — there is nothing to commit to, and the file is created before a
+key exists). All three are the same shape — a file cannot testify to its own
+absence — and closing them needs an anchor the attacker cannot reach.
+
+#### Vault file: the index is committed to as well
+
+The same hole existed one file over. Per-entry AEAD binds a ciphertext to
+`path@version`, so an entry cannot be edited or moved between paths — but it
+says nothing about an entry *existing*. Deleting the newest version's index
+record left `get` resolving to the previous one, which decrypts perfectly
+under its own AAD: a token rotated **because it leaked** comes back to life,
+and nothing in the file registers that anything happened.
+
+Vault format version 2 puts a tag between the header and the envelopes:
+
+```
+XChaCha20-Poly1305(
+  plaintext       = <empty>,
+  key             = vault_key,
+  nonce           = header.commitment_nonce,
+  associated_data = "vault-index-v2:" || hex(SHA-256(
+                       version || kdf_params || salt ||
+                       envelopes_toml || entries_toml))
+)
+```
+
+`Vault::open` verifies it before anything reads the index, and every write
+re-stamps it. The digest is taken over the *parsed and re-serialized*
+sections rather than the raw bytes, so re-indenting the TOML is not tampering
+while removing an entry is.
+
+Per-entry AEAD still says "this ciphertext belongs to this path at this
+version". The commitment adds "and this is the whole list".
 
 #### `vault_log_append` MCP tool and the enforced scrub
 
@@ -554,6 +632,56 @@ set). When the scrub finds a value that matches no known provisioned secret but
 *does* match a `SecretPattern` regex, it emits `[REDACTED:<pattern_id>]` (e.g.
 `[REDACTED:gitlab-pat]`) and a leak-audit entry — catching unknown-but-shaped
 tokens without inventing a path for them.
+
+#### The other direction: the agent's own transcript (Ф15)
+
+The scrub above protects what the agent *writes into* the vault. The larger
+exposure runs the other way — what devboy *hands back to* the agent.
+
+An agent session transcript is a JSONL file on disk. Every tool result is
+appended to it verbatim and kept indefinitely, and any process running as the
+user can read it. So the question is not whether devboy stores a value, but
+whether one can pass *through* devboy into that file.
+
+The routes were audited exhaustively:
+
+| Route | Verdict |
+|---|---|
+| devboy's own MCP tool replies | Clean. No tool returns a value; `AgentSafeReply` fences the reply structs. |
+| CLI output | Clean. One place prints a secret and it is masked. |
+| Error text built by devboy | Clean. Messages name the path, the pattern or the regex — never the value. |
+| **Proxied upstream tool results** | **Was open.** Returned to the agent verbatim. |
+| **Proxied upstream transport errors** | **Was open**, and by a different route: a non-2xx never becomes a result inside the proxy client at all — it becomes an error carrying the response body, which the proxy manager formats into a result further up. |
+
+Both proxied routes are now scrubbed at `McpProxyClient`, over two passes:
+credentials this process sent upstream (the connect-time bearer or API key, and
+the current OAuth access token, registered at the moment of sending so a
+post-401 refresh is covered), and the pattern catalogue for anything
+secret-shaped that devboy has never seen.
+
+Three properties are deliberate:
+
+- **Nothing new is loaded to do it.** The registry labels material already in
+  the MCP server's memory. Pulling every provisioned secret into that process so
+  it could recognise them would create a larger exposure than the one being
+  closed.
+- **No opt-out, no per-upstream allow-list.** A tool that genuinely means to
+  return a token will show `[REDACTED:jwt]`. That is consistent with ADR-020 —
+  agents work with aliases, not values — and the redaction is visible rather
+  than silent, so the rare user it inconveniences can see exactly what happened.
+- **It does not write to the audit log.** The log lives in the daemon and this
+  runs in the MCP server; routing every proxied response through an RPC would
+  put the daemon on the hot path of every tool call. Leaks are reported through
+  `tracing`, naming the secret and never the value.
+
+Note the dependency on the catalogue being able to match *inside* a string. The
+catalogue's regexes are anchored validators (`^glpat-…$`), which answer "is this
+whole string a token?" and can never find one mid-sentence. A pattern is
+therefore promoted to a scanning form only when it has a literal prefix and no
+unbounded wildcard; the generic `^[A-Za-z0-9._-]{40,}$` catch-all and the four
+connection-string patterns are refused, because unanchored they would match
+commit hashes, base64 blobs and the remainder of any JSON line. Those five keep
+whole-string validation.
 
 ### 5. Secret versioning — agent edits are always reversible
 
@@ -794,6 +922,44 @@ confirmation. Until a user runs the migration, the legacy keychain reader stays
 available regardless of `[secrets.keychain] enabled`; after migration,
 `[secrets] migration_complete = true` disables it. Existing users are not
 locked out by the default flip.
+
+#### The unattended path, and binding it to a machine (Ф7-2, Ф16)
+
+Without the keychain, nothing opened a vault without a human at a keyboard.
+`Envelope::Keyfile` restores that: 32 bytes on disk, outside the config tree,
+whose HKDF output wraps the vault key. Enrolment (`devboy secrets keyfile add`)
+requires unlocking the vault first — a keyfile is a second door opened from
+inside, not a way in — and records the path in configuration, because the daemon
+takes it from there and never from a request.
+
+The protection a keyfile offers is that the two halves live in different trees,
+so a backup or a sync captures one and not the other. That holds until someone
+syncs a whole home directory, copies a container image, or restores a machine
+wholesale, at which point both halves travel together and the vault opens
+anywhere.
+
+So the derivation also mixes in a machine identifier — `/etc/machine-id`,
+`IOPlatformUUID`, `MachineGuid` — and the same two files on a different host
+derive a different wrap key. Non-portability is the feature.
+
+What that is worth, stated plainly: nothing against an attacker who is trying,
+since every one of those identifiers is readable by any process on the box. It
+is worth a lot against the two things in this threat model — accidental
+disclosure (a synced directory, a shared backup, an image in a registry) and
+generic credential harvesters, which collect files by shape and do not
+reconstruct a per-host derivation.
+
+Three details keep it from becoming a support burden:
+
+- **The binding is recorded in the envelope, not inferred.** An environment with
+  no stable identifier gets an unbound envelope rather than a failure, and
+  envelopes written before this existed keep opening.
+- **A missing identifier is an error, never a silent fallback to unbound.**
+  Falling back would turn "this machine changed" into a decryption failure
+  indistinguishable from a wrong keyfile.
+- **The recovery is cheap and named in the error text**: enrol again on this
+  machine. Combined with short-lived tokens, losing a machine-bound vault costs
+  a re-onboarding, not a recovery operation.
 
 ### 7. Trusted path — the process model that makes §1–§6 mean anything
 
@@ -1038,6 +1204,63 @@ user's next legitimate unlock, and it still never receives `vault_key` or any
 secret value. Users who consider this unacceptable should use the `strict`
 profile of §2, where per-call approval makes each subsequent access a separate
 human decision.
+
+#### The conflict inside this section, and how it is resolved (Ф14)
+
+§7 asks for two things that pull against each other. The daemon must be
+reparented to init, so that no process the agent controls is its parent. And
+the daemon must collect the passphrase itself, so that nothing the agent
+controls sees it typed.
+
+A reparented process has no controlling terminal. Our own systemd unit sets
+`StandardInput=null`; launchd is no different. So the daemon that satisfies the
+first requirement has no screen on which to satisfy the second. For a while
+that was simply the state of things: `vault.request_unlock` answered "no prompt
+surface", and the only way into a locked vault was
+`DEVBOY_VAULT_PASSPHRASE` — adequate for a server, useless for a person at a
+laptop. Interactive unlock did not work in the configuration this ADR
+recommends.
+
+**Resolution: the caller lends a terminal.** The client has one, because a
+human just typed a command into it. It resolves that terminal to a concrete
+path — `/dev/pts/3`, never the per-process `/dev/tty` — and names it in the
+request. The daemon opens that path and asks there. The passphrase still never
+crosses the socket and never enters the client's memory; only the *location of
+the screen* comes from the caller.
+
+**Why that does not give the game away.** The objection is obvious: §7 exists so
+the prompt lives on a channel the agent does not own, and here the caller picks
+the channel. Worked through, nothing is lost. An agent that names a terminal it
+controls gains nothing, because nobody types into it — the passphrase comes
+from a human looking at their own screen. Guessing is no better: `vault.unlock`
+already accepts a passphrase outright, so that oracle always existed. And an
+agent that wants to trick a human into typing a passphrase where it can read it
+never needed any of this; it can print its own prompt.
+
+What the daemon rests on is *provenance* — who started it, and whether the
+caller is an ancestor that could read its memory. Neither is affected by which
+terminal is named. The path decides where the question is printed, not whether
+the answer can be trusted. The audit entry records which channel was used
+(`channel=own` or `channel=client`), because those are different enough that a
+reader of the trail should not have to guess.
+
+**What is refused.** The daemon opens a caller-supplied path read-write, so the
+path must be under `/dev` (checked before opening — otherwise the prompt text
+would land in whatever file was named) and the result must be a terminal
+(checked after opening, since only the descriptor can answer that). A pipe
+would mean a script is answering, and the whole arrangement is built on a human
+having been present.
+
+**Mechanism note.** Passing the descriptor itself over the socket
+(`SCM_RIGHTS`) was the original plan and is the more obvious design. Adopting a
+received descriptor requires `OwnedFd::from_raw_fd`, which is `unsafe`, and
+this workspace sets `unsafe_code = "forbid"` — no local exception is possible,
+and the fd-passing crates return raw descriptors too, so each would only move
+the same `unsafe` somewhere less visible. Naming the terminal reaches the same
+place with an ordinary `File::open`. The one real difference: a daemon in a
+different mount namespace from its client (a container) may not have that path,
+where `SCM_RIGHTS` would still work. That is the reason to revisit this if
+namespaces ever come up.
 
 #### Platform trusted-path primitives
 

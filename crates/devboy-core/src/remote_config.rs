@@ -24,7 +24,7 @@
 //! - Timeout: 10 seconds
 //! - Response must be valid TOML that deserializes into `Config`
 
-use crate::config::Config;
+use crate::config::{Config, SecretsProfile};
 
 /// Fetch remote config and merge it into the provided local config.
 ///
@@ -154,6 +154,191 @@ fn redact_url(url: &str) -> String {
     without_query.to_string()
 }
 
+/// The secrets posture an operator may hand a fresh install,
+/// with everything they may not hand it left out.
+///
+/// See [`fetch_secrets_defaults`] for why this is a separate type
+/// rather than reusing `SecretsConfig`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RemoteSecretsDefaults {
+    /// Unlock-window profile.
+    pub profile: Option<SecretsProfile>,
+    /// How long the daemon holds the key after an unlock.
+    pub unlock_ttl_seconds: Option<u64>,
+    /// Ceiling on any single unlock window.
+    pub max_unlock_ttl_seconds: Option<u64>,
+    /// Re-lock after this much inactivity.
+    pub idle_relock_seconds: Option<u64>,
+    /// Whether the OS keychain joins the chain.
+    pub keychain_enabled: Option<bool>,
+}
+
+impl RemoteSecretsDefaults {
+    /// Nothing to apply.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// One line per field that will change, for printing back to
+    /// the user. An operator default the user cannot see is an
+    /// operator default the user cannot argue with.
+    pub fn describe(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(p) = self.profile {
+            let name = match p {
+                SecretsProfile::Convenient => "convenient",
+                SecretsProfile::Strict => "strict",
+            };
+            out.push(format!("secrets.profile = {name}"));
+        }
+        if let Some(v) = self.unlock_ttl_seconds {
+            out.push(format!("secrets.unlock_ttl_seconds = {v}"));
+        }
+        if let Some(v) = self.max_unlock_ttl_seconds {
+            out.push(format!("secrets.max_unlock_ttl_seconds = {v}"));
+        }
+        if let Some(v) = self.idle_relock_seconds {
+            out.push(format!("secrets.idle_relock_seconds = {v}"));
+        }
+        if let Some(v) = self.keychain_enabled {
+            out.push(format!("secrets.keychain.enabled = {v}"));
+        }
+        out
+    }
+}
+
+/// Read the secrets posture an operator wants a fresh install to
+/// start from, out of an already-fetched remote config.
+///
+/// # Why this is not part of `merge_configs`
+///
+/// `merge_configs` runs on **every** invocation. Letting it carry
+/// the secrets section would mean the posture is renegotiated
+/// over the network each time devboy runs: whoever serves the
+/// config could turn the OS keychain back on, or stretch the
+/// unlock window, on a machine that is not theirs, and nothing
+/// would appear in any file the user reads. So the section is
+/// applied once, at `init`, written into the local config where
+/// it is visible and editable, and never re-applied behind the
+/// user's back.
+///
+/// # Why two fields are dropped
+///
+/// `keyfile_path` is a path into the user's own filesystem, and
+/// the remote side has no business choosing it — it decides which
+/// file gets read as key material. `migration_complete` is an
+/// assertion about what is left in *this* machine's OS keychain,
+/// which only this machine can make.
+///
+/// Both are dropped silently rather than rejected: a config
+/// server serving one config to a fleet may legitimately carry
+/// fields some clients ignore, and failing an install over a
+/// field that was never going to be honoured helps nobody. The
+/// caller prints what *was* applied, so the absence is visible by
+/// omission.
+pub fn read_secrets_defaults(remote: &Config) -> Result<RemoteSecretsDefaults, String> {
+    let Some(secrets) = remote.secrets.as_ref() else {
+        return Ok(RemoteSecretsDefaults::default());
+    };
+
+    let out = RemoteSecretsDefaults {
+        // `profile` is not an `Option` on the wire, so an omitted
+        // field is indistinguishable from the default. Carrying
+        // the default over is harmless: it is what a fresh
+        // install would pick anyway.
+        profile: Some(secrets.profile),
+        unlock_ttl_seconds: secrets.unlock_ttl_seconds,
+        max_unlock_ttl_seconds: secrets.max_unlock_ttl_seconds,
+        idle_relock_seconds: secrets.idle_relock_seconds,
+        keychain_enabled: Some(secrets.keychain.enabled),
+    };
+
+    validate_secrets_defaults(&out)?;
+    Ok(out)
+}
+
+/// Reject a posture that cannot mean what it says.
+///
+/// Loudly, not by clamping: a silently corrected window is one
+/// the operator believes they set and the user believes they
+/// have, and neither is true.
+fn validate_secrets_defaults(d: &RemoteSecretsDefaults) -> Result<(), String> {
+    if d.unlock_ttl_seconds == Some(0) {
+        return Err(
+            "secrets.unlock_ttl_seconds is 0 — an unlock that expires immediately is \
+                    never what was meant"
+                .to_owned(),
+        );
+    }
+    if d.max_unlock_ttl_seconds == Some(0) {
+        return Err("secrets.max_unlock_ttl_seconds is 0 — that forbids every unlock".to_owned());
+    }
+    if let (Some(ttl), Some(ceiling)) = (d.unlock_ttl_seconds, d.max_unlock_ttl_seconds)
+        && ttl > ceiling
+    {
+        return Err(format!(
+            "secrets.unlock_ttl_seconds ({ttl}) is above secrets.max_unlock_ttl_seconds \
+             ({ceiling}) — the ceiling would silently win and the configured window would \
+             never apply"
+        ));
+    }
+    Ok(())
+}
+
+/// Fetch a remote config and read the secrets posture out of it.
+///
+/// Used by `devboy init`. Errors are the caller's to report and
+/// survive: an unreachable config server must not stop someone
+/// setting up their machine, it just means the built-in defaults
+/// apply.
+pub async fn fetch_secrets_defaults(
+    url: &str,
+    token: Option<&str>,
+) -> Result<RemoteSecretsDefaults, String> {
+    let remote = fetch_remote_toml(url, token).await?;
+    read_secrets_defaults(&remote)
+}
+
+/// Everything an install reads from the config server at `init`
+/// time, from a single fetch.
+///
+/// One request rather than two: the second would carry the same
+/// bootstrap token, and a bootstrap token that a server treats as
+/// single-use would already be spent by the time it arrived.
+#[derive(Debug, Clone, Default)]
+pub struct RemoteOnboarding {
+    /// Starting posture for `[secrets]`, if the server states one.
+    pub secrets: RemoteSecretsDefaults,
+    /// Where to trade the bootstrap token for a durable one, if the
+    /// server offers that.
+    pub token_exchange_url: Option<String>,
+}
+
+/// Read the token-exchange endpoint a server declared.
+///
+/// Only the presence and non-emptiness are decided here. Whether it
+/// may actually be used is [`crate::token_exchange::check_same_origin`]'s
+/// call, and it is deliberately a separate step: this function
+/// answers "did the server ask for an exchange", not "is the request
+/// safe to make".
+pub fn read_token_exchange_url(remote: &Config) -> Option<String> {
+    remote
+        .remote_config
+        .as_ref()
+        .and_then(|rc| rc.token_exchange_url.as_ref())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Fetch the config server's onboarding instructions.
+pub async fn fetch_onboarding(url: &str, token: Option<&str>) -> Result<RemoteOnboarding, String> {
+    let remote = fetch_remote_toml(url, token).await?;
+    Ok(RemoteOnboarding {
+        secrets: read_secrets_defaults(&remote)?,
+        token_exchange_url: read_token_exchange_url(&remote),
+    })
+}
+
 async fn fetch_remote_toml(url: &str, token: Option<&str>) -> Result<Config, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -262,6 +447,194 @@ mod tests {
     use super::*;
     use crate::config::{RemoteConfigSettings, SentryConfig};
 
+    // -- operator-supplied secrets posture ------------------------
+
+    fn remote_with_secrets(toml_body: &str) -> Config {
+        toml::from_str(toml_body).expect("fixture parses")
+    }
+
+    #[test]
+    fn a_remote_config_without_a_secrets_section_supplies_nothing() {
+        let remote = remote_with_secrets("");
+        let d = read_secrets_defaults(&remote).unwrap();
+        assert!(d.is_empty(), "{d:?}");
+    }
+
+    #[test]
+    fn an_operator_can_pin_the_profile_and_the_window() {
+        let remote = remote_with_secrets(
+            r#"
+            [secrets]
+            profile = "strict"
+            unlock_ttl_seconds = 900
+            max_unlock_ttl_seconds = 3600
+            idle_relock_seconds = 300
+            "#,
+        );
+
+        let d = read_secrets_defaults(&remote).unwrap();
+
+        assert_eq!(d.profile, Some(SecretsProfile::Strict));
+        assert_eq!(d.unlock_ttl_seconds, Some(900));
+        assert_eq!(d.max_unlock_ttl_seconds, Some(3600));
+        assert_eq!(d.idle_relock_seconds, Some(300));
+    }
+
+    #[test]
+    fn an_operator_can_turn_the_keychain_back_on_for_their_fleet() {
+        let remote = remote_with_secrets(
+            r#"
+            [secrets.keychain]
+            enabled = true
+            "#,
+        );
+
+        assert_eq!(
+            read_secrets_defaults(&remote).unwrap().keychain_enabled,
+            Some(true)
+        );
+    }
+
+    /// The remote side decides which file is read as key material
+    /// if this gets through, so it must not get through.
+    #[test]
+    fn a_keyfile_path_from_the_remote_side_is_dropped() {
+        let remote = remote_with_secrets(
+            r#"
+            [secrets]
+            keyfile_path = "/tmp/attacker-chosen.key"
+            "#,
+        );
+
+        // Present on the wire...
+        assert!(remote.secrets.as_ref().unwrap().keyfile_path.is_some());
+
+        // ...and absent from everything the caller can apply.
+        let d = read_secrets_defaults(&remote).unwrap();
+        assert!(
+            !d.describe().iter().any(|l| l.contains("keyfile")),
+            "{:?}",
+            d.describe()
+        );
+    }
+
+    /// Only this machine knows what is left in its own keychain,
+    /// so only this machine gets to claim the migration is done.
+    /// Accepting it remotely would switch off the read-only
+    /// legacy fallback on a machine that still depends on it.
+    #[test]
+    fn migration_complete_from_the_remote_side_is_dropped() {
+        let remote = remote_with_secrets(
+            r#"
+            [secrets]
+            migration_complete = true
+            "#,
+        );
+
+        assert!(remote.secrets.as_ref().unwrap().migration_complete);
+
+        let d = read_secrets_defaults(&remote).unwrap();
+        assert!(
+            !d.describe().iter().any(|l| l.contains("migration")),
+            "{:?}",
+            d.describe()
+        );
+    }
+
+    #[test]
+    fn a_zero_unlock_window_is_refused_rather_than_corrected() {
+        let remote = remote_with_secrets(
+            r#"
+            [secrets]
+            unlock_ttl_seconds = 0
+            "#,
+        );
+
+        let err = read_secrets_defaults(&remote).unwrap_err();
+        assert!(err.contains("unlock_ttl_seconds"), "{err}");
+    }
+
+    #[test]
+    fn a_zero_ceiling_is_refused() {
+        let remote = remote_with_secrets(
+            r#"
+            [secrets]
+            max_unlock_ttl_seconds = 0
+            "#,
+        );
+
+        assert!(
+            read_secrets_defaults(&remote)
+                .unwrap_err()
+                .contains("max_unlock_ttl_seconds")
+        );
+    }
+
+    /// A window above its own ceiling is not a window — the
+    /// ceiling wins and the operator's number never applies.
+    /// Saying so beats applying something they did not ask for.
+    #[test]
+    fn a_window_above_its_own_ceiling_is_refused() {
+        let remote = remote_with_secrets(
+            r#"
+            [secrets]
+            unlock_ttl_seconds = 7200
+            max_unlock_ttl_seconds = 3600
+            "#,
+        );
+
+        let err = read_secrets_defaults(&remote).unwrap_err();
+        assert!(err.contains("7200") && err.contains("3600"), "{err}");
+    }
+
+    /// What gets applied has to be printable, or the user cannot
+    /// see a posture that was chosen for them.
+    #[test]
+    fn every_applied_field_is_described_back() {
+        let d = RemoteSecretsDefaults {
+            profile: Some(SecretsProfile::Strict),
+            unlock_ttl_seconds: Some(900),
+            max_unlock_ttl_seconds: Some(3600),
+            idle_relock_seconds: Some(300),
+            keychain_enabled: Some(false),
+        };
+
+        let lines = d.describe();
+        assert_eq!(lines.len(), 5, "{lines:?}");
+        assert!(lines.iter().any(|l| l == "secrets.profile = strict"));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l == "secrets.keychain.enabled = false")
+        );
+    }
+
+    /// The runtime merge must stay out of this. If it ever
+    /// carries the section, whoever serves the config can change
+    /// the security posture of someone else's machine on every
+    /// invocation, with nothing written down anywhere the user
+    /// looks.
+    #[test]
+    fn the_runtime_merge_does_not_carry_the_secrets_section() {
+        let local = Config::default();
+        let remote = remote_with_secrets(
+            r#"
+            [secrets]
+            profile = "strict"
+            [secrets.keychain]
+            enabled = true
+            "#,
+        );
+
+        let merged = merge_configs(local, remote);
+
+        assert!(
+            merged.secrets.is_none(),
+            "the runtime path picked up a secrets posture: {:?}",
+            merged.secrets
+        );
+    }
+
     #[test]
     fn redact_url_strips_userinfo_and_query() {
         assert_eq!(
@@ -317,6 +690,7 @@ mod tests {
             remote_config: Some(RemoteConfigSettings {
                 url: Some("https://from-config.example/".to_string()),
                 token_key: None,
+                token_exchange_url: None,
             }),
             ..Default::default()
         };
@@ -404,6 +778,7 @@ mod tests {
             remote_config: Some(RemoteConfigSettings {
                 url: Some("https://local.com/config".to_string()),
                 token_key: None,
+                token_exchange_url: None,
             }),
             ..Default::default()
         };
@@ -411,6 +786,7 @@ mod tests {
             remote_config: Some(RemoteConfigSettings {
                 url: Some("https://should-not-be-copied.com".to_string()),
                 token_key: None,
+                token_exchange_url: None,
             }),
             ..Default::default()
         };

@@ -57,6 +57,10 @@ pub struct McpProxyClient {
     /// Bearer is injected per request (pre-flight + on-401 refresh) instead of
     /// being baked into `http_client` at connect. `None` for bearer/api_key/none.
     oauth: Option<Arc<crate::oauth_auth::OAuthAuth>>,
+    /// Credentials this client has sent upstream, so a response
+    /// echoing one back can be redacted before the agent — and its
+    /// transcript file — ever sees it (Ф15).
+    credentials: crate::response_scrub::CredentialRegistry,
 }
 
 impl McpProxyClient {
@@ -98,14 +102,38 @@ impl McpProxyClient {
 
         let prefix = tool_prefix.unwrap_or(name).to_string();
 
-        match transport {
+        let client = match transport {
             ProxyTransport::Sse => {
                 Self::connect_sse(name, url, &prefix, headers, http_client, oauth).await
             }
             ProxyTransport::StreamableHttp => {
                 Self::connect_streamable_http(name, url, &prefix, http_client, oauth).await
             }
+        }?;
+
+        // Register the credential we just handed this upstream, so
+        // that if it quotes it back at us — which is what a 401 body
+        // routinely does — the value is redacted before it reaches
+        // the agent's transcript. Registering a copy adds no exposure:
+        // the same value is already baked into `http_client`'s default
+        // headers.
+        //
+        // Before the handshake, not after. `initialize` is the first
+        // request to carry this token and therefore the first that
+        // can be answered with a 401 quoting it, and its error goes
+        // out of here by `?`. Registering afterwards left the
+        // registry empty for exactly that request: the scrub ran and
+        // had nothing to match.
+        if let Some(token) = token {
+            client.credentials.remember(
+                crate::response_scrub::static_token_label(name),
+                token.expose_secret(),
+            );
         }
+
+        client.initialize().await?;
+
+        Ok(client)
     }
 
     /// Connect via SSE transport.
@@ -190,9 +218,8 @@ impl McpProxyClient {
             session_id: RwLock::new(None),
             pending,
             oauth,
+            credentials: crate::response_scrub::CredentialRegistry::new(),
         };
-
-        client.initialize().await?;
 
         Ok(client)
     }
@@ -216,9 +243,8 @@ impl McpProxyClient {
             session_id: RwLock::new(None),
             pending: Arc::new(Mutex::new(Vec::new())),
             oauth,
+            credentials: crate::response_scrub::CredentialRegistry::new(),
         };
-
-        client.initialize().await?;
 
         Ok(client)
     }
@@ -263,16 +289,83 @@ impl McpProxyClient {
         self.next_id.fetch_add(1, Ordering::SeqCst)
     }
 
+    /// Note the OAuth access token about to go out on the wire.
+    ///
+    /// Called at the point of sending rather than at the point of
+    /// fetching, so a token obtained by an on-401 refresh is covered
+    /// by the same line — a refreshed token that was not registered
+    /// would be exactly the one an upstream is about to complain
+    /// about. Replaces the previous value under the same label.
+    fn remember_access_token(&self, access: &str) {
+        self.credentials
+            .remember(crate::response_scrub::oauth_token_label(&self.name), access);
+    }
+
     /// Send a JSON-RPC request and wait for response.
+    ///
+    /// Errors are scrubbed on the way out. A transport error quotes
+    /// the upstream's response body verbatim (`HTTP 401: <body>`), and
+    /// a 401 body naming the token it rejected is the single most
+    /// likely place for a credential to appear. That error is then
+    /// rendered into a `ToolCallResult` by the proxy manager and
+    /// handed to the agent, so it reaches the transcript by a route
+    /// that never touches the result-scrubbing path.
     async fn request(
         &self,
         method: &str,
         params: Option<Value>,
     ) -> devboy_core::Result<JsonRpcResponse> {
-        match self.transport {
+        let result = match self.transport {
             ProxyTransport::Sse => self.request_sse(method, params).await,
             ProxyTransport::StreamableHttp => self.request_http(method, params).await,
+        };
+
+        result.map_err(|e| self.scrub_error(e))
+    }
+
+    /// Redact upstream text out of an error.
+    ///
+    /// The variants that carry a message are rebuilt with a scrubbed
+    /// one. Anything else is scrubbed through its `Display` form and
+    /// kept **as-is when nothing changed** — which is every ordinary
+    /// error. Only when a redaction actually happened does the variant
+    /// collapse to `Http`, so an unanticipated variant degrades the
+    /// error's type rather than leaking its contents. Losing a variant
+    /// is recoverable; putting a token in the agent's transcript is
+    /// not.
+    fn scrub_error(&self, error: devboy_core::Error) -> devboy_core::Error {
+        use devboy_core::Error as E;
+
+        match error {
+            E::Http(m) => E::Http(self.scrub_text(&m)),
+            E::Network(m) => E::Network(self.scrub_text(&m)),
+            E::Unauthorized(m) => E::Unauthorized(self.scrub_text(&m)),
+            E::Forbidden(m) => E::Forbidden(self.scrub_text(&m)),
+            E::NotFound(m) => E::NotFound(self.scrub_text(&m)),
+            E::InvalidData(m) => E::InvalidData(self.scrub_text(&m)),
+            E::Api { status, message } => E::Api {
+                status,
+                message: self.scrub_text(&message),
+            },
+            E::ServerError { status, message } => E::ServerError {
+                status,
+                message: self.scrub_text(&message),
+            },
+            other => {
+                let rendered = other.to_string();
+                let scrubbed = self.scrub_text(&rendered);
+                if scrubbed == rendered {
+                    other
+                } else {
+                    E::Http(scrubbed)
+                }
+            }
         }
+    }
+
+    /// Redact upstream text out of a bare string.
+    fn scrub_text(&self, text: &str) -> String {
+        crate::response_scrub::scrub_text(&self.name, &self.credentials, text)
     }
 
     /// Send request via SSE transport (POST request, response via SSE stream).
@@ -315,6 +408,7 @@ impl McpProxyClient {
             loop {
                 let mut request = self.http_client.post(&self.post_url).json(&req);
                 if let Some(a) = &access {
+                    self.remember_access_token(a);
                     request = request.header(AUTHORIZATION, format!("Bearer {a}"));
                 }
                 let resp = request
@@ -406,6 +500,7 @@ impl McpProxyClient {
                 }
             }
             if let Some(a) = &access {
+                self.remember_access_token(a);
                 request = request.header(AUTHORIZATION, format!("Bearer {a}"));
             }
 
@@ -751,6 +846,13 @@ impl McpProxyClient {
     }
 
     /// Execute a tool call, stripping the prefix before forwarding.
+    ///
+    /// Everything returned here is written verbatim into the agent's
+    /// session transcript, so the result goes through
+    /// [`crate::response_scrub`] first. An upstream quoting a token
+    /// back at us — the ordinary shape of a 401 body — would
+    /// otherwise put that value on disk in a file any process running
+    /// as the user can read.
     pub async fn call_tool(
         &self,
         original_name: &str,
@@ -763,18 +865,29 @@ impl McpProxyClient {
 
         let resp = self.request("tools/call", Some(params)).await?;
 
+        // The JSON-RPC error path is scrubbed too: an upstream that
+        // fails authentication reports it here at least as often as
+        // in a result body.
         if let Some(err) = resp.error {
-            return Ok(ToolCallResult::error(err.message));
+            return Ok(self.scrub(ToolCallResult::error(err.message)));
         }
 
         match resp.result {
-            Some(result) => serde_json::from_value(result).map_err(|e| {
-                devboy_core::Error::InvalidData(format!("Invalid tool result: {}", e))
-            }),
+            Some(result) => serde_json::from_value(result)
+                .map(|r| self.scrub(r))
+                .map_err(|e| {
+                    devboy_core::Error::InvalidData(format!("Invalid tool result: {}", e))
+                }),
             None => Ok(ToolCallResult::error(
                 "Empty response from upstream".to_string(),
             )),
         }
+    }
+
+    /// Redact any credential this client sent, or anything
+    /// secret-shaped, out of a result bound for the agent.
+    fn scrub(&self, result: ToolCallResult) -> ToolCallResult {
+        crate::response_scrub::scrub_tool_result(&self.name, &self.credentials, result)
     }
 
     /// Get the tool prefix for this client.
@@ -1063,6 +1176,53 @@ mod tests {
 
         let err = result.err().expect("should be error");
         assert!(err.to_string().contains("Initialize failed"));
+    }
+
+    /// A 401 on the handshake must not put the token in the error.
+    ///
+    /// `initialize` is the first request carrying the credential, so
+    /// it is the first that can be rejected with a body quoting it —
+    /// the case the whole error-scrubbing path exists for. The
+    /// registration used to happen after `connect_*` returned, which
+    /// is after the handshake, so for this one request the registry
+    /// was empty: the scrub ran and matched nothing, and the error
+    /// went out of `connect` with the token in it.
+    #[tokio::test]
+    async fn the_handshake_401_does_not_carry_the_token_out() {
+        // Deliberately shapeless: no `sk-`, no `ghp_`, nothing the
+        // catalogue recognises. A secret-shaped value would be
+        // redacted by pattern alone and the test would pass whether
+        // or not the registry knew it — which is exactly how the
+        // first draft of this test fooled its own negative control.
+        const TOKEN: &str = "upstream-credential-for-the-test-8823641907";
+
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST).path("/mcp");
+            // What a real gateway does: name the credential it
+            // refused.
+            then.status(401)
+                .body(format!("token {TOKEN} is expired or revoked"));
+        });
+
+        let url = format!("{}/mcp", server.base_url());
+        let err = McpProxyClient::connect(
+            "test-server",
+            &url,
+            None,
+            Some(&SecretString::from(TOKEN.to_owned())),
+            "bearer",
+            ProxyTransport::StreamableHttp,
+            None,
+        )
+        .await
+        .err()
+        .expect("a 401 handshake fails");
+
+        assert!(
+            !err.to_string().contains(TOKEN),
+            "the upstream quoted the token back and it reached the caller: {err}"
+        );
     }
 
     #[tokio::test]
