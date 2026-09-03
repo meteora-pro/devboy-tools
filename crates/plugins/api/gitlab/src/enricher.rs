@@ -186,7 +186,8 @@ impl ToolEnricher for GitLabSchemaEnricher {
             | "create_merge_request"
             | "create_merge_request_comment"
             | "add_issue_comment"
-            | "link_issues" => ToolValueModel {
+            | "link_issues"
+            | "run_pipeline_job" => ToolValueModel {
                 value_class: ValueClass::Supporting,
                 cost_model: CostModel {
                     typical_kb: 0.8,
@@ -329,6 +330,7 @@ mod tests {
             "create_merge_request_comment",
             "add_issue_comment",
             "link_issues",
+            "run_pipeline_job",
         ] {
             let m = GitLabSchemaEnricher
                 .value_model(tool)

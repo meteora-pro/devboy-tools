@@ -43,6 +43,7 @@ pub const KNOWN_BUILTIN_TOOLS: &[&str] = &[
     "update_merge_request",
     "get_pipeline",
     "get_job_logs",
+    "run_pipeline_job",
     // Epic tools
     "get_epics",
     "create_epic",
@@ -99,6 +100,7 @@ mod tests {
         assert!(KNOWN_BUILTIN_TOOLS.contains(&"get_meeting_notes"));
         assert!(KNOWN_BUILTIN_TOOLS.contains(&"get_messenger_chats"));
         assert!(KNOWN_BUILTIN_TOOLS.contains(&"get_epics"));
+        assert!(KNOWN_BUILTIN_TOOLS.contains(&"run_pipeline_job"));
     }
 
     /// Verify that KNOWN_BUILTIN_TOOLS stays in sync with executor's base definitions.

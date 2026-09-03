@@ -494,14 +494,16 @@ List available tools from all upstream proxy servers
 
 Call a tool on an upstream proxy server
 
-**Usage:** `devboy proxy call <TOOL> [ARGS]`
+**Usage:** `devboy proxy call [OPTIONS] <TOOL> [ARGS]`
 
 ###### **Arguments:**
 
 * `<TOOL>` — Tool name (e.g., devboy-cloud__get_issues)
-* `<ARGS>` — JSON arguments (optional)
+* `<ARGS>` — JSON arguments (optional, defaults to `{}`). Pass `-` to read stdin
 
-  Default value: `{}`
+###### **Options:**
+
+* `--args-file <PATH>` — Read JSON arguments from a file instead of the positional argument. Use this for payloads above ~128 KiB: a positional argument travels through argv, which the kernel caps per argument. Pass `-` for stdin; to read a file actually named `-`, spell it `./-`
 
 
 

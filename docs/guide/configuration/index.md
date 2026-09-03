@@ -143,6 +143,11 @@ devboy proxy tools
 # Call a proxied tool
 devboy proxy call <tool_name> [args_json]
 
+# Payloads above ~128 KiB cannot travel through argv — read them from a file
+# (or from stdin with `-`) instead
+devboy proxy call <tool_name> --args-file payload.json
+cat payload.json | devboy proxy call <tool_name> -
+
 # Manage built-in tools (interactive mode)
 devboy tools
 

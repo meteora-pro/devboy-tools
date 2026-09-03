@@ -726,6 +726,22 @@ mod tests {
         assert_eq!(PipelineStatus::Success.as_str(), "success");
         assert_eq!(PipelineStatus::Failed.as_str(), "failed");
         assert_eq!(PipelineStatus::Running.as_str(), "running");
+        assert_eq!(PipelineStatus::Manual.as_str(), "manual");
+    }
+
+    #[test]
+    fn pipeline_summary_defaults_manual_when_reading_older_payloads() {
+        let summary: PipelineSummary = serde_json::from_value(serde_json::json!({
+            "total": 2,
+            "success": 1,
+            "failed": 0,
+            "running": 0,
+            "pending": 1,
+            "canceled": 0,
+            "skipped": 0
+        }))
+        .unwrap();
+        assert_eq!(summary.manual, 0);
     }
 
     // --- ProviderResult tests ---
@@ -1021,6 +1037,8 @@ pub enum PipelineStatus {
     Failed,
     Running,
     Pending,
+    /// Waiting for an explicit user action before it can run.
+    Manual,
     Canceled,
     Skipped,
     Unknown,
@@ -1033,6 +1051,7 @@ impl PipelineStatus {
             Self::Failed => "failed",
             Self::Running => "running",
             Self::Pending => "pending",
+            Self::Manual => "manual",
             Self::Canceled => "canceled",
             Self::Skipped => "skipped",
             Self::Unknown => "unknown",
@@ -1052,6 +1071,8 @@ pub struct PipelineSummary {
     pub failed: u32,
     pub running: u32,
     pub pending: u32,
+    #[serde(default)]
+    pub manual: u32,
     pub canceled: u32,
     pub skipped: u32,
 }
@@ -1110,6 +1131,26 @@ pub struct GetPipelineInput {
     pub mr_key: Option<String>,
     /// Include smart error extraction for failed jobs.
     pub include_failed_logs: bool,
+}
+
+/// Input for starting an existing manual job in a pipeline.
+#[derive(Debug, Clone)]
+pub struct RunPipelineJobInput {
+    /// Expected pipeline ID. Providers must reject a job from another pipeline.
+    pub pipeline_id: String,
+    /// Job ID returned by [`PipelineInfo`].
+    pub job_id: String,
+    /// Provider-specific CI variables supplied to the job.
+    pub variables: std::collections::BTreeMap<String, String>,
+    /// Provider-specific typed job inputs.
+    pub job_inputs: std::collections::BTreeMap<String, Value>,
+}
+
+/// Result returned after a manual pipeline job has been started.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunPipelineJobResult {
+    pub pipeline_id: String,
+    pub job: PipelineJob,
 }
 
 /// Options for get_job_logs.

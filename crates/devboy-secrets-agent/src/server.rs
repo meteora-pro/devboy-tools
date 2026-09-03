@@ -26,8 +26,8 @@
 //! vault file with the supplied unlock method and discards the
 //! resulting handle if the credentials check out.
 //!
-//! The last column is the idle timer of ADR-023 §3.3, kept by
-//! [`is_user_activity`]. `secret.validate` is the one value-touching
+//! The last column is the idle timer of ADR-023 §3.3, kept by the
+//! private `is_user_activity`. `secret.validate` is the one value-touching
 //! method that does not refresh it, because it is the one an *agent*
 //! can reach: a method an agent may call in a loop must not be able
 //! to hold the vault open indefinitely.
@@ -2290,8 +2290,35 @@ mod tests {
     /// The whole point of Ф14, driven through the dispatcher: a
     /// daemon with no screen of its own asks on the one the caller
     /// lent, and a human answering there unlocks the vault.
-    #[tokio::test]
-    async fn a_lent_terminal_unlocks_through_the_dispatcher() {
+    ///
+    /// # Why the typist waits for echo to go off
+    ///
+    /// The prompt disables echo with `TCSAFLUSH`, which discards
+    /// input typed *before* the prompt appeared — a deliberate
+    /// property, so a stray keystroke cannot be read as a
+    /// passphrase. That makes "sleep 50ms and hope the flush already
+    /// happened" a race, and losing it is unrecoverable: the flush
+    /// eats the line and the read waits for a second one that never
+    /// comes.
+    ///
+    /// It lost that race on macOS, and there it does not even fail.
+    /// On Linux the read returns EOF once the last master fd closes;
+    /// on the BSD side it simply blocks. The job ran for six hours
+    /// and was killed with no diagnosis.
+    ///
+    /// # Why the bound is a thread and not `tokio::time::timeout`
+    ///
+    /// That was the first attempt, and it does nothing here. The
+    /// read inside the prompt is an ordinary blocking syscall, so
+    /// the future never reaches an await point and the timer never
+    /// gets to fire — measured: the probe still hung. Cancelling a
+    /// future cannot cancel a thread stuck in `read`. So the request
+    /// runs on a thread of its own and the test waits on a channel;
+    /// if it never answers, the test fails in seconds and the stuck
+    /// thread dies with the process.
+    #[test]
+    fn a_lent_terminal_unlocks_through_the_dispatcher() {
+        use nix::sys::termios::{LocalFlags, tcgetattr};
         use std::io::Write;
         use std::os::fd::AsFd;
 
@@ -2301,19 +2328,43 @@ mod tests {
 
         // Reading blocks, so the human types from another thread.
         let master = pty.master.try_clone().expect("clone master");
+        let slave_path = path.clone();
         let typist = std::thread::spawn(move || {
+            let watch = std::fs::File::open(&slave_path).expect("open the lent terminal");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let flags = tcgetattr(watch.as_fd()).expect("tcgetattr").local_flags;
+                if !flags.contains(LocalFlags::ECHO) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the prompt never turned echo off, so it never got as far as reading"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
             let mut m = std::fs::File::from(master);
-            std::thread::sleep(std::time::Duration::from_millis(50));
             m.write_all(b"correct horse\n").expect("type");
         });
 
-        let r = server
-            .handle_request(req(
+        let tty = path.display().to_string();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            let r = rt.block_on(server.handle_request(req(
                 1,
                 "vault.request_unlock",
-                json!({ "tty": path.display().to_string() }),
-            ))
-            .await;
+                json!({ "tty": tty }),
+            )));
+            let _ = tx.send((server, r));
+        });
+
+        let (server, r) = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the daemon blocked forever reading the lent terminal");
         typist.join().expect("typist");
 
         assert!(r.error.is_none(), "unlock failed: {:?}", r.error);

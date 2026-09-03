@@ -6,9 +6,10 @@ use devboy_core::{
     GetUsersOptions, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, KnowledgeBaseProvider,
     ListCustomFieldsParams, ListPagesParams, ListProjectVersionsParams, MeetingFilter,
     MeetingNotesProvider, MergeRequestProvider, MessengerProvider, MoveStructureRowsInput,
-    MrFilter, PipelineProvider, Result, SaveStructureViewInput, SearchKbParams,
-    SearchMessagesParams, SendMessageParams, SprintState, StructureRowItem, StructureViewColumn,
-    ToolCategory, UpdateIssueInput, UpdatePageParams, UpsertProjectVersionInput,
+    MrFilter, PipelineProvider, Result, RunPipelineJobInput, SaveStructureViewInput,
+    SearchKbParams, SearchMessagesParams, SendMessageParams, SprintState, StructureRowItem,
+    StructureViewColumn, ToolCategory, UpdateIssueInput, UpdatePageParams,
+    UpsertProjectVersionInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -628,6 +629,7 @@ async fn dispatch_tool(
         // Pipeline tools
         "get_pipeline" => execute_get_pipeline(provider, args).await,
         "get_job_logs" => execute_get_job_logs(provider, args).await,
+        "run_pipeline_job" => execute_run_pipeline_job(provider, args).await,
 
         // Status / user / link tools
         "get_available_statuses" => execute_get_available_statuses(provider).await,
@@ -1212,18 +1214,61 @@ async fn execute_get_merge_request(
     Ok(ToolOutput::SingleMergeRequest(Box::new(mr)))
 }
 
+/// Params for get_merge_request_discussions. The schema has always advertised
+/// `limit`/`offset`, but they were deserialized into [`KeyParam`] and silently
+/// dropped — advertised-but-ignored is worse than absent. `mrKey` alias
+/// matches [`CreateMrCommentParams`]: agents routinely send the camelCase key.
+#[derive(Deserialize)]
+struct DiscussionsParams {
+    #[serde(alias = "mrKey")]
+    key: String,
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    offset: Option<usize>,
+    /// Token budget for response size control (consumed by format layer via execute_and_format).
+    #[serde(default)]
+    #[allow(dead_code)]
+    budget: Option<usize>,
+}
+
 async fn execute_get_merge_request_discussions(
     provider: &dyn devboy_core::Provider,
     args: &Value,
 ) -> Result<ToolOutput> {
-    let params: KeyParam = serde_json::from_value(args.clone())
+    let params: DiscussionsParams = serde_json::from_value(args.clone())
         .map_err(|e| Error::InvalidData(format!("missing 'key' parameter: {e}")))?;
     let result = provider.get_discussions(&params.key).await?;
+    let provider_has_more = result.pagination.as_ref().is_some_and(|p| p.has_more);
+    let total = result.items.len();
+
+    let offset = params.offset.unwrap_or(0);
+    let mut items = result.items;
+    if offset > 0 || params.limit.is_some() {
+        items = items
+            .into_iter()
+            .skip(offset)
+            .take(params.limit.unwrap_or(usize::MAX))
+            .collect();
+    }
+    // Slicing must be visible in the metadata: a page that looks complete but
+    // isn't is exactly the failure mode this tool had.
+    let pagination = if offset > 0 || params.limit.is_some() || provider_has_more {
+        Some(devboy_core::Pagination {
+            offset: offset as u32,
+            limit: items.len() as u32,
+            total: Some(total as u32),
+            has_more: provider_has_more || offset + items.len() < total,
+            next_cursor: None,
+        })
+    } else {
+        None
+    };
     let meta = ResultMeta {
-        pagination: result.pagination,
+        pagination,
         sort_info: result.sort_info,
     };
-    Ok(ToolOutput::Discussions(result.items, Some(meta)))
+    Ok(ToolOutput::Discussions(items, Some(meta)))
 }
 
 async fn execute_get_merge_request_diffs(
@@ -1387,6 +1432,37 @@ async fn execute_get_job_logs(
     let options = JobLogOptions { mode };
     let log_output = PipelineProvider::get_job_logs(provider, &params.job_id, options).await?;
     Ok(ToolOutput::JobLog(Box::new(log_output)))
+}
+
+#[derive(Deserialize)]
+struct RunPipelineJobParams {
+    #[serde(rename = "pipelineId")]
+    pipeline_id: String,
+    #[serde(rename = "jobId")]
+    job_id: String,
+    #[serde(default)]
+    variables: std::collections::BTreeMap<String, String>,
+    #[serde(default, rename = "jobInputs")]
+    job_inputs: std::collections::BTreeMap<String, Value>,
+}
+
+async fn execute_run_pipeline_job(
+    provider: &dyn devboy_core::Provider,
+    args: &Value,
+) -> Result<ToolOutput> {
+    let params: RunPipelineJobParams = serde_json::from_value(args.clone())
+        .map_err(|error| Error::InvalidData(format!("invalid run_pipeline_job params: {error}")))?;
+    let result = PipelineProvider::run_pipeline_job(
+        provider,
+        RunPipelineJobInput {
+            pipeline_id: params.pipeline_id,
+            job_id: params.job_id,
+            variables: params.variables,
+            job_inputs: params.job_inputs,
+        },
+    )
+    .await?;
+    Ok(ToolOutput::PipelineJobRun(Box::new(result)))
 }
 
 // --- Status / User / Link tool handlers ---
@@ -1752,6 +1828,7 @@ pub const SUPPORTED_TOOLS: &[&str] = &[
     "update_merge_request",
     "get_pipeline",
     "get_job_logs",
+    "run_pipeline_job",
     "get_available_statuses",
     "get_users",
     "link_issues",
@@ -3020,6 +3097,29 @@ mod tests {
         fn provider_name(&self) -> &'static str {
             "mock"
         }
+
+        async fn run_pipeline_job(
+            &self,
+            input: devboy_core::RunPipelineJobInput,
+        ) -> devboy_core::Result<devboy_core::RunPipelineJobResult> {
+            if input.variables.get("DEPLOY_ENV").map(String::as_str) != Some("test")
+                || input.job_inputs.get("dry_run") != Some(&serde_json::json!(true))
+            {
+                return Err(devboy_core::Error::InvalidData(
+                    "test input was not forwarded".into(),
+                ));
+            }
+            Ok(devboy_core::RunPipelineJobResult {
+                pipeline_id: input.pipeline_id,
+                job: devboy_core::PipelineJob {
+                    id: input.job_id,
+                    name: "deploy_test".into(),
+                    status: devboy_core::PipelineStatus::Pending,
+                    url: Some("https://gitlab.example/jobs/701".into()),
+                    duration: None,
+                },
+            })
+        }
     }
 
     #[async_trait]
@@ -3104,7 +3204,8 @@ mod tests {
         assert!(SUPPORTED_TOOLS.contains(&"get_chat_messages"));
         assert!(SUPPORTED_TOOLS.contains(&"search_chat_messages"));
         assert!(SUPPORTED_TOOLS.contains(&"send_message"));
-        assert_eq!(SUPPORTED_TOOLS.len(), 40);
+        assert!(SUPPORTED_TOOLS.contains(&"run_pipeline_job"));
+        assert_eq!(SUPPORTED_TOOLS.len(), 41);
     }
 
     #[tokio::test]
@@ -3431,6 +3532,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_dispatch_discussions_honors_advertised_limit_offset() {
+        // The schema has always advertised limit/offset; they used to be
+        // silently dropped (DEV-5447). Slicing must also be visible in
+        // pagination metadata — a sliced page must not look complete.
+        let provider = MockProvider;
+
+        // offset past the only item → empty page, total still reported
+        let args = serde_json::json!({"key": "pr#1", "offset": 1});
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Discussions(items, Some(meta)) => {
+                assert!(items.is_empty(), "offset=1 skips the single item");
+                let p = meta
+                    .pagination
+                    .expect("slicing must produce pagination meta");
+                assert_eq!(p.total, Some(1));
+                assert_eq!(p.offset, 1);
+                assert!(!p.has_more);
+            }
+            other => panic!("unexpected output: {other:?}"),
+        }
+
+        // limit larger than the set → everything returned, no has_more
+        let args = serde_json::json!({"key": "pr#1", "limit": 5});
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
+            .await
+            .unwrap();
+        match result {
+            ToolOutput::Discussions(items, Some(meta)) => {
+                assert_eq!(items.len(), 1);
+                let p = meta
+                    .pagination
+                    .expect("explicit limit must produce pagination meta");
+                assert_eq!(p.total, Some(1));
+                assert!(!p.has_more);
+            }
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_discussions_accepts_mr_key_alias() {
+        // Agents routinely send mrKey (the e2e suite does too); it used to
+        // fail with "missing field 'key'".
+        let provider = MockProvider;
+        let args = serde_json::json!({"mrKey": "pr#1"});
+        let result = dispatch_tool("get_merge_request_discussions", &args, &provider, None)
+            .await
+            .unwrap();
+        assert!(matches!(result, ToolOutput::Discussions(v, _) if v.len() == 1));
+    }
+
+    #[tokio::test]
     async fn test_dispatch_get_merge_request_diffs() {
         let provider = MockProvider;
         let args = serde_json::json!({"key": "pr#1"});
@@ -3630,6 +3786,67 @@ mod tests {
         let args = serde_json::json!({"jobId": "123", "full": true});
         let result = dispatch_tool("get_job_logs", &args, &provider, None).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_run_pipeline_job_forwards_typed_inputs() {
+        let provider = MockProvider;
+        let args = serde_json::json!({
+            "pipelineId": "501",
+            "jobId": "701",
+            "variables": { "DEPLOY_ENV": "test" },
+            "jobInputs": { "dry_run": true }
+        });
+        let result = dispatch_tool("run_pipeline_job", &args, &provider, None)
+            .await
+            .unwrap();
+
+        match result {
+            ToolOutput::PipelineJobRun(result) => {
+                assert_eq!(result.pipeline_id, "501");
+                assert_eq!(result.job.id, "701");
+                assert_eq!(result.job.status, devboy_core::PipelineStatus::Pending);
+            }
+            other => panic!("expected PipelineJobRun, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_run_pipeline_job_rejects_missing_required_ids() {
+        let provider = MockProvider;
+        let error = dispatch_tool(
+            "run_pipeline_job",
+            &serde_json::json!({ "jobId": "701" }),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, Error::InvalidData(ref message) if message.contains("run_pipeline_job") && message.contains("pipelineId"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_run_pipeline_job_rejects_non_string_variables() {
+        let provider = MockProvider;
+        let error = dispatch_tool(
+            "run_pipeline_job",
+            &serde_json::json!({
+                "pipelineId": "501",
+                "jobId": "701",
+                "variables": { "REPLICAS": 2 }
+            }),
+            &provider,
+            None,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(error, Error::InvalidData(ref message) if message.contains("run_pipeline_job"))
+        );
     }
 
     #[test]

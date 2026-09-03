@@ -174,6 +174,11 @@ pub struct SecretsValidateArgs {
 /// reading it must not answer "fine" to a word it has never seen.
 /// Split out from [`validate`] so this can be checked without a
 /// running daemon.
+/// Only `validate` calls this, and only UNIX has a daemon socket to
+/// call it about — but the mapping rule is not platform-specific and
+/// its test runs everywhere, so it stays compiled rather than being
+/// cfg'd away and going untested on the platform it still ships to.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn format_from_wire(word: Option<&str>) -> FormatVerdict {
     match word {
         Some("ok") => FormatVerdict::Ok,
@@ -189,6 +194,11 @@ fn format_from_wire(word: Option<&str>) -> FormatVerdict {
 /// reading of an answer this build cannot parse, and it is the one
 /// verdict that neither claims the credential is fine nor sends
 /// someone rotating it.
+/// Only `validate` calls this, and only UNIX has a daemon socket to
+/// call it about — but the mapping rule is not platform-specific and
+/// its test runs everywhere, so it stays compiled rather than being
+/// cfg'd away and going untested on the platform it still ships to.
+#[cfg_attr(not(unix), allow(dead_code))]
 fn liveness_from_wire(word: Option<&str>) -> LivenessVerdict {
     match word {
         Some("ok") => LivenessVerdict::Ok,

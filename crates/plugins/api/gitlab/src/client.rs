@@ -7,7 +7,7 @@ use devboy_core::{
     GetPipelineInput, Issue, IssueFilter, IssueProvider, JobLogMode, JobLogOptions, JobLogOutput,
     MergeRequest, MergeRequestProvider, MrFilter, PipelineInfo, PipelineJob, PipelineProvider,
     PipelineStage, PipelineStatus, PipelineSummary, Provider, ProviderResult, Result,
-    UpdateIssueInput, User, parse_markdown_attachments,
+    RunPipelineJobInput, RunPipelineJobResult, UpdateIssueInput, User, parse_markdown_attachments,
 };
 use secrecy::{ExposeSecret, SecretString};
 use tracing::{debug, warn};
@@ -957,8 +957,33 @@ impl MergeRequestProvider for GitLabClient {
 
     async fn get_discussions(&self, mr_key: &str) -> Result<ProviderResult<Discussion>> {
         let iid = parse_mr_key(mr_key)?;
-        let url = self.project_url(&format!("/merge_requests/{}/discussions", iid));
-        let gl_discussions: Vec<GitLabDiscussion> = self.get(&url).await?;
+
+        // Without explicit paging GitLab silently returns only the first 20
+        // discussions — long review threads past page 1 were invisible to
+        // callers while the result looked complete. Page through everything;
+        // a short page terminates the loop. The page cap is a runaway guard
+        // for pathological MRs: hitting it is announced via
+        // `pagination.has_more`, never silent.
+        const PER_PAGE: usize = 100;
+        const MAX_PAGES: usize = 30;
+
+        let mut gl_discussions: Vec<GitLabDiscussion> = Vec::new();
+        let mut capped = false;
+        for page in 1..=MAX_PAGES {
+            let url = self.project_url(&format!(
+                "/merge_requests/{}/discussions?per_page={}&page={}",
+                iid, PER_PAGE, page
+            ));
+            let batch: Vec<GitLabDiscussion> = self.get(&url).await?;
+            let last_page = batch.len() < PER_PAGE;
+            gl_discussions.extend(batch);
+            if last_page {
+                break;
+            }
+            if page == MAX_PAGES {
+                capped = true;
+            }
+        }
 
         // Map and filter out empty discussions (all system notes)
         let discussions: Vec<Discussion> = gl_discussions
@@ -966,7 +991,18 @@ impl MergeRequestProvider for GitLabClient {
             .map(map_discussion)
             .filter(|d| !d.comments.is_empty())
             .collect();
-        Ok(discussions.into())
+        let mut result: ProviderResult<Discussion> = discussions.into();
+        if capped {
+            let fetched = result.items.len() as u32;
+            result.pagination = Some(devboy_core::Pagination {
+                offset: 0,
+                limit: fetched,
+                total: None,
+                has_more: true,
+                next_cursor: None,
+            });
+        }
+        Ok(result)
     }
 
     async fn get_diffs(&self, mr_key: &str) -> Result<ProviderResult<FileDiff>> {
@@ -1247,6 +1283,27 @@ struct GlJob {
     stage: String,
     web_url: Option<String>,
     duration: Option<f64>,
+    #[serde(default)]
+    pipeline: Option<GlJobPipeline>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GlJobPipeline {
+    id: u64,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct PlayJobVariable {
+    key: String,
+    value: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct PlayJobRequest {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    job_variables_attributes: Vec<PlayJobVariable>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    job_inputs: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 fn map_gl_pipeline_status(status: &str) -> PipelineStatus {
@@ -1257,8 +1314,18 @@ fn map_gl_pipeline_status(status: &str) -> PipelineStatus {
         "pending" | "waiting_for_resource" | "preparing" => PipelineStatus::Pending,
         "canceled" => PipelineStatus::Canceled,
         "skipped" => PipelineStatus::Skipped,
-        "manual" => PipelineStatus::Pending,
+        "manual" => PipelineStatus::Manual,
         _ => PipelineStatus::Unknown,
+    }
+}
+
+fn map_gl_job(job: &GlJob) -> PipelineJob {
+    PipelineJob {
+        id: job.id.to_string(),
+        name: job.name.clone(),
+        status: map_gl_pipeline_status(&job.status),
+        url: job.web_url.clone(),
+        duration: job.duration.map(|duration| duration as u64),
     }
 }
 
@@ -1465,6 +1532,7 @@ impl PipelineProvider for GitLabClient {
                 }
                 PipelineStatus::Running => summary.running += 1,
                 PipelineStatus::Pending => summary.pending += 1,
+                PipelineStatus::Manual => summary.manual += 1,
                 PipelineStatus::Canceled => summary.canceled += 1,
                 PipelineStatus::Skipped => summary.skipped += 1,
                 PipelineStatus::Unknown => {}
@@ -1473,13 +1541,7 @@ impl PipelineProvider for GitLabClient {
             stages_map
                 .entry(job.stage.clone())
                 .or_default()
-                .push(PipelineJob {
-                    id: job.id.to_string(),
-                    name: job.name.clone(),
-                    status,
-                    url: job.web_url.clone(),
-                    duration: job.duration.map(|d| d as u64),
-                });
+                .push(map_gl_job(job));
         }
 
         let stages: Vec<PipelineStage> = stages_map
@@ -1522,6 +1584,58 @@ impl PipelineProvider for GitLabClient {
             summary,
             stages,
             failed_jobs,
+        })
+    }
+
+    async fn run_pipeline_job(&self, input: RunPipelineJobInput) -> Result<RunPipelineJobResult> {
+        let pipeline_id = input.pipeline_id.parse::<u64>().map_err(|_| {
+            Error::InvalidData(format!(
+                "invalid GitLab pipeline ID '{}': expected an unsigned integer",
+                input.pipeline_id
+            ))
+        })?;
+        let job_id = input.job_id.parse::<u64>().map_err(|_| {
+            Error::InvalidData(format!(
+                "invalid GitLab job ID '{}': expected an unsigned integer",
+                input.job_id
+            ))
+        })?;
+
+        // Fail closed: verify the job belongs to the requested pipeline and is
+        // still manual before issuing the state-changing /play request.
+        let job_url = self.project_url(&format!("/jobs/{job_id}"));
+        let job: GlJob = self.get(&job_url).await?;
+        let actual_pipeline_id = job.pipeline.as_ref().map(|pipeline| pipeline.id).ok_or_else(|| {
+            Error::InvalidData(format!(
+                "GitLab job {job_id} response does not identify its pipeline; refusing to run it"
+            ))
+        })?;
+        if actual_pipeline_id != pipeline_id {
+            return Err(Error::InvalidData(format!(
+                "GitLab job {job_id} belongs to pipeline {actual_pipeline_id}, not requested pipeline {pipeline_id}; refusing to run it"
+            )));
+        }
+        if job.status != "manual" {
+            return Err(Error::InvalidData(format!(
+                "GitLab job {job_id} has status '{}', expected 'manual'; refusing to run it",
+                job.status
+            )));
+        }
+
+        let request = PlayJobRequest {
+            job_variables_attributes: input
+                .variables
+                .into_iter()
+                .map(|(key, value)| PlayJobVariable { key, value })
+                .collect(),
+            job_inputs: input.job_inputs,
+        };
+        let play_url = self.project_url(&format!("/jobs/{job_id}/play"));
+        let played_job: GlJob = self.post(&play_url, &request).await?;
+
+        Ok(RunPipelineJobResult {
+            pipeline_id: pipeline_id.to_string(),
+            job: map_gl_job(&played_job),
         })
     }
 
@@ -2282,6 +2396,55 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn test_get_discussions_pages_past_first_page() {
+            // Regression (DEV-5447): without per_page/page GitLab returns the
+            // first 20 discussions and the result LOOKS complete. A full page
+            // (100 items) must trigger fetching the next one.
+            let server = MockServer::start();
+            let disc = |i: u32| {
+                serde_json::json!({
+                    "id": format!("disc-{i}"),
+                    "notes": [{
+                        "id": i,
+                        "body": format!("note {i}"),
+                        "author": {"id": 1, "username": "reviewer"},
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "system": false,
+                        "resolvable": true,
+                        "resolved": false
+                    }]
+                })
+            };
+            let page1: Vec<_> = (0..100).map(disc).collect();
+            let page2: Vec<_> = (100..117).map(disc).collect();
+            let m1 = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/merge_requests/50/discussions")
+                    .query_param("per_page", "100")
+                    .query_param("page", "1");
+                then.status(200).json_body(serde_json::json!(page1));
+            });
+            let m2 = server.mock(|when, then| {
+                when.method(GET)
+                    .path("/api/v4/projects/123/merge_requests/50/discussions")
+                    .query_param("per_page", "100")
+                    .query_param("page", "2");
+                then.status(200).json_body(serde_json::json!(page2));
+            });
+
+            let client = create_test_client(&server);
+            let result = client.get_discussions("mr#50").await.unwrap();
+
+            assert_eq!(result.items.len(), 117, "both pages merged");
+            assert!(
+                result.pagination.is_none(),
+                "complete result must not claim has_more"
+            );
+            m1.assert();
+            m2.assert();
+        }
+
+        #[tokio::test]
         async fn test_get_diffs() {
             let server = MockServer::start();
 
@@ -2570,6 +2733,14 @@ mod tests {
                         "stage": "test",
                         "web_url": "https://gitlab.com/project/-/jobs/602",
                         "duration": 90.0
+                    },
+                    {
+                        "id": 603,
+                        "name": "deploy_test",
+                        "status": "manual",
+                        "stage": "test",
+                        "web_url": "https://gitlab.com/project/-/jobs/603",
+                        "duration": null
                     }
                 ]));
             });
@@ -2594,10 +2765,13 @@ mod tests {
             assert_eq!(result.reference, "main");
             assert_eq!(result.duration, Some(120));
             assert_eq!(result.coverage, Some(85.5));
-            assert_eq!(result.summary.total, 2);
+            assert_eq!(result.summary.total, 3);
             assert_eq!(result.summary.success, 1);
             assert_eq!(result.summary.failed, 1);
+            assert_eq!(result.summary.manual, 1);
             assert_eq!(result.stages.len(), 2); // build + test
+            assert_eq!(result.stages[1].jobs[1].id, "603");
+            assert_eq!(result.stages[1].jobs[1].status, PipelineStatus::Manual);
             assert_eq!(result.failed_jobs.len(), 1);
             assert_eq!(result.failed_jobs[0].name, "test");
             assert!(
@@ -2651,6 +2825,345 @@ mod tests {
             assert_eq!(result.status, PipelineStatus::Success);
             assert_eq!(result.summary.total, 1);
             assert_eq!(result.summary.success, 1);
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_with_variables_and_inputs() {
+            let server = MockServer::start();
+
+            let preflight = server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/701");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 701,
+                    "name": "deploy_test",
+                    "status": "manual",
+                    "stage": "deploy",
+                    "web_url": "https://gitlab.example/project/-/jobs/701",
+                    "duration": null,
+                    "pipeline": { "id": 501 }
+                }));
+            });
+            let play = server.mock(|when, then| {
+                when.method(POST)
+                    .path("/api/v4/projects/123/jobs/701/play")
+                    .json_body(serde_json::json!({
+                        "job_variables_attributes": [
+                            { "key": "DEPLOY_ENV", "value": "test" },
+                            { "key": "FEATURE_FLAG", "value": "enabled" }
+                        ],
+                        "job_inputs": {
+                            "dry_run": true,
+                            "replicas": 2
+                        }
+                    }));
+                then.status(200).json_body(serde_json::json!({
+                    "id": 701,
+                    "name": "deploy_test",
+                    "status": "pending",
+                    "stage": "deploy",
+                    "web_url": "https://gitlab.example/project/-/jobs/701",
+                    "duration": null,
+                    "pipeline": { "id": 501 }
+                }));
+            });
+
+            let client = create_test_client(&server);
+            let result = client
+                .run_pipeline_job(RunPipelineJobInput {
+                    pipeline_id: "501".into(),
+                    job_id: "701".into(),
+                    variables: std::collections::BTreeMap::from([
+                        ("DEPLOY_ENV".into(), "test".into()),
+                        ("FEATURE_FLAG".into(), "enabled".into()),
+                    ]),
+                    job_inputs: std::collections::BTreeMap::from([
+                        ("dry_run".into(), serde_json::json!(true)),
+                        ("replicas".into(), serde_json::json!(2)),
+                    ]),
+                })
+                .await
+                .unwrap();
+
+            preflight.assert();
+            play.assert();
+            assert_eq!(result.pipeline_id, "501");
+            assert_eq!(result.job.id, "701");
+            assert_eq!(result.job.name, "deploy_test");
+            assert_eq!(result.job.status, PipelineStatus::Pending);
+            assert_eq!(
+                result.job.url.as_deref(),
+                Some("https://gitlab.example/project/-/jobs/701")
+            );
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_omits_empty_optional_payloads() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/701");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 701,
+                    "name": "deploy_test",
+                    "status": "manual",
+                    "stage": "deploy",
+                    "web_url": null,
+                    "duration": null,
+                    "pipeline": { "id": 501 }
+                }));
+            });
+            let play = server.mock(|when, then| {
+                when.method(POST)
+                    .path("/api/v4/projects/123/jobs/701/play")
+                    .json_body(serde_json::json!({}));
+                then.status(200).json_body(serde_json::json!({
+                    "id": 701,
+                    "name": "deploy_test",
+                    "status": "pending",
+                    "stage": "deploy",
+                    "web_url": null,
+                    "duration": null
+                }));
+            });
+
+            let client = create_test_client(&server);
+            client
+                .run_pipeline_job(RunPipelineJobInput {
+                    pipeline_id: "501".into(),
+                    job_id: "701".into(),
+                    variables: Default::default(),
+                    job_inputs: Default::default(),
+                })
+                .await
+                .unwrap();
+
+            play.assert();
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_rejects_wrong_pipeline_without_playing() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/701");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 701,
+                    "name": "deploy_test",
+                    "status": "manual",
+                    "stage": "deploy",
+                    "web_url": null,
+                    "duration": null,
+                    "pipeline": { "id": 999 }
+                }));
+            });
+            let play = server.mock(|when, then| {
+                when.method(POST).path("/api/v4/projects/123/jobs/701/play");
+                then.status(200);
+            });
+
+            let client = create_test_client(&server);
+            let error = client
+                .run_pipeline_job(RunPipelineJobInput {
+                    pipeline_id: "501".into(),
+                    job_id: "701".into(),
+                    variables: Default::default(),
+                    job_inputs: Default::default(),
+                })
+                .await
+                .unwrap_err();
+
+            assert!(
+                matches!(error, Error::InvalidData(ref message) if message.contains("pipeline 999"))
+            );
+            play.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_rejects_non_manual_job_without_playing() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/701");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 701,
+                    "name": "deploy_test",
+                    "status": "pending",
+                    "stage": "deploy",
+                    "web_url": null,
+                    "duration": null,
+                    "pipeline": { "id": 501 }
+                }));
+            });
+            let play = server.mock(|when, then| {
+                when.method(POST).path("/api/v4/projects/123/jobs/701/play");
+                then.status(200);
+            });
+
+            let client = create_test_client(&server);
+            let error = client
+                .run_pipeline_job(RunPipelineJobInput {
+                    pipeline_id: "501".into(),
+                    job_id: "701".into(),
+                    variables: Default::default(),
+                    job_inputs: Default::default(),
+                })
+                .await
+                .unwrap_err();
+
+            assert!(
+                matches!(error, Error::InvalidData(ref message) if message.contains("status 'pending'"))
+            );
+            play.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_rejects_unverifiable_pipeline_without_playing() {
+            let server = MockServer::start();
+
+            server.mock(|when, then| {
+                when.method(GET).path("/api/v4/projects/123/jobs/701");
+                then.status(200).json_body(serde_json::json!({
+                    "id": 701,
+                    "name": "deploy_test",
+                    "status": "manual",
+                    "stage": "deploy",
+                    "web_url": null,
+                    "duration": null
+                }));
+            });
+            let play = server.mock(|when, then| {
+                when.method(POST).path("/api/v4/projects/123/jobs/701/play");
+                then.status(200);
+            });
+
+            let client = create_test_client(&server);
+            let error = client
+                .run_pipeline_job(RunPipelineJobInput {
+                    pipeline_id: "501".into(),
+                    job_id: "701".into(),
+                    variables: Default::default(),
+                    job_inputs: Default::default(),
+                })
+                .await
+                .unwrap_err();
+
+            assert!(
+                matches!(error, Error::InvalidData(ref message) if message.contains("does not identify its pipeline"))
+            );
+            play.assert_calls(0);
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_preserves_preflight_auth_and_not_found_errors() {
+            for status in [401_u16, 403, 404] {
+                let server = MockServer::start();
+                server.mock(|when, then| {
+                    when.method(GET).path("/api/v4/projects/123/jobs/701");
+                    then.status(status).body("GitLab rejected the preflight");
+                });
+
+                let client = create_test_client(&server);
+                let error = client
+                    .run_pipeline_job(RunPipelineJobInput {
+                        pipeline_id: "501".into(),
+                        job_id: "701".into(),
+                        variables: Default::default(),
+                        job_inputs: Default::default(),
+                    })
+                    .await
+                    .unwrap_err();
+
+                assert!(
+                    match status {
+                        401 => matches!(error, Error::Unauthorized(_)),
+                        403 => matches!(error, Error::Forbidden(_)),
+                        404 => matches!(error, Error::NotFound(_)),
+                        _ => unreachable!(),
+                    },
+                    "unexpected error for HTTP {status}: {error:?}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_preserves_play_auth_and_not_found_errors() {
+            for status in [401_u16, 403, 404] {
+                let server = MockServer::start();
+                server.mock(|when, then| {
+                    when.method(GET).path("/api/v4/projects/123/jobs/701");
+                    then.status(200).json_body(serde_json::json!({
+                        "id": 701,
+                        "name": "deploy_test",
+                        "status": "manual",
+                        "stage": "deploy",
+                        "web_url": null,
+                        "duration": null,
+                        "pipeline": { "id": 501 }
+                    }));
+                });
+                let play = server.mock(|when, then| {
+                    when.method(POST).path("/api/v4/projects/123/jobs/701/play");
+                    then.status(status).body("GitLab rejected the play request");
+                });
+
+                let client = create_test_client(&server);
+                let error = client
+                    .run_pipeline_job(RunPipelineJobInput {
+                        pipeline_id: "501".into(),
+                        job_id: "701".into(),
+                        variables: Default::default(),
+                        job_inputs: Default::default(),
+                    })
+                    .await
+                    .unwrap_err();
+
+                play.assert();
+                assert!(
+                    match status {
+                        401 => matches!(error, Error::Unauthorized(_)),
+                        403 => matches!(error, Error::Forbidden(_)),
+                        404 => matches!(error, Error::NotFound(_)),
+                        _ => unreachable!(),
+                    },
+                    "unexpected error for HTTP {status}: {error:?}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn test_run_pipeline_job_rejects_malformed_ids_before_network_call() {
+            let server = MockServer::start();
+            let any_request = server.mock(|_when, then| {
+                then.status(500);
+            });
+            let client = create_test_client(&server);
+
+            let invalid_pipeline = client
+                .run_pipeline_job(RunPipelineJobInput {
+                    pipeline_id: "latest".into(),
+                    job_id: "701".into(),
+                    variables: Default::default(),
+                    job_inputs: Default::default(),
+                })
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(invalid_pipeline, Error::InvalidData(ref message) if message.contains("pipeline ID"))
+            );
+
+            let invalid_job = client
+                .run_pipeline_job(RunPipelineJobInput {
+                    pipeline_id: "501".into(),
+                    job_id: "deploy_test".into(),
+                    variables: Default::default(),
+                    job_inputs: Default::default(),
+                })
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(invalid_job, Error::InvalidData(ref message) if message.contains("job ID"))
+            );
+            any_request.assert_calls(0);
         }
 
         #[tokio::test]
@@ -2859,7 +3372,7 @@ mod tests {
         assert_eq!(map_gl_pipeline_status("pending"), PipelineStatus::Pending);
         assert_eq!(map_gl_pipeline_status("canceled"), PipelineStatus::Canceled);
         assert_eq!(map_gl_pipeline_status("skipped"), PipelineStatus::Skipped);
-        assert_eq!(map_gl_pipeline_status("manual"), PipelineStatus::Pending);
+        assert_eq!(map_gl_pipeline_status("manual"), PipelineStatus::Manual);
         assert_eq!(map_gl_pipeline_status("unknown"), PipelineStatus::Unknown);
     }
 

@@ -45,8 +45,36 @@ impl Pty {
         nix::unistd::ttyname(self.inner.slave.as_fd()).expect("ttyname")
     }
 
+    /// Block until the reader has turned echo off.
+    ///
+    /// The prompt disables echo with `TCSAFLUSH`, which discards
+    /// anything typed *before* the prompt appeared — deliberate, so
+    /// a stray keystroke cannot be read as a passphrase. Typing
+    /// before that point is therefore not "early", it is lost: the
+    /// flush eats the line and the read waits for a second one that
+    /// never comes.
+    ///
+    /// These tests used to race it — one with a 50 ms sleep, one
+    /// with nothing at all — and on macOS they lost. There the read
+    /// does not even fail: Linux returns EOF once the last master fd
+    /// closes, the BSD side just blocks. Two CI jobs ran for six
+    /// hours and were killed with no diagnosis.
+    fn wait_until_the_reader_is_listening(&self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while devboy_secrets_agent::prompt::echo_enabled(self.inner.slave.as_fd())
+            .expect("read the terminal state")
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the prompt never turned echo off, so it never got as far as reading"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     /// Type `text` as if a human had, and return what was displayed.
     fn answer_with(&self, text: &str) -> String {
+        self.wait_until_the_reader_is_listening();
         let mut master =
             std::fs::File::from(self.inner.master.try_clone().expect("clone the master end"));
         master
@@ -71,16 +99,6 @@ fn a_lent_terminal_carries_the_prompt_and_the_answer() {
     let pty = Pty::new();
     let path = pty.slave_path();
 
-    let typed = std::thread::spawn({
-        let pty_path = path.clone();
-        move || {
-            // Give the reader a moment to print the prompt and turn
-            // echo off before anything is typed.
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            let _ = pty_path;
-        }
-    });
-
     let mut prompt =
         TtyPrompt::from_file(open_client_terminal(&path).expect("the lent terminal must open"));
 
@@ -95,12 +113,20 @@ fn a_lent_terminal_carries_the_prompt_and_the_answer() {
         move || pty.answer_with("correct horse battery staple")
     });
 
-    let passphrase = prompt
-        .read_passphrase("Unlock the devboy vault: ")
+    // On its own thread with a deadline. `read_passphrase` blocks in
+    // a syscall, so `tokio::time::timeout` around it does nothing —
+    // measured — and a stuck read would otherwise hang the whole job
+    // rather than fail it.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(prompt.read_passphrase("Unlock the devboy vault: "));
+    });
+    let passphrase = rx
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the reader blocked forever on the lent terminal")
         .expect("read the passphrase from the lent terminal");
 
     let displayed = writer.join().expect("writer thread");
-    typed.join().expect("timer thread");
 
     assert_eq!(
         passphrase.expose_secret(),
@@ -138,7 +164,12 @@ fn echo_is_restored_on_the_lent_terminal_afterwards() {
         move || pty.answer_with("something")
     });
 
-    let _ = prompt.read_passphrase("Unlock: ");
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(prompt.read_passphrase("Unlock: ").is_ok());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(30))
+        .expect("the reader blocked forever on the lent terminal");
     writer.join().expect("writer thread");
 
     let after = devboy_secrets_agent::prompt::echo_enabled(pty.inner.slave.as_fd())

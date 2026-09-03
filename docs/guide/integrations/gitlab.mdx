@@ -12,7 +12,7 @@ When creating a GitLab Personal Access Token, you need to select the following s
 
 | Scope | Description | Required For |
 |-------|-------------|--------------|
-| `api` | Full API access | Reading/creating issues, MRs, comments, diffs |
+| `api` | Full API access | Reading/creating issues, MRs, comments, diffs, and starting manual CI jobs |
 | `read_user` | Read user information | Identifying the current user |
 
 ## Configuration
@@ -77,6 +77,39 @@ Once configured, the following MCP tools are available:
 | `get_merge_request_diffs` | Get file diffs for a MR |
 | `create_merge_request` | Create a new merge request |
 | `create_merge_request_comment` | Add a comment (general or inline code review) |
+
+### CI/CD tools
+
+| Tool | Description |
+|------|-------------|
+| `get_pipeline` | Get the latest pipeline for a branch or merge request, including job IDs and statuses |
+| `get_job_logs` | Read a job log in smart, search, paginated, or full mode |
+| `run_pipeline_job` | Start an existing manual job after verifying its pipeline and current status |
+
+To start a manual job, first call `get_pipeline` and copy both IDs from its output:
+
+```bash
+devboy tools call get_pipeline '{"branch":"main","includeFailedLogs":false}'
+devboy tools call run_pipeline_job '{"pipelineId":"501","jobId":"701"}'
+```
+
+Optional CI variables must have string values. GitLab 18.10 and later also accept typed `jobInputs`:
+
+```bash
+devboy tools call run_pipeline_job '{
+  "pipelineId": "501",
+  "jobId": "701",
+  "variables": {
+    "DEPLOY_ENV": "test"
+  },
+  "jobInputs": {
+    "dry_run": true,
+    "replicas": 2
+  }
+}'
+```
+
+`run_pipeline_job` fails closed: it fetches the job immediately before the write and refuses to call GitLab's `/play` endpoint when the job is missing, belongs to another pipeline, or is no longer in the `manual` state.
 
 ## Output formats
 

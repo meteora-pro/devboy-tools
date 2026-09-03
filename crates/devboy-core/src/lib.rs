@@ -66,12 +66,13 @@ pub use types::{
     MeetingNote, MeetingSpeaker, MeetingTranscript, MergeRequest, MessageAttachment, MessageAuthor,
     MessengerChat, MessengerMessage, MoveStructureRowsInput, MrFilter, Pagination, PipelineInfo,
     PipelineJob, PipelineStage, PipelineStatus, PipelineSummary, ProjectVersion, ProviderResult,
-    Release, ReleaseAsset, SaveStructureViewInput, SearchKbParams, SearchMessagesParams,
-    SendMessageParams, SortInfo, SortOrder, Sprint, SprintState, Structure, StructureColumnValue,
-    StructureForest, StructureGenerator, StructureNode, StructureRowItem, StructureRowValues,
-    StructureValues, StructureView, StructureViewColumn, SyncStructureGeneratorInput,
-    TranscriptSentence, UpdateIssueInput, UpdateMergeRequestInput, UpdatePageParams,
-    UpdateStructureAutomationInput, UpsertProjectVersionInput, User,
+    Release, ReleaseAsset, RunPipelineJobInput, RunPipelineJobResult, SaveStructureViewInput,
+    SearchKbParams, SearchMessagesParams, SendMessageParams, SortInfo, SortOrder, Sprint,
+    SprintState, Structure, StructureColumnValue, StructureForest, StructureGenerator,
+    StructureNode, StructureRowItem, StructureRowValues, StructureValues, StructureView,
+    StructureViewColumn, SyncStructureGeneratorInput, TranscriptSentence, UpdateIssueInput,
+    UpdateMergeRequestInput, UpdatePageParams, UpdateStructureAutomationInput,
+    UpsertProjectVersionInput, User,
 };
 
 // Re-export enricher traits and utilities

@@ -170,7 +170,7 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
             input_schema: {
                 let mut s = ToolSchema::new();
                 s.add_property("key", PropertySchema::string("MR/PR key"));
-                s.add_property("limit", PropertySchema::integer("Max discussions (default: 20)", Some(1.0), Some(100.0)));
+                s.add_property("limit", PropertySchema::integer("Max discussions to return (default: all)", Some(1.0), None));
                 s.add_property("offset", PropertySchema::integer("Skip N discussions (default: 0)", Some(0.0), None));
                 s.set_required("key", true);
                 s
@@ -251,6 +251,37 @@ pub fn base_tool_definitions() -> Vec<ToolDefinition> {
                 s.add_property("offset", PropertySchema::integer("Start line for paginated mode", None, None));
                 s.add_property("limit", PropertySchema::integer("Lines to return (default: 200, max: 1000)", Some(1.0), Some(1000.0)));
                 s.add_property("full", PropertySchema::boolean("Return entire log"));
+                s.set_required("jobId", true);
+                s
+            },
+        },
+        ToolDefinition {
+            name: "run_pipeline_job".into(),
+            description: "Run an existing manual GitLab CI job after verifying that it belongs to the supplied pipeline and is still manual.".into(),
+            category: ToolCategory::GitRepository,
+            input_schema: {
+                let mut s = ToolSchema::new();
+                s.add_property(
+                    "pipelineId",
+                    PropertySchema::string("Pipeline ID returned by get_pipeline"),
+                );
+                s.add_property(
+                    "jobId",
+                    PropertySchema::string("Manual job ID returned by get_pipeline"),
+                );
+                s.add_property(
+                    "variables",
+                    PropertySchema::object(
+                        "Optional CI variables as an object whose values are strings",
+                    ),
+                );
+                s.add_property(
+                    "jobInputs",
+                    PropertySchema::object(
+                        "Optional typed GitLab job inputs as an object of JSON values",
+                    ),
+                );
+                s.set_required("pipelineId", true);
                 s.set_required("jobId", true);
                 s
             },
@@ -1266,7 +1297,7 @@ mod tests {
     #[test]
     fn test_base_definitions_count() {
         let tools = base_tool_definitions();
-        assert_eq!(tools.len(), 54);
+        assert_eq!(tools.len(), 55);
     }
 
     #[test]
@@ -1313,6 +1344,7 @@ mod tests {
             "update_merge_request",
             "get_pipeline",
             "get_job_logs",
+            "run_pipeline_job",
         ];
         let epics_tools = ["get_epics", "create_epic", "update_epic"];
         let meeting_notes_tools = [
@@ -1423,6 +1455,23 @@ mod tests {
                 .input_schema
                 .required
                 .contains(&"source_branch".to_string())
+        );
+
+        let run_job = tools
+            .iter()
+            .find(|tool| tool.name == "run_pipeline_job")
+            .unwrap();
+        assert_eq!(
+            run_job.input_schema.required,
+            vec!["pipelineId".to_string(), "jobId".to_string()]
+        );
+        assert_eq!(
+            run_job.input_schema.properties["variables"].schema_type,
+            "object"
+        );
+        assert_eq!(
+            run_job.input_schema.properties["jobInputs"].schema_type,
+            "object"
         );
     }
 
