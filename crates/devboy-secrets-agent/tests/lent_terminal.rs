@@ -22,6 +22,7 @@
 
 use std::io::{Read, Write};
 use std::os::fd::AsFd;
+use std::sync::{Arc, Mutex};
 
 use devboy_secrets_agent::client_terminal::{caller_terminal, open_client_terminal};
 use devboy_secrets_agent::prompt::TtyPrompt;
@@ -59,6 +60,9 @@ impl Pty {
     /// does not even fail: Linux returns EOF once the last master fd
     /// closes, the BSD side just blocks. Two CI jobs ran for six
     /// hours and were killed with no diagnosis.
+    ///
+    /// Waiting is only half of it — see [`Pty::drain`] for the half
+    /// that stops the wait from deadlocking.
     fn wait_until_the_reader_is_listening(&self) {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while devboy_secrets_agent::prompt::echo_enabled(self.inner.slave.as_fd())
@@ -72,9 +76,42 @@ impl Pty {
         }
     }
 
+    /// Consume the master end continuously, collecting what was
+    /// displayed.
+    ///
+    /// Not an optimisation and not politeness. `TCSAFLUSH` waits for
+    /// pending *output* to drain as well as discarding input, and
+    /// the prompt has just been written — so with nobody reading the
+    /// master, the reader blocks before it can disable echo, while
+    /// [`Pty::wait_until_the_reader_is_listening`] waits for exactly
+    /// that. The two deadlock. On Linux the buffer happens to be big
+    /// enough that the write never blocks; on macOS it is not, which
+    /// is why these tests hung there and passed here.
+    ///
+    /// A real terminal is always being drained by its emulator, so
+    /// this is the more faithful simulation too.
+    fn drain(&self) -> Arc<Mutex<Vec<u8>>> {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&seen);
+        let mut source =
+            std::fs::File::from(self.inner.master.try_clone().expect("clone for drain"));
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 256];
+            while let Ok(n) = source.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                writer.lock().expect("lock").extend_from_slice(&buf[..n]);
+            }
+        });
+        seen
+    }
+
     /// Type `text` as if a human had, and return what was displayed.
     fn answer_with(&self, text: &str) -> String {
+        let seen = self.drain();
         self.wait_until_the_reader_is_listening();
+
         let mut master =
             std::fs::File::from(self.inner.master.try_clone().expect("clone the master end"));
         master
@@ -82,12 +119,11 @@ impl Pty {
             .expect("type the passphrase");
         master.flush().expect("flush");
 
-        // Whatever the daemon printed — the prompt, and the echo the
-        // terminal produced before echo was turned off.
-        let mut seen = vec![0u8; 256];
-        let read = master.read(&mut seen).unwrap_or(0);
-        seen.truncate(read);
-        String::from_utf8_lossy(&seen).into_owned()
+        // Let the drain pick up the trailing output before reporting
+        // what the terminal displayed.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let displayed = seen.lock().expect("lock").clone();
+        String::from_utf8_lossy(&displayed).into_owned()
     }
 }
 

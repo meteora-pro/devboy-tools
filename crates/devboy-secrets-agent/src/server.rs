@@ -2306,6 +2306,19 @@ mod tests {
     /// on the BSD side it simply blocks. The job ran for six hours
     /// and was killed with no diagnosis.
     ///
+    /// # Why the master is drained
+    ///
+    /// Waiting for echo is only half of it, and the half alone
+    /// deadlocks. `TCSAFLUSH` also waits for pending *output* to
+    /// drain, and the prompt has just been written — so with nobody
+    /// reading the master, the prompt blocks *before* it can disable
+    /// echo, while the typist waits for exactly that to happen. On
+    /// Linux the buffer is large enough that the write never blocks;
+    /// on macOS it is not. `prompt`'s own tests already worked this
+    /// out and drain; this one had not caught up. A real terminal is
+    /// always being drained by its emulator, so draining is the more
+    /// faithful simulation as well.
+    ///
     /// # Why the bound is a thread and not `tokio::time::timeout`
     ///
     /// That was the first attempt, and it does nothing here. The
@@ -2319,12 +2332,21 @@ mod tests {
     #[test]
     fn a_lent_terminal_unlocks_through_the_dispatcher() {
         use nix::sys::termios::{LocalFlags, tcgetattr};
-        use std::io::Write;
+        use std::io::{Read, Write};
         use std::os::fd::AsFd;
 
         let (_dir, mut server) = fresh_vault("correct horse");
         let pty = nix::pty::openpty(None, None).expect("openpty");
         let path = nix::unistd::ttyname(pty.slave.as_fd()).expect("ttyname");
+
+        // Nothing else reads the master, so the prompt's own output
+        // would sit in the queue and block `TCSAFLUSH` forever.
+        let mut drain_source =
+            std::fs::File::from(pty.master.try_clone().expect("clone master for drain"));
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 256];
+            while matches!(drain_source.read(&mut buf), Ok(n) if n > 0) {}
+        });
 
         // Reading blocks, so the human types from another thread.
         let master = pty.master.try_clone().expect("clone master");
